@@ -17,6 +17,8 @@ const LEVEL_COUNT: usize = 8;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const ARENA_COUNT: usize = 2;
 const DEFAULT_VERSUS_ARENA: usize = 1;
+const TANK_ATLAS_TILES: usize = 24;
+const TANK_ANIMATION_FRAMES: usize = 2;
 const TERRAIN_ATLAS_TILES: usize = 5;
 const EFFECT_ATLAS_TILES: usize = 8;
 const POWERUP_ATLAS_TILES: usize = 6;
@@ -137,12 +139,17 @@ struct SpriteAssets {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 struct AssetManifest {
+    tanks: TankSpriteManifest,
     terrain: TerrainSpriteManifest,
     effects: EffectSpriteManifest,
     powerups: PowerUpSpriteManifest,
 }
 
 impl AssetManifest {
+    fn tank_index(&self, team: Team, direction: Direction, frame: usize) -> usize {
+        self.tanks.frames_for(team)[frame.min(TANK_ANIMATION_FRAMES - 1)].index(direction)
+    }
+
     fn terrain_index(&self, tile: TileKind) -> Option<usize> {
         match tile {
             TileKind::Brick => Some(self.terrain.brick),
@@ -171,6 +178,42 @@ impl AssetManifest {
 
     fn spawn_shimmer_frames(&self) -> SpriteFrameRange {
         self.effects.spawn_shimmer
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct TankSpriteManifest {
+    player1: Vec<DirectionalSpriteManifest>,
+    player2: Vec<DirectionalSpriteManifest>,
+    enemy: Vec<DirectionalSpriteManifest>,
+}
+
+impl TankSpriteManifest {
+    fn frames_for(&self, team: Team) -> &[DirectionalSpriteManifest] {
+        match team {
+            Team::Player1 => &self.player1,
+            Team::Player2 => &self.player2,
+            Team::Enemy => &self.enemy,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+struct DirectionalSpriteManifest {
+    up: usize,
+    down: usize,
+    left: usize,
+    right: usize,
+}
+
+impl DirectionalSpriteManifest {
+    fn index(self, direction: Direction) -> usize {
+        match direction {
+            Direction::Up => self.up,
+            Direction::Down => self.down,
+            Direction::Left => self.left,
+            Direction::Right => self.right,
+        }
     }
 }
 
@@ -1382,6 +1425,8 @@ fn parse_asset_manifest(contents: &str) -> Result<AssetManifest, String> {
 }
 
 fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
+    validate_tank_frames(&manifest.tanks)?;
+
     for (name, index) in [
         ("terrain.brick", manifest.terrain.brick),
         ("terrain.steel", manifest.terrain.steel),
@@ -1415,6 +1460,38 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
             return Err(format!(
                 "{name} index {index} is outside the generated power-up atlas"
             ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_tank_frames(manifest: &TankSpriteManifest) -> Result<(), String> {
+    for (name, frames) in [
+        ("tanks.player1", &manifest.player1),
+        ("tanks.player2", &manifest.player2),
+        ("tanks.enemy", &manifest.enemy),
+    ] {
+        if frames.len() != TANK_ANIMATION_FRAMES {
+            return Err(format!(
+                "{name} must define {TANK_ANIMATION_FRAMES} animation frames, got {}",
+                frames.len()
+            ));
+        }
+
+        for (frame_index, frame) in frames.iter().enumerate() {
+            for (direction, index) in [
+                ("up", frame.up),
+                ("down", frame.down),
+                ("left", frame.left),
+                ("right", frame.right),
+            ] {
+                if index >= TANK_ATLAS_TILES {
+                    return Err(format!(
+                        "{name}[{frame_index}].{direction} index {index} is outside the generated tank atlas"
+                    ));
+                }
+            }
         }
     }
 
@@ -1578,7 +1655,12 @@ fn spawn_mode_select_cursor(commands: &mut Commands, assets: &SpriteAssets, sele
             assets.tank_image.clone(),
             TextureAtlas {
                 layout: assets.tank_layout.clone(),
-                index: animated_tank_sprite_index(Team::Player1, Direction::Right, 0),
+                index: animated_tank_sprite_index(
+                    &assets.manifest,
+                    Team::Player1,
+                    Direction::Right,
+                    0,
+                ),
             },
         ),
         Transform::from_translation(mode_select_cursor_translation(selected))
@@ -2022,7 +2104,12 @@ fn spawn_player_tank(
             assets.tank_image.clone(),
             TextureAtlas {
                 layout: assets.tank_layout.clone(),
-                index: animated_tank_sprite_index(player_id.team(), spawn.facing, 0),
+                index: animated_tank_sprite_index(
+                    &assets.manifest,
+                    player_id.team(),
+                    spawn.facing,
+                    0,
+                ),
             },
         ),
         Transform::from_translation(board_object_center(
@@ -2080,6 +2167,7 @@ fn move_player_tank(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     control: Res<PlayerControl>,
+    assets: Res<SpriteAssets>,
     grid: Res<TileGrid>,
     game_status: Res<GameStatus>,
     mut tank_queries: ParamSet<(
@@ -2112,6 +2200,7 @@ fn move_player_tank(
                 tank.facing,
                 false,
                 time.delta(),
+                &assets.manifest,
             );
             continue;
         };
@@ -2138,6 +2227,7 @@ fn move_player_tank(
             tank.facing,
             moved,
             time.delta(),
+            &assets.manifest,
         );
     }
 }
@@ -2192,7 +2282,12 @@ fn spawn_enemies(
                 assets.tank_image.clone(),
                 TextureAtlas {
                     layout: assets.tank_layout.clone(),
-                    index: animated_tank_sprite_index(Team::Enemy, spawn.facing, 0),
+                    index: animated_tank_sprite_index(
+                        &assets.manifest,
+                        Team::Enemy,
+                        spawn.facing,
+                        0,
+                    ),
                 },
             ),
             Transform::from_translation(board_object_center(
@@ -2229,6 +2324,7 @@ fn spawn_enemies(
 
 fn move_enemy_tanks(
     time: Res<Time>,
+    assets: Res<SpriteAssets>,
     grid: Res<TileGrid>,
     game_status: Res<GameStatus>,
     enemy_freeze: Res<EnemyFreeze>,
@@ -2298,6 +2394,7 @@ fn move_enemy_tanks(
             tank.facing,
             moved,
             time.delta(),
+            &assets.manifest,
         );
     }
 }
@@ -2355,7 +2452,7 @@ fn fire_enemy_bullets(
 
         if let Some(direction) = aim_direction {
             tank.facing = direction;
-            set_tank_sprite_direction(&mut sprite, tank_sprite, tank.facing);
+            set_tank_sprite_direction(&mut sprite, tank_sprite, tank.facing, &assets.manifest);
         }
         let bullet_top_left = spawn_bullet_position(tank.top_left, tank.facing);
         commands.spawn((
@@ -3843,22 +3940,24 @@ fn powerup_visual_rgb(elapsed_secs: f32) -> [u8; 3] {
     }
 }
 
-fn animated_tank_sprite_index(team: Team, direction: Direction, frame: usize) -> usize {
-    let base = match team {
-        Team::Player1 => 0,
-        Team::Player2 => 8,
-        Team::Enemy => 16,
-    };
-    base + frame.min(1) * 4 + direction.tank_sprite_index()
+fn animated_tank_sprite_index(
+    manifest: &AssetManifest,
+    team: Team,
+    direction: Direction,
+    frame: usize,
+) -> usize {
+    manifest.tank_index(team, direction, frame)
 }
 
 fn set_tank_sprite_direction(
     sprite: &mut Sprite,
     tank_sprite: &TankSpriteState,
     facing: Direction,
+    manifest: &AssetManifest,
 ) {
     if let Some(atlas) = &mut sprite.texture_atlas {
-        atlas.index = animated_tank_sprite_index(tank_sprite.team, facing, tank_sprite.frame);
+        atlas.index =
+            animated_tank_sprite_index(manifest, tank_sprite.team, facing, tank_sprite.frame);
     }
 }
 
@@ -3868,6 +3967,7 @@ fn update_tank_sprite(
     facing: Direction,
     moving: bool,
     delta: Duration,
+    manifest: &AssetManifest,
 ) {
     if moving {
         tank_sprite.timer.tick(delta);
@@ -3879,7 +3979,7 @@ fn update_tank_sprite(
         tank_sprite.timer.reset();
     }
 
-    set_tank_sprite_direction(sprite, tank_sprite, facing);
+    set_tank_sprite_direction(sprite, tank_sprite, facing, manifest);
 }
 
 fn tank_rects_overlap(a: Vec2, b: Vec2) -> bool {
@@ -3969,7 +4069,7 @@ fn create_sprite_assets(
     let tank_image = images.add(create_tank_atlas());
     let tank_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::splat(16),
-        24,
+        TANK_ATLAS_TILES as u32,
         1,
         None,
         None,
@@ -4764,6 +4864,11 @@ mod tests {
     #[test]
     fn authored_asset_manifest_matches_generated_atlases() {
         let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        assert_eq!(manifest.tank_index(Team::Player1, Direction::Up, 0), 0);
+        assert_eq!(manifest.tank_index(Team::Player1, Direction::Right, 1), 7);
+        assert_eq!(manifest.tank_index(Team::Player2, Direction::Left, 0), 10);
+        assert_eq!(manifest.tank_index(Team::Enemy, Direction::Down, 1), 21);
+
         assert_eq!(manifest.terrain_index(TileKind::Brick), Some(0));
         assert_eq!(manifest.terrain_index(TileKind::Steel), Some(1));
         assert_eq!(manifest.terrain_index(TileKind::Water), Some(2));
@@ -4791,6 +4896,29 @@ mod tests {
 
     #[test]
     fn asset_manifest_rejects_out_of_range_indices() {
+        let invalid = MANIFEST.replacen("right: 23", "right: 24", 1);
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("invalid tank index should fail")
+                .contains("outside the generated tank atlas")
+        );
+
+        let invalid = MANIFEST.replacen(
+            "    player2: [
+      (up: 8, down: 9, left: 10, right: 11),
+      (up: 12, down: 13, left: 14, right: 15),
+    ],",
+            "    player2: [
+      (up: 8, down: 9, left: 10, right: 11),
+    ],",
+            1,
+        );
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("missing tank animation frame should fail")
+                .contains("must define 2 animation frames")
+        );
+
         let invalid = MANIFEST.replacen("ice: 4", "ice: 5", 1);
         assert!(
             parse_asset_manifest(&invalid)
@@ -5064,28 +5192,29 @@ mod tests {
 
     #[test]
     fn tank_sprite_indices_separate_players_and_enemy_animation_frames() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
         assert_eq!(
-            animated_tank_sprite_index(Team::Player1, Direction::Up, 0),
+            animated_tank_sprite_index(&manifest, Team::Player1, Direction::Up, 0),
             0
         );
         assert_eq!(
-            animated_tank_sprite_index(Team::Player1, Direction::Up, 1),
+            animated_tank_sprite_index(&manifest, Team::Player1, Direction::Up, 1),
             4
         );
         assert_eq!(
-            animated_tank_sprite_index(Team::Player2, Direction::Up, 0),
+            animated_tank_sprite_index(&manifest, Team::Player2, Direction::Up, 0),
             8
         );
         assert_eq!(
-            animated_tank_sprite_index(Team::Player2, Direction::Up, 1),
+            animated_tank_sprite_index(&manifest, Team::Player2, Direction::Up, 1),
             12
         );
         assert_eq!(
-            animated_tank_sprite_index(Team::Enemy, Direction::Up, 0),
+            animated_tank_sprite_index(&manifest, Team::Enemy, Direction::Up, 0),
             16
         );
         assert_eq!(
-            animated_tank_sprite_index(Team::Enemy, Direction::Up, 99),
+            animated_tank_sprite_index(&manifest, Team::Enemy, Direction::Up, 99),
             20
         );
     }

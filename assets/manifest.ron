@@ -1,4 +1,18 @@
 (
+  tanks: (
+    player1: [
+      (up: 0, down: 1, left: 2, right: 3),
+      (up: 4, down: 5, left: 6, right: 7),
+    ],
+    player2: [
+      (up: 8, down: 9, left: 10, right: 11),
+      (up: 12, down: 13, left: 14, right: 15),
+    ],
+    enemy: [
+      (up: 16, down: 17, left: 18, right: 19),
+      (up: 20, down: 21, left: 22, right: 23),
+    ],
+  ),
   terrain: (
     brick: 0,
     steel: 1,

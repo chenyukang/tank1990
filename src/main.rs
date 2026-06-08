@@ -50,7 +50,6 @@ static P1_WIN_BANNER_LINES: [&str; 2] = ["P1 WIN", "PRESS R OR M"];
 static P2_WIN_BANNER_LINES: [&str; 2] = ["P2 WIN", "PRESS R OR M"];
 static VICTORY_BANNER_LINES: [&str; 3] = ["VICTORY", "ALL STAGES CLEAR", "PRESS R OR M"];
 static MODE_SELECT_HINT_LINES: [&str; 3] = ["WS SELECT", "AD ARENA", "SPACE START"];
-static STAGE_INTRO_BANNER_LINES: [&str; 2] = ["STAGE", "READY"];
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
@@ -1951,7 +1950,7 @@ fn spawn_pixel_text(
 fn spawn_phase_text(
     commands: &mut Commands,
     assets: &SpriteAssets,
-    lines: &[&str],
+    lines: &[String],
     center_y: f32,
     z: f32,
 ) {
@@ -3537,10 +3536,10 @@ fn update_status_panel(
         return;
     }
 
-    let Some(lines) = phase_banner_lines(game_status.phase, game_status.winner) else {
+    let Some(lines) = phase_banner_text(&game_status) else {
         return;
     };
-    spawn_phase_text(&mut commands, &assets, lines, 114.5, 9.0);
+    spawn_phase_text(&mut commands, &assets, &lines, 114.5, 9.0);
 }
 
 fn phase_text_width(text: &str) -> f32 {
@@ -3553,7 +3552,7 @@ fn phase_banner_lines(
 ) -> Option<&'static [&'static str]> {
     match phase {
         GamePhase::ModeSelect | GamePhase::Playing => None,
-        GamePhase::StageIntro => Some(&STAGE_INTRO_BANNER_LINES),
+        GamePhase::StageIntro => None,
         GamePhase::Paused => Some(&PAUSED_BANNER_LINES),
         GamePhase::GameOver => Some(&GAME_OVER_BANNER_LINES),
         GamePhase::LevelClear => Some(&LEVEL_CLEAR_BANNER_LINES),
@@ -3564,6 +3563,19 @@ fn phase_banner_lines(
         },
         GamePhase::Victory => Some(&VICTORY_BANNER_LINES),
     }
+}
+
+fn stage_intro_banner_text(stage: usize) -> Vec<String> {
+    vec![format!("STAGE {:02}", stage.min(99)), "READY".to_string()]
+}
+
+fn phase_banner_text(status: &GameStatus) -> Option<Vec<String>> {
+    if status.phase == GamePhase::StageIntro {
+        return Some(stage_intro_banner_text(status.stage));
+    }
+
+    phase_banner_lines(status.phase, status.winner)
+        .map(|lines| lines.iter().map(|line| (*line).to_string()).collect())
 }
 
 fn campaign_phase(
@@ -6070,14 +6082,26 @@ mod tests {
     fn stage_intro_blocks_gameplay_and_shows_ready_banner() {
         let status = GameStatus {
             phase: GamePhase::StageIntro,
+            stage: 7,
             ..GameStatus::default()
         };
 
         assert!(!status.is_playing());
         assert_eq!(
-            phase_banner_lines(GamePhase::StageIntro, None)
-                .expect("stage intro should show a banner"),
-            STAGE_INTRO_BANNER_LINES.as_slice()
+            phase_banner_text(&status).expect("stage intro should show a banner"),
+            ["STAGE 07".to_string(), "READY".to_string()]
+        );
+    }
+
+    #[test]
+    fn stage_intro_banner_clamps_two_digit_stage_label() {
+        assert_eq!(
+            stage_intro_banner_text(3),
+            ["STAGE 03".to_string(), "READY".to_string()]
+        );
+        assert_eq!(
+            stage_intro_banner_text(135),
+            ["STAGE 99".to_string(), "READY".to_string()]
         );
     }
 
@@ -6106,23 +6130,44 @@ mod tests {
 
     #[test]
     fn phase_banner_text_uses_available_pixel_glyphs() {
-        let banners = [
-            phase_banner_lines(GamePhase::StageIntro, None)
-                .expect("stage intro should show a banner"),
-            phase_banner_lines(GamePhase::Paused, None).expect("paused should show a banner"),
-            phase_banner_lines(GamePhase::GameOver, None).expect("game over should show a banner"),
-            phase_banner_lines(GamePhase::LevelClear, None)
-                .expect("level clear should show a banner"),
-            phase_banner_lines(GamePhase::RoundOver, Some(PlayerId::One))
-                .expect("p1 win should show a banner"),
-            phase_banner_lines(GamePhase::RoundOver, Some(PlayerId::Two))
-                .expect("p2 win should show a banner"),
-            phase_banner_lines(GamePhase::Victory, None).expect("victory should show a banner"),
+        let statuses = [
+            GameStatus {
+                phase: GamePhase::StageIntro,
+                stage: 35,
+                ..GameStatus::default()
+            },
+            GameStatus {
+                phase: GamePhase::Paused,
+                ..GameStatus::default()
+            },
+            GameStatus {
+                phase: GamePhase::GameOver,
+                ..GameStatus::default()
+            },
+            GameStatus {
+                phase: GamePhase::LevelClear,
+                ..GameStatus::default()
+            },
+            GameStatus {
+                phase: GamePhase::RoundOver,
+                winner: Some(PlayerId::One),
+                ..GameStatus::default()
+            },
+            GameStatus {
+                phase: GamePhase::RoundOver,
+                winner: Some(PlayerId::Two),
+                ..GameStatus::default()
+            },
+            GameStatus {
+                phase: GamePhase::Victory,
+                ..GameStatus::default()
+            },
         ];
 
-        for lines in banners {
+        for status in statuses {
+            let lines = phase_banner_text(&status).expect("phase should show a banner");
             for line in lines {
-                assert!(phase_text_width(line) > 0.0);
+                assert!(phase_text_width(&line) > 0.0);
                 for ch in line.chars().filter(|ch| *ch != ' ') {
                     assert!(
                         glyph_pattern(ch).iter().any(|row| row.contains('#')),

@@ -15,6 +15,7 @@ use std::time::Duration;
 const ASSET_MANIFEST_PATH: &str = "assets/manifest.ron";
 const LEVEL_COUNT: usize = 35;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
+const LEVEL_CLEAR_SCORECARD_SECONDS: f32 = 4.0;
 const STAGE_INTRO_SECONDS: f32 = 1.2;
 const ARENA_COUNT: usize = 5;
 const DEFAULT_VERSUS_ARENA: usize = 1;
@@ -3967,8 +3968,10 @@ fn check_game_phase(
     );
     if next_phase != GamePhase::Playing {
         game_status.phase = next_phase;
-        game_status.transition_timer =
-            Timer::from_seconds(LEVEL_CLEAR_DELAY_SECONDS, TimerMode::Once);
+        game_status.transition_timer = Timer::from_seconds(
+            campaign_phase_transition_seconds(next_phase),
+            TimerMode::Once,
+        );
         match next_phase {
             GamePhase::LevelClear => {
                 score_board.score = score_board
@@ -4255,6 +4258,14 @@ fn campaign_phase(
         GamePhase::LevelClear
     } else {
         GamePhase::Playing
+    }
+}
+
+fn campaign_phase_transition_seconds(phase: GamePhase) -> f32 {
+    if phase == GamePhase::LevelClear {
+        LEVEL_CLEAR_SCORECARD_SECONDS
+    } else {
+        LEVEL_CLEAR_DELAY_SECONDS
     }
 }
 
@@ -7058,6 +7069,21 @@ mod tests {
     fn campaign_phase_stays_playing_while_enemies_remain() {
         assert_eq!(campaign_phase(3, 20, 19, 0, 1), GamePhase::Playing);
         assert_eq!(campaign_phase(3, 20, 5, 10, 4), GamePhase::Playing);
+    }
+
+    #[test]
+    fn level_clear_scorecard_stays_readable_before_next_stage() {
+        assert_eq!(
+            campaign_phase_transition_seconds(GamePhase::LevelClear),
+            LEVEL_CLEAR_SCORECARD_SECONDS
+        );
+        assert!(
+            campaign_phase_transition_seconds(GamePhase::LevelClear) > LEVEL_CLEAR_DELAY_SECONDS
+        );
+        assert_eq!(
+            campaign_phase_transition_seconds(GamePhase::GameOver),
+            LEVEL_CLEAR_DELAY_SECONDS
+        );
     }
 
     #[test]

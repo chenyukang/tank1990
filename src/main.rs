@@ -45,6 +45,7 @@ const ENEMY_BULLET_LIMIT_PER_TANK: usize = 1;
 const ENEMY_MARKER_COUNT: usize = 20;
 const ENEMY_MARKER_COLUMNS: usize = 4;
 const ENEMY_MARKER_SIZE: f32 = 8.0;
+const PLAYER_LIFE_ICON_SIZE: f32 = 8.0;
 const ENEMY_MARKER_LEFT: f32 = 216.0;
 const ENEMY_MARKER_TOP: f32 = 159.0;
 const ENEMY_MARKER_CELL_X: f32 = 9.0;
@@ -2122,6 +2123,7 @@ fn spawn_campaign_status_panel(commands: &mut Commands, assets: &SpriteAssets) {
     );
 
     spawn_pixel_text(commands, assets, "LIFE", Vec2::new(214.0, 112.0), 0.3);
+    spawn_player_life_icon(commands, assets);
     spawn_status_digits(
         commands,
         assets,
@@ -2154,6 +2156,27 @@ fn spawn_enemy_marker(commands: &mut Commands, assets: &SpriteAssets, index: usi
         .with_scale(Vec3::splat(WINDOW_SCALE * ENEMY_MARKER_SIZE / TANK_SIZE)),
         Visibility::Visible,
         EnemyMarker { index },
+        GameEntity,
+    ));
+}
+
+fn spawn_player_life_icon(commands: &mut Commands, assets: &SpriteAssets) {
+    commands.spawn((
+        Sprite::from_atlas_image(
+            assets.tank_image.clone(),
+            TextureAtlas {
+                layout: assets.tank_layout.clone(),
+                index: player_life_icon_tank_index(&assets.manifest),
+            },
+        ),
+        Transform::from_translation(virtual_center_scaled(
+            player_life_icon_top_left(),
+            Vec2::splat(PLAYER_LIFE_ICON_SIZE),
+            0.3,
+        ))
+        .with_scale(Vec3::splat(
+            WINDOW_SCALE * PLAYER_LIFE_ICON_SIZE / TANK_SIZE,
+        )),
         GameEntity,
     ));
 }
@@ -4211,6 +4234,14 @@ fn enemy_marker_top_left(index: usize) -> Vec2 {
 
 fn enemy_marker_tank_index(manifest: &AssetManifest) -> usize {
     animated_tank_sprite_index(manifest, TankSpriteSet::EnemyBasic, Direction::Down, 0)
+}
+
+fn player_life_icon_top_left() -> Vec2 {
+    Vec2::new(222.0, 123.0)
+}
+
+fn player_life_icon_tank_index(manifest: &AssetManifest) -> usize {
+    animated_tank_sprite_index(manifest, TankSpriteSet::Player1, Direction::Up, 0)
 }
 
 fn phase_text_width(text: &str) -> f32 {
@@ -7206,6 +7237,24 @@ mod tests {
         assert_eq!(
             enemy_marker_tank_index(&manifest),
             manifest.tank_index(TankSpriteSet::EnemyBasic, Direction::Down, 0)
+        );
+    }
+
+    #[test]
+    fn campaign_life_icon_fits_status_panel() {
+        let top_left = player_life_icon_top_left();
+        assert_eq!(top_left, Vec2::new(222.0, 123.0));
+        assert!(top_left.x >= 212.0);
+        assert!(top_left.x + PLAYER_LIFE_ICON_SIZE < 234.0);
+        assert!(top_left.y + PLAYER_LIFE_ICON_SIZE < ENEMY_MARKER_TOP);
+    }
+
+    #[test]
+    fn campaign_life_icon_uses_player_tank_sprite() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        assert_eq!(
+            player_life_icon_tank_index(&manifest),
+            manifest.tank_index(TankSpriteSet::Player1, Direction::Up, 0)
         );
     }
 

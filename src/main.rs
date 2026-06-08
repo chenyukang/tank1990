@@ -41,6 +41,13 @@ const PLAYER_FAST_BULLET_SPEED: f32 = 300.0;
 const POWER_ENEMY_BULLET_SPEED: f32 = 300.0;
 const ENEMY_BULLET_LIMIT: usize = 4;
 const ENEMY_BULLET_LIMIT_PER_TANK: usize = 1;
+const ENEMY_MARKER_COUNT: usize = 20;
+const ENEMY_MARKER_COLUMNS: usize = 4;
+const ENEMY_MARKER_SIZE: f32 = 8.0;
+const ENEMY_MARKER_LEFT: f32 = 216.0;
+const ENEMY_MARKER_TOP: f32 = 159.0;
+const ENEMY_MARKER_CELL_X: f32 = 9.0;
+const ENEMY_MARKER_CELL_Y: f32 = 9.0;
 const SNAP_DISTANCE: f32 = 2.0;
 const GLYPHS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 static PAUSED_BANNER_LINES: [&str; 2] = ["PAUSED", "PRESS ESC"];
@@ -1836,24 +1843,30 @@ fn spawn_campaign_status_panel(commands: &mut Commands, assets: &SpriteAssets) {
     );
 
     spawn_pixel_text(commands, assets, "ENEMY", Vec2::new(214.0, 148.0), 0.3);
-    for index in 0..20 {
-        let col = index % 2;
-        let row = index / 2;
-        commands.spawn((
-            Sprite::from_color(
-                Color::srgb_u8(184, 184, 160),
-                Vec2::new(4.0 * WINDOW_SCALE, 4.0 * WINDOW_SCALE),
-            ),
-            Transform::from_translation(virtual_center_scaled(
-                Vec2::new(219.0 + col as f32 * 9.0, 160.0 + row as f32 * 5.0),
-                Vec2::new(4.0, 4.0),
-                0.3,
-            )),
-            Visibility::Visible,
-            EnemyMarker { index },
-            GameEntity,
-        ));
+    for index in 0..ENEMY_MARKER_COUNT {
+        spawn_enemy_marker(commands, assets, index);
     }
+}
+
+fn spawn_enemy_marker(commands: &mut Commands, assets: &SpriteAssets, index: usize) {
+    commands.spawn((
+        Sprite::from_atlas_image(
+            assets.tank_image.clone(),
+            TextureAtlas {
+                layout: assets.tank_layout.clone(),
+                index: enemy_marker_tank_index(&assets.manifest),
+            },
+        ),
+        Transform::from_translation(virtual_center_scaled(
+            enemy_marker_top_left(index),
+            Vec2::splat(ENEMY_MARKER_SIZE),
+            0.3,
+        ))
+        .with_scale(Vec3::splat(WINDOW_SCALE * ENEMY_MARKER_SIZE / TANK_SIZE)),
+        Visibility::Visible,
+        EnemyMarker { index },
+        GameEntity,
+    ));
 }
 
 fn spawn_versus_status_panel(commands: &mut Commands, assets: &SpriteAssets) {
@@ -3540,6 +3553,19 @@ fn update_status_panel(
         return;
     };
     spawn_phase_text(&mut commands, &assets, &lines, 114.5, 9.0);
+}
+
+fn enemy_marker_top_left(index: usize) -> Vec2 {
+    let col = index % ENEMY_MARKER_COLUMNS;
+    let row = index / ENEMY_MARKER_COLUMNS;
+    Vec2::new(
+        ENEMY_MARKER_LEFT + col as f32 * ENEMY_MARKER_CELL_X,
+        ENEMY_MARKER_TOP + row as f32 * ENEMY_MARKER_CELL_Y,
+    )
+}
+
+fn enemy_marker_tank_index(manifest: &AssetManifest) -> usize {
+    animated_tank_sprite_index(manifest, TankSpriteSet::EnemyBasic, Direction::Down, 0)
 }
 
 fn phase_text_width(text: &str) -> f32 {
@@ -6034,6 +6060,29 @@ mod tests {
         assert!(terrain_z(TileKind::Forest) < 8.0);
         assert!(terrain_z(TileKind::Brick) < terrain_z(TileKind::Forest));
         assert!(terrain_z(TileKind::Water) < terrain_z(TileKind::Forest));
+    }
+
+    #[test]
+    fn campaign_enemy_markers_fit_as_compact_tank_icons() {
+        assert_eq!(ENEMY_MARKER_COUNT, 20);
+        assert_eq!(ENEMY_MARKER_COLUMNS, 4);
+        assert_eq!(enemy_marker_top_left(0), Vec2::new(216.0, 159.0));
+        assert_eq!(enemy_marker_top_left(3), Vec2::new(243.0, 159.0));
+        assert_eq!(enemy_marker_top_left(4), Vec2::new(216.0, 168.0));
+
+        let last = enemy_marker_top_left(ENEMY_MARKER_COUNT - 1);
+        assert_eq!(last, Vec2::new(243.0, 195.0));
+        assert!(last.x + ENEMY_MARKER_SIZE <= VIRTUAL_WIDTH - 4.0);
+        assert!(last.y + ENEMY_MARKER_SIZE <= BOARD_ORIGIN_Y + board_size());
+    }
+
+    #[test]
+    fn campaign_enemy_marker_uses_basic_enemy_tank_sprite() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        assert_eq!(
+            enemy_marker_tank_index(&manifest),
+            manifest.tank_index(TankSpriteSet::EnemyBasic, Direction::Down, 0)
+        );
     }
 
     #[test]

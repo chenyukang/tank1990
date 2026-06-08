@@ -4143,6 +4143,7 @@ mod tests {
     const LEVEL_2: &str = include_str!("../assets/levels/002.level.ron");
     const LEVEL_3: &str = include_str!("../assets/levels/003.level.ron");
     const ARENA_1: &str = include_str!("../assets/arenas/arena_01.ron");
+    const ARENA_2: &str = include_str!("../assets/arenas/arena_02.ron");
 
     #[test]
     fn stage_paths_use_three_digit_level_numbers() {
@@ -4188,35 +4189,37 @@ mod tests {
 
     #[test]
     fn authored_arena_file_matches_deathmatch_shape() {
-        let arena = parse_arena(ARENA_1).expect("arena should parse");
-        assert_eq!(arena.name, "Arena 1");
-        assert_eq!(arena.map.len(), BOARD_TILES);
-        assert!(
-            arena
-                .map
-                .iter()
-                .all(|row| row.chars().count() == BOARD_TILES)
-        );
-        assert_eq!(arena.powerup_spawns.len(), 1);
+        for (index, contents) in [(1, ARENA_1), (2, ARENA_2)] {
+            let arena = parse_arena(contents).expect("arena should parse");
+            assert_eq!(arena.name, format!("Arena {index}"));
+            assert_eq!(arena.map.len(), BOARD_TILES);
+            assert!(
+                arena
+                    .map
+                    .iter()
+                    .all(|row| row.chars().count() == BOARD_TILES)
+            );
+            assert!(!arena.powerup_spawns.is_empty());
 
-        let BattleRules::Deathmatch {
-            target_score,
-            lives,
-            respawn_invulnerability_secs,
-        } = arena.battle_rules;
-        assert_eq!(target_score, 5);
-        assert_eq!(lives, 3);
-        assert_eq!(respawn_invulnerability_secs, 2.0);
+            let BattleRules::Deathmatch {
+                target_score,
+                lives,
+                respawn_invulnerability_secs,
+            } = arena.battle_rules;
+            assert_eq!(target_score, 5);
+            assert_eq!(lives, 3);
+            assert_eq!(respawn_invulnerability_secs, 2.0);
 
-        let grid = TileGrid::from_arena(&arena).expect("grid should build");
-        assert!(grid.can_tank_occupy(Vec2::new(
-            arena.p1_spawn.x as f32 * TILE_SIZE,
-            arena.p1_spawn.y as f32 * TILE_SIZE
-        )));
-        assert!(grid.can_tank_occupy(Vec2::new(
-            arena.p2_spawn.x as f32 * TILE_SIZE,
-            arena.p2_spawn.y as f32 * TILE_SIZE
-        )));
+            let grid = TileGrid::from_arena(&arena).expect("grid should build");
+            assert!(grid.can_tank_occupy(Vec2::new(
+                arena.p1_spawn.x as f32 * TILE_SIZE,
+                arena.p1_spawn.y as f32 * TILE_SIZE
+            )));
+            assert!(grid.can_tank_occupy(Vec2::new(
+                arena.p2_spawn.x as f32 * TILE_SIZE,
+                arena.p2_spawn.y as f32 * TILE_SIZE
+            )));
+        }
     }
 
     #[test]

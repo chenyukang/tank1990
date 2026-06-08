@@ -20,7 +20,7 @@ const DEFAULT_VERSUS_ARENA: usize = 1;
 const TANK_ATLAS_TILES: usize = 48;
 const TANK_ANIMATION_FRAMES: usize = 2;
 const TERRAIN_ATLAS_TILES: usize = 6;
-const EFFECT_ATLAS_TILES: usize = 12;
+const EFFECT_ATLAS_TILES: usize = 16;
 const POWERUP_ATLAS_TILES: usize = 6;
 
 const VIRTUAL_WIDTH: f32 = 256.0;
@@ -190,6 +190,10 @@ impl AssetManifest {
     fn base_destruction_frames(&self) -> SpriteFrameRange {
         self.effects.base_destruction
     }
+
+    fn powerup_sparkle_frames(&self) -> SpriteFrameRange {
+        self.effects.powerup_sparkle
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -253,6 +257,7 @@ struct EffectSpriteManifest {
     explosion: SpriteFrameRange,
     spawn_shimmer: SpriteFrameRange,
     base_destruction: SpriteFrameRange,
+    powerup_sparkle: SpriteFrameRange,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
@@ -1128,6 +1133,9 @@ struct PowerUp {
     kind: PowerUpKind,
 }
 
+#[derive(Component)]
+struct PowerUpSparkle;
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 enum PowerUpKind {
     Star,
@@ -1504,6 +1512,7 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
             "effects.base_destruction",
             manifest.effects.base_destruction,
         ),
+        ("effects.powerup_sparkle", manifest.effects.powerup_sparkle),
     ] {
         validate_frame_range(name, frames, EFFECT_ATLAS_TILES, "effect")?;
     }
@@ -2655,6 +2664,7 @@ fn move_bullets(
     mut bullets: Query<(Entity, &mut Bullet, &mut Transform)>,
     tile_sprites: Query<(Entity, &GridTile)>,
     active_powerups: Query<Entity, With<PowerUp>>,
+    active_sparkles: Query<Entity, With<PowerUpSparkle>>,
     mut base_sprites: Query<&mut Sprite, With<BaseSprite>>,
     mut enemy_tanks: Query<
         (
@@ -2727,6 +2737,7 @@ fn move_bullets(
                                 powerup_kind,
                                 enemy_tank.top_left,
                                 &active_powerups,
+                                &active_sparkles,
                             );
                         }
                         commands.entity(enemy_entity).despawn();
@@ -3037,6 +3048,7 @@ fn pickup_powerups(
     mut enemy_freeze: ResMut<EnemyFreeze>,
     mut base_reinforcement: ResMut<BaseReinforcement>,
     powerups: Query<(Entity, &PowerUp, &Transform)>,
+    active_sparkles: Query<Entity, With<PowerUpSparkle>>,
     tile_sprites: Query<(Entity, &GridTile)>,
     mut players: Query<
         (Entity, &Tank, &Player, &mut PlayerUpgrade, &mut PlayerLives),
@@ -3106,6 +3118,7 @@ fn pickup_powerups(
                 }
             }
             commands.entity(powerup_entity).despawn();
+            despawn_powerup_sparkles(&mut commands, &active_sparkles);
             play_sound(&mut commands, &sounds, SoundKind::PowerupPickup);
             break;
         }
@@ -3734,10 +3747,12 @@ fn spawn_powerup(
     kind: PowerUpKind,
     top_left: Vec2,
     active_powerups: &Query<Entity, With<PowerUp>>,
+    active_sparkles: &Query<Entity, With<PowerUpSparkle>>,
 ) {
     for active_powerup in active_powerups {
         commands.entity(active_powerup).despawn();
     }
+    despawn_powerup_sparkles(commands, active_sparkles);
 
     spawn_powerup_entity(commands, assets, kind, top_left);
 }
@@ -3766,6 +3781,44 @@ fn spawn_powerup_entity(
         PowerUp { kind },
         GameEntity,
     ));
+    spawn_powerup_sparkle_effect(commands, assets, top_left);
+}
+
+fn spawn_powerup_sparkle_effect(commands: &mut Commands, assets: &SpriteAssets, top_left: Vec2) {
+    let frames = assets.manifest.powerup_sparkle_frames();
+    commands.spawn((
+        Sprite::from_atlas_image(
+            assets.effect_image.clone(),
+            TextureAtlas {
+                layout: assets.effect_layout.clone(),
+                index: frames.first,
+            },
+        ),
+        Transform::from_translation(board_object_center(
+            top_left.x,
+            top_left.y,
+            Vec2::splat(TANK_SIZE),
+            5.8,
+        ))
+        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        SpriteAnimation {
+            first: frames.first,
+            last: frames.last,
+            timer: Timer::from_seconds(0.12, TimerMode::Repeating),
+            despawn_on_finish: false,
+        },
+        PowerUpSparkle,
+        GameEntity,
+    ));
+}
+
+fn despawn_powerup_sparkles(
+    commands: &mut Commands,
+    active_sparkles: &Query<Entity, With<PowerUpSparkle>>,
+) {
+    for sparkle in active_sparkles {
+        commands.entity(sparkle).despawn();
+    }
 }
 
 fn tank_center(top_left: Vec2) -> Vec2 {
@@ -4642,6 +4695,9 @@ fn create_effect_atlas() -> Image {
     for frame in 0..4 {
         draw_base_destruction_frame(&mut pixels, width, 128 + frame * 16, frame);
     }
+    for frame in 0..4 {
+        draw_powerup_sparkle_frame(&mut pixels, width, 192 + frame * 16, frame);
+    }
     image_from_pixels(width, 16, pixels)
 }
 
@@ -4730,6 +4786,33 @@ fn draw_base_destruction_frame(pixels: &mut [u8], width: usize, x_offset: usize,
             set_pixel(pixels, width, x_offset + 7, 5, [184, 72, 40, 180]);
             set_pixel(pixels, width, x_offset + 10, 4, [104, 88, 80, 160]);
         }
+    }
+}
+
+fn draw_powerup_sparkle_frame(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
+    let color = if frame.is_multiple_of(2) {
+        [255, 255, 255, 220]
+    } else {
+        [255, 232, 104, 220]
+    };
+    let inset = [1, 3, 5, 3][frame];
+
+    for (x, y) in [
+        (inset, 1),
+        (1, inset),
+        (15 - inset, 1),
+        (14, inset),
+        (inset, 14),
+        (1, 15 - inset),
+        (15 - inset, 14),
+        (14, 15 - inset),
+    ] {
+        set_pixel(pixels, width, x_offset + x, y, color);
+    }
+
+    if frame == 1 || frame == 3 {
+        fill_rect(pixels, width, x_offset + 7, 0, 2, 3, color);
+        fill_rect(pixels, width, x_offset + 7, 13, 2, 3, color);
     }
 }
 
@@ -5093,6 +5176,13 @@ mod tests {
             manifest.base_destruction_frames(),
             SpriteFrameRange { first: 8, last: 11 }
         );
+        assert_eq!(
+            manifest.powerup_sparkle_frames(),
+            SpriteFrameRange {
+                first: 12,
+                last: 15
+            }
+        );
 
         assert_eq!(manifest.powerup_index(PowerUpKind::Star), 0);
         assert_eq!(manifest.powerup_index(PowerUpKind::Helmet), 1);
@@ -5146,8 +5236,8 @@ mod tests {
         );
 
         let invalid = MANIFEST.replacen(
-            "base_destruction: (first: 8, last: 11)",
-            "base_destruction: (first: 8, last: 12)",
+            "powerup_sparkle: (first: 12, last: 15)",
+            "powerup_sparkle: (first: 12, last: 16)",
             1,
         );
         assert!(

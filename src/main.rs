@@ -42,12 +42,12 @@ const ENEMY_BULLET_LIMIT: usize = 4;
 const ENEMY_BULLET_LIMIT_PER_TANK: usize = 1;
 const SNAP_DISTANCE: f32 = 2.0;
 const GLYPHS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-static PAUSED_BANNER_LINES: [&str; 1] = ["PAUSED"];
-static GAME_OVER_BANNER_LINES: [&str; 1] = ["GAME OVER"];
+static PAUSED_BANNER_LINES: [&str; 2] = ["PAUSED", "PRESS ESC"];
+static GAME_OVER_BANNER_LINES: [&str; 2] = ["GAME OVER", "PRESS R OR M"];
 static LEVEL_CLEAR_BANNER_LINES: [&str; 1] = ["LEVEL CLEAR"];
-static P1_WIN_BANNER_LINES: [&str; 1] = ["P1 WIN"];
-static P2_WIN_BANNER_LINES: [&str; 1] = ["P2 WIN"];
-static VICTORY_BANNER_LINES: [&str; 3] = ["VICTORY", "ALL STAGES CLEAR", "ENEMY DOWN"];
+static P1_WIN_BANNER_LINES: [&str; 2] = ["P1 WIN", "PRESS R OR M"];
+static P2_WIN_BANNER_LINES: [&str; 2] = ["P2 WIN", "PRESS R OR M"];
+static VICTORY_BANNER_LINES: [&str; 3] = ["VICTORY", "ALL STAGES CLEAR", "PRESS R OR M"];
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
@@ -6020,6 +6020,29 @@ mod tests {
             phase_banner_lines(GamePhase::Victory, None).expect("victory should show a banner"),
             VICTORY_BANNER_LINES.as_slice()
         );
+    }
+
+    #[test]
+    fn terminal_phase_banners_show_restart_or_menu_hint() {
+        for lines in [
+            phase_banner_lines(GamePhase::GameOver, None).expect("game over should show a banner"),
+            phase_banner_lines(GamePhase::RoundOver, Some(PlayerId::One))
+                .expect("p1 win should show a banner"),
+            phase_banner_lines(GamePhase::RoundOver, Some(PlayerId::Two))
+                .expect("p2 win should show a banner"),
+            phase_banner_lines(GamePhase::Victory, None).expect("victory should show a banner"),
+        ] {
+            assert!(
+                lines.contains(&"PRESS R OR M"),
+                "terminal phase banner should explain how to continue"
+            );
+        }
+    }
+
+    #[test]
+    fn paused_banner_shows_resume_hint() {
+        let lines = phase_banner_lines(GamePhase::Paused, None).expect("paused should show banner");
+        assert!(lines.contains(&"PRESS ESC"));
     }
 
     #[test]

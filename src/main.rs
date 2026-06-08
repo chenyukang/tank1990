@@ -60,6 +60,7 @@ static MODE_SELECT_HINT_LINES: [&str; 3] = ["WS SELECT", "AD ARENA", "SPACE STAR
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
+const STAGE_CLEAR_LIFE_BONUS: u32 = 1000;
 const ENEMY_ALIGNMENT_FIRE_FRACTION: f32 = 0.45;
 const ENEMY_SPAWN_PROTECTION_SECONDS: f32 = 0.35;
 const PLAYER_RESPAWN_DELAY_SECONDS: f32 = 0.35;
@@ -3430,7 +3431,7 @@ fn check_game_phase(
     game_mode: Res<GameMode>,
     sounds: Res<SoundAssets>,
     mut game_status: ResMut<GameStatus>,
-    score_board: Res<ScoreBoard>,
+    mut score_board: ResMut<ScoreBoard>,
     director: Res<EnemyDirector>,
     active_enemies: Query<&EnemyTank>,
 ) {
@@ -3450,7 +3451,12 @@ fn check_game_phase(
         game_status.transition_timer =
             Timer::from_seconds(LEVEL_CLEAR_DELAY_SECONDS, TimerMode::Once);
         match next_phase {
-            GamePhase::LevelClear => play_sound(&mut commands, &sounds, SoundKind::LevelClear),
+            GamePhase::LevelClear => {
+                score_board.score = score_board
+                    .score
+                    .saturating_add(stage_clear_bonus(score_board.lives));
+                play_sound(&mut commands, &sounds, SoundKind::LevelClear);
+            }
             GamePhase::GameOver => play_sound(&mut commands, &sounds, SoundKind::GameOver),
             _ => {}
         }
@@ -3677,6 +3683,10 @@ fn campaign_phase(
     } else {
         GamePhase::Playing
     }
+}
+
+fn stage_clear_bonus(lives: i32) -> u32 {
+    lives.max(0) as u32 * STAGE_CLEAR_LIFE_BONUS
 }
 
 fn toggle_pause_phase(phase: GamePhase) -> GamePhase {
@@ -6261,6 +6271,14 @@ mod tests {
     fn campaign_phase_stays_playing_while_enemies_remain() {
         assert_eq!(campaign_phase(3, 20, 19, 0, 1), GamePhase::Playing);
         assert_eq!(campaign_phase(3, 20, 5, 10, 4), GamePhase::Playing);
+    }
+
+    #[test]
+    fn stage_clear_bonus_rewards_remaining_lives() {
+        assert_eq!(stage_clear_bonus(3), 3000);
+        assert_eq!(stage_clear_bonus(1), 1000);
+        assert_eq!(stage_clear_bonus(0), 0);
+        assert_eq!(stage_clear_bonus(-2), 0);
     }
 
     #[test]

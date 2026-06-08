@@ -3458,19 +3458,35 @@ fn clock_freeze_target(game_mode: GameMode, collector: PlayerId) -> Option<Playe
     }
 }
 
-fn cancel_colliding_bullets(mut commands: Commands, bullets: Query<(Entity, &Bullet)>) {
+fn cancel_colliding_bullets(
+    mut commands: Commands,
+    assets: Res<SpriteAssets>,
+    bullets: Query<(Entity, &Bullet)>,
+) {
     let bullets: Vec<(Entity, Vec2)> = bullets
         .iter()
         .map(|(entity, bullet)| (entity, bullet.top_left))
         .collect();
+    let mut destroyed = HashSet::new();
 
     for i in 0..bullets.len() {
         for j in (i + 1)..bullets.len() {
             if bullet_positions_overlap(bullets[i].1, bullets[j].1) {
-                commands.entity(bullets[i].0).despawn();
-                commands.entity(bullets[j].0).despawn();
+                let first_was_live = destroyed.insert(bullets[i].0);
+                let second_was_live = destroyed.insert(bullets[j].0);
+                if first_was_live && second_was_live {
+                    spawn_bullet_impact_effect(
+                        &mut commands,
+                        &assets,
+                        bullet_clash_impact_top_left(bullets[i].1, bullets[j].1),
+                    );
+                }
             }
         }
+    }
+
+    for entity in destroyed {
+        commands.entity(entity).despawn();
     }
 }
 
@@ -5228,6 +5244,10 @@ fn tank_position_free(candidate: Vec2, current: Vec2, occupied: &[Vec2]) -> bool
 
 fn bullet_positions_overlap(a: Vec2, b: Vec2) -> bool {
     rects_overlap(a, Vec2::splat(BULLET_SIZE), b, Vec2::splat(BULLET_SIZE))
+}
+
+fn bullet_clash_impact_top_left(a: Vec2, b: Vec2) -> Vec2 {
+    (a + b) / 2.0
 }
 
 fn rects_overlap(a: Vec2, a_size: Vec2, b: Vec2, b_size: Vec2) -> bool {
@@ -8222,6 +8242,14 @@ mod tests {
             Vec2::new(10.0, 10.0),
             Vec2::new(14.0, 10.0)
         ));
+    }
+
+    #[test]
+    fn bullet_clash_impact_uses_midpoint_between_bullets() {
+        assert_eq!(
+            bullet_clash_impact_top_left(Vec2::new(10.0, 12.0), Vec2::new(14.0, 8.0)),
+            Vec2::new(12.0, 10.0)
+        );
     }
 
     fn unique_temp_asset_path(name: &str) -> std::path::PathBuf {

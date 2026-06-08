@@ -1451,10 +1451,10 @@ fn start_versus_round(
     *versus_powerups = VersusPowerUpDirector::from_arena(&arena);
     enemy_freeze.reset();
     base_reinforcement.reset();
-    game_status.phase = GamePhase::Playing;
+    game_status.phase = GamePhase::StageIntro;
     game_status.arena = arena_index;
     game_status.winner = None;
-    game_status.transition_timer.reset();
+    game_status.transition_timer = Timer::from_seconds(STAGE_INTRO_SECONDS, TimerMode::Once);
 }
 
 fn stage_path(stage: usize) -> String {
@@ -3536,7 +3536,7 @@ fn update_status_panel(
         return;
     }
 
-    let Some(lines) = phase_banner_text(&game_status) else {
+    let Some(lines) = phase_banner_text(&game_status, *game_mode) else {
         return;
     };
     spawn_phase_text(&mut commands, &assets, &lines, 114.5, 9.0);
@@ -3569,9 +3569,16 @@ fn stage_intro_banner_text(stage: usize) -> Vec<String> {
     vec![format!("STAGE {:02}", stage.min(99)), "READY".to_string()]
 }
 
-fn phase_banner_text(status: &GameStatus) -> Option<Vec<String>> {
+fn arena_intro_banner_text(arena: usize) -> Vec<String> {
+    vec![format!("ARENA {:02}", arena.min(99)), "READY".to_string()]
+}
+
+fn phase_banner_text(status: &GameStatus, mode: GameMode) -> Option<Vec<String>> {
     if status.phase == GamePhase::StageIntro {
-        return Some(stage_intro_banner_text(status.stage));
+        return Some(match mode {
+            GameMode::Campaign => stage_intro_banner_text(status.stage),
+            GameMode::VersusDeathmatch => arena_intro_banner_text(status.arena),
+        });
     }
 
     phase_banner_lines(status.phase, status.winner)
@@ -6088,7 +6095,8 @@ mod tests {
 
         assert!(!status.is_playing());
         assert_eq!(
-            phase_banner_text(&status).expect("stage intro should show a banner"),
+            phase_banner_text(&status, GameMode::Campaign)
+                .expect("stage intro should show a banner"),
             ["STAGE 07".to_string(), "READY".to_string()]
         );
     }
@@ -6102,6 +6110,26 @@ mod tests {
         assert_eq!(
             stage_intro_banner_text(135),
             ["STAGE 99".to_string(), "READY".to_string()]
+        );
+    }
+
+    #[test]
+    fn versus_intro_banner_uses_selected_arena_label() {
+        let status = GameStatus {
+            phase: GamePhase::StageIntro,
+            arena: 4,
+            ..GameStatus::default()
+        };
+
+        assert!(!status.is_playing());
+        assert_eq!(
+            phase_banner_text(&status, GameMode::VersusDeathmatch)
+                .expect("arena intro should show a banner"),
+            ["ARENA 04".to_string(), "READY".to_string()]
+        );
+        assert_eq!(
+            arena_intro_banner_text(135),
+            ["ARENA 99".to_string(), "READY".to_string()]
         );
     }
 
@@ -6131,41 +6159,70 @@ mod tests {
     #[test]
     fn phase_banner_text_uses_available_pixel_glyphs() {
         let statuses = [
-            GameStatus {
-                phase: GamePhase::StageIntro,
-                stage: 35,
-                ..GameStatus::default()
-            },
-            GameStatus {
-                phase: GamePhase::Paused,
-                ..GameStatus::default()
-            },
-            GameStatus {
-                phase: GamePhase::GameOver,
-                ..GameStatus::default()
-            },
-            GameStatus {
-                phase: GamePhase::LevelClear,
-                ..GameStatus::default()
-            },
-            GameStatus {
-                phase: GamePhase::RoundOver,
-                winner: Some(PlayerId::One),
-                ..GameStatus::default()
-            },
-            GameStatus {
-                phase: GamePhase::RoundOver,
-                winner: Some(PlayerId::Two),
-                ..GameStatus::default()
-            },
-            GameStatus {
-                phase: GamePhase::Victory,
-                ..GameStatus::default()
-            },
+            (
+                GameStatus {
+                    phase: GamePhase::StageIntro,
+                    stage: 35,
+                    ..GameStatus::default()
+                },
+                GameMode::Campaign,
+            ),
+            (
+                GameStatus {
+                    phase: GamePhase::StageIntro,
+                    arena: 4,
+                    ..GameStatus::default()
+                },
+                GameMode::VersusDeathmatch,
+            ),
+            (
+                GameStatus {
+                    phase: GamePhase::Paused,
+                    ..GameStatus::default()
+                },
+                GameMode::Campaign,
+            ),
+            (
+                GameStatus {
+                    phase: GamePhase::GameOver,
+                    ..GameStatus::default()
+                },
+                GameMode::Campaign,
+            ),
+            (
+                GameStatus {
+                    phase: GamePhase::LevelClear,
+                    ..GameStatus::default()
+                },
+                GameMode::Campaign,
+            ),
+            (
+                GameStatus {
+                    phase: GamePhase::RoundOver,
+                    winner: Some(PlayerId::One),
+                    ..GameStatus::default()
+                },
+                GameMode::VersusDeathmatch,
+            ),
+            (
+                GameStatus {
+                    phase: GamePhase::RoundOver,
+                    winner: Some(PlayerId::Two),
+                    ..GameStatus::default()
+                },
+                GameMode::VersusDeathmatch,
+            ),
+            (
+                GameStatus {
+                    phase: GamePhase::Victory,
+                    ..GameStatus::default()
+                },
+                GameMode::Campaign,
+            ),
         ];
 
-        for status in statuses {
-            let lines = phase_banner_text(&status).expect("phase should show a banner");
+        for (status, mode) in statuses {
+            let lines = phase_banner_text(&status, mode).expect("phase should show a banner");
             for line in lines {
                 assert!(phase_text_width(&line) > 0.0);
                 for ch in line.chars().filter(|ch| *ch != ' ') {

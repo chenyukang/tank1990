@@ -3118,7 +3118,14 @@ fn pickup_powerups(
     active_sparkles: Query<Entity, With<PowerUpSparkle>>,
     tile_sprites: Query<(Entity, &GridTile)>,
     mut players: Query<
-        (Entity, &Tank, &Player, &mut PlayerUpgrade, &mut PlayerLives),
+        (
+            Entity,
+            &Tank,
+            &Player,
+            &mut PlayerUpgrade,
+            &mut PlayerLives,
+            &mut Sprite,
+        ),
         With<Player>,
     >,
     enemy_tanks: Query<(Entity, &Tank, &EnemyTank), With<EnemyTank>>,
@@ -3130,7 +3137,7 @@ fn pickup_powerups(
 
     for (powerup_entity, powerup, transform) in &powerups {
         let powerup_top_left = board_top_left_from_translation(transform.translation, TANK_SIZE);
-        for (player_entity, tank, player, mut upgrade, mut lives) in &mut players {
+        for (player_entity, tank, player, mut upgrade, mut lives, mut sprite) in &mut players {
             if !rects_overlap(
                 tank.top_left,
                 Vec2::splat(TANK_SIZE),
@@ -3143,6 +3150,7 @@ fn pickup_powerups(
             match powerup.kind {
                 PowerUpKind::Star => {
                     upgrade.level = (upgrade.level + 1).min(3);
+                    sprite.color = player_upgrade_visual_color(upgrade.level);
                 }
                 PowerUpKind::Helmet => {
                     commands.entity(player_entity).insert(Shield {
@@ -3369,7 +3377,7 @@ fn tick_shields(
     time: Res<Time>,
     game_status: Res<GameStatus>,
     mut shielded: Query<
-        (Entity, &mut Shield, &mut Sprite),
+        (Entity, &mut Shield, &PlayerUpgrade, &mut Sprite),
         (With<Player>, Without<PlayerRespawnDelay>),
     >,
 ) {
@@ -3377,16 +3385,13 @@ fn tick_shields(
         return;
     }
 
-    for (entity, mut shield, mut sprite) in &mut shielded {
+    for (entity, mut shield, upgrade, mut sprite) in &mut shielded {
         shield.timer.tick(time.delta());
-        sprite.color = if shield.timer.elapsed_secs() % 0.25 < 0.125 {
-            Color::srgb_u8(160, 220, 255)
-        } else {
-            Color::WHITE
-        };
+        let [r, g, b] = player_shield_visual_rgb(shield.timer.elapsed_secs(), upgrade.level);
+        sprite.color = Color::srgb_u8(r, g, b);
 
         if shield.timer.is_finished() {
-            sprite.color = Color::WHITE;
+            sprite.color = player_upgrade_visual_color(upgrade.level);
             commands.entity(entity).remove::<Shield>();
         }
     }
@@ -4284,6 +4289,28 @@ fn enemy_visual_rgb(
         (EnemyKind::Power, _) => [248, 112, 112],
         (EnemyKind::Fast, _) => [112, 216, 128],
         (EnemyKind::Basic, _) => [255, 255, 255],
+    }
+}
+
+fn player_upgrade_visual_color(upgrade_level: u8) -> Color {
+    let [r, g, b] = player_upgrade_visual_rgb(upgrade_level);
+    Color::srgb_u8(r, g, b)
+}
+
+fn player_upgrade_visual_rgb(upgrade_level: u8) -> [u8; 3] {
+    match upgrade_level.min(3) {
+        0 => [255, 255, 255],
+        1 => [184, 248, 184],
+        2 => [255, 232, 104],
+        _ => [255, 176, 104],
+    }
+}
+
+fn player_shield_visual_rgb(elapsed_secs: f32, upgrade_level: u8) -> [u8; 3] {
+    if elapsed_secs % 0.25 < 0.125 {
+        [160, 220, 255]
+    } else {
+        player_upgrade_visual_rgb(upgrade_level)
     }
 }
 
@@ -6623,6 +6650,21 @@ mod tests {
         let mut delay = PlayerRespawnDelay::new();
         assert!(!delay.tick(Duration::from_secs_f32(PLAYER_RESPAWN_DELAY_SECONDS - 0.01)));
         assert!(delay.tick(Duration::from_secs_f32(0.02)));
+    }
+
+    #[test]
+    fn player_upgrade_visuals_show_star_power_level() {
+        assert_eq!(player_upgrade_visual_rgb(0), [255, 255, 255]);
+        assert_eq!(player_upgrade_visual_rgb(1), [184, 248, 184]);
+        assert_eq!(player_upgrade_visual_rgb(2), [255, 232, 104]);
+        assert_eq!(player_upgrade_visual_rgb(3), [255, 176, 104]);
+        assert_eq!(player_upgrade_visual_rgb(99), [255, 176, 104]);
+    }
+
+    #[test]
+    fn helmet_flicker_returns_to_upgrade_visual_between_flashes() {
+        assert_eq!(player_shield_visual_rgb(0.05, 2), [160, 220, 255]);
+        assert_eq!(player_shield_visual_rgb(0.15, 2), [255, 232, 104]);
     }
 
     #[test]

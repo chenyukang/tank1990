@@ -43,4 +43,5 @@
   ],
   spawn_interval_secs: 2.3,
   max_enemies_on_screen: 4,
+  player_steel_destruction: true,
 )

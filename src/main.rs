@@ -29,6 +29,7 @@ const BULLET_SIZE: f32 = 4.0;
 
 const PLAYER_SPEED: f32 = 60.0;
 const BULLET_SPEED: f32 = 240.0;
+const PLAYER_FAST_BULLET_SPEED: f32 = 300.0;
 const SNAP_DISTANCE: f32 = 2.0;
 const GLYPHS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const POWERUP_DROP_INTERVAL: usize = 5;
@@ -334,6 +335,19 @@ impl ScoreBoard {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Resource)]
+struct StageRules {
+    player_steel_destruction: bool,
+}
+
+impl StageRules {
+    fn from_level(level: &LevelDefinition) -> Self {
+        Self {
+            player_steel_destruction: level.player_steel_destruction,
+        }
+    }
+}
+
 #[derive(Resource, Default)]
 struct EnemyFreeze {
     timer: Option<Timer>,
@@ -581,6 +595,8 @@ struct LevelDefinition {
     enemies: Vec<EnemyKind>,
     spawn_interval_secs: f32,
     max_enemies_on_screen: usize,
+    #[serde(default)]
+    player_steel_destruction: bool,
 }
 
 #[derive(Deserialize)]
@@ -690,6 +706,8 @@ struct Bullet {
     top_left: Vec2,
     facing: Direction,
     owner: Team,
+    speed: f32,
+    breaks_steel: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -808,6 +826,7 @@ fn setup(
     let level = load_stage_definition(1).expect("level should load");
     info!("Loaded {}", level.name);
     let tile_grid = TileGrid::from_level(&level).expect("level map should be valid");
+    let stage_rules = StageRules::from_level(&level);
     let enemy_director = EnemyDirector::from_level(&level);
     let score_board = ScoreBoard::campaign(level.enemies.len());
 
@@ -824,6 +843,7 @@ fn setup(
     commands.insert_resource(sprite_assets);
     commands.insert_resource(sound_assets);
     commands.insert_resource(tile_grid);
+    commands.insert_resource(stage_rules);
     commands.insert_resource(enemy_director);
     commands.insert_resource(score_board);
 }
@@ -838,6 +858,7 @@ fn handle_shared_controls(
     mut tile_grid: ResMut<TileGrid>,
     mut director: ResMut<EnemyDirector>,
     mut score_board: ResMut<ScoreBoard>,
+    mut stage_rules: ResMut<StageRules>,
     mut enemy_freeze: ResMut<EnemyFreeze>,
     mut base_reinforcement: ResMut<BaseReinforcement>,
     game_entities: Query<Entity, With<GameEntity>>,
@@ -857,6 +878,7 @@ fn handle_shared_controls(
                 &mut tile_grid,
                 &mut director,
                 &mut score_board,
+                &mut stage_rules,
                 &mut enemy_freeze,
                 &mut base_reinforcement,
                 &game_entities,
@@ -872,6 +894,7 @@ fn handle_shared_controls(
                     &mut tile_grid,
                     &mut director,
                     &mut score_board,
+                    &mut stage_rules,
                     &mut enemy_freeze,
                     &mut base_reinforcement,
                     &game_entities,
@@ -891,6 +914,7 @@ fn handle_shared_controls(
                 &mut tile_grid,
                 &mut director,
                 &mut score_board,
+                &mut stage_rules,
                 &mut enemy_freeze,
                 &mut base_reinforcement,
                 &game_entities,
@@ -904,6 +928,7 @@ fn handle_shared_controls(
                 &mut tile_grid,
                 &mut director,
                 &mut score_board,
+                &mut stage_rules,
                 &mut enemy_freeze,
                 &mut base_reinforcement,
                 &game_entities,
@@ -920,6 +945,7 @@ fn restart_level(
     tile_grid: &mut TileGrid,
     director: &mut EnemyDirector,
     score_board: &mut ScoreBoard,
+    stage_rules: &mut StageRules,
     enemy_freeze: &mut EnemyFreeze,
     base_reinforcement: &mut BaseReinforcement,
     game_entities: &Query<Entity, With<GameEntity>>,
@@ -938,6 +964,7 @@ fn restart_level(
     *tile_grid = new_tile_grid;
     *director = EnemyDirector::from_level(&level);
     *score_board = ScoreBoard::campaign(level.enemies.len());
+    *stage_rules = StageRules::from_level(&level);
     enemy_freeze.reset();
     base_reinforcement.reset();
     game_status.phase = GamePhase::Playing;
@@ -954,6 +981,7 @@ fn start_versus_round(
     tile_grid: &mut TileGrid,
     director: &mut EnemyDirector,
     score_board: &mut ScoreBoard,
+    stage_rules: &mut StageRules,
     enemy_freeze: &mut EnemyFreeze,
     base_reinforcement: &mut BaseReinforcement,
     game_entities: &Query<Entity, With<GameEntity>>,
@@ -979,6 +1007,7 @@ fn start_versus_round(
     *tile_grid = new_tile_grid;
     *director = EnemyDirector::inactive();
     *score_board = ScoreBoard::versus(lives, target_score, respawn_invulnerability_secs);
+    *stage_rules = StageRules::default();
     enemy_freeze.reset();
     base_reinforcement.reset();
     game_status.phase = GamePhase::Playing;
@@ -1851,6 +1880,8 @@ fn fire_enemy_bullets(
                 top_left: bullet_top_left,
                 facing: tank.facing,
                 owner: Team::Enemy,
+                speed: BULLET_SPEED,
+                breaks_steel: false,
             },
             GameEntity,
         ));
@@ -1870,6 +1901,7 @@ fn fire_player_bullet(
     assets: Res<SpriteAssets>,
     sounds: Res<SoundAssets>,
     game_status: Res<GameStatus>,
+    stage_rules: Res<StageRules>,
     players: Query<(&Tank, &PlayerUpgrade, &Player), With<Player>>,
     bullets: Query<&Bullet>,
 ) {
@@ -1911,6 +1943,8 @@ fn fire_player_bullet(
                 top_left: bullet_top_left,
                 facing: tank.facing,
                 owner,
+                speed: player_bullet_speed(upgrade.level),
+                breaks_steel: player_bullets_break_steel(upgrade.level, *stage_rules),
             },
             GameEntity,
         ));
@@ -1961,7 +1995,8 @@ fn move_bullets(
 
     for (entity, mut bullet, mut transform) in &mut bullets {
         let facing = bullet.facing;
-        bullet.top_left += facing.movement() * BULLET_SPEED * time.delta_secs();
+        let speed = bullet.speed;
+        bullet.top_left += facing.movement() * speed * time.delta_secs();
         bullet.top_left = round_vec2(bullet.top_left);
 
         let center = bullet.top_left + Vec2::splat(BULLET_SIZE / 2.0);
@@ -2128,9 +2163,17 @@ fn move_bullets(
         let tile = grid.tiles[tile_y * BOARD_TILES + tile_x];
 
         if tile.bullet_blocks() {
-            if tile == TileKind::Brick {
+            if bullet_destroys_tile(tile, bullet.breaks_steel) {
                 grid.set(tile_x, tile_y, TileKind::Empty);
-                play_sound(&mut commands, &sounds, SoundKind::BrickHit);
+                play_sound(
+                    &mut commands,
+                    &sounds,
+                    if tile == TileKind::Steel {
+                        SoundKind::SteelHit
+                    } else {
+                        SoundKind::BrickHit
+                    },
+                );
                 for (tile_entity, grid_tile) in &tile_sprites {
                     if grid_tile.x == tile_x && grid_tile.y == tile_y {
                         commands.entity(tile_entity).despawn();
@@ -2153,7 +2196,7 @@ fn move_bullets(
                 for mut sprite in &mut base_sprites {
                     sprite.image = assets.base_destroyed.clone();
                 }
-            } else if tile == TileKind::Steel {
+            } else if tile == TileKind::Steel && !bullet.breaks_steel {
                 play_sound(&mut commands, &sounds, SoundKind::SteelHit);
             }
 
@@ -2553,6 +2596,7 @@ fn advance_after_level_clear(
     mut tile_grid: ResMut<TileGrid>,
     mut director: ResMut<EnemyDirector>,
     mut score_board: ResMut<ScoreBoard>,
+    mut stage_rules: ResMut<StageRules>,
     mut enemy_freeze: ResMut<EnemyFreeze>,
     mut base_reinforcement: ResMut<BaseReinforcement>,
     game_entities: Query<Entity, With<GameEntity>>,
@@ -2596,6 +2640,7 @@ fn advance_after_level_clear(
 
     *tile_grid = new_tile_grid;
     *director = EnemyDirector::from_level(&level);
+    *stage_rules = StageRules::from_level(&level);
     score_board.enemies_destroyed = 0;
     score_board.total_enemies = level.enemies.len();
     enemy_freeze.reset();
@@ -3067,6 +3112,22 @@ fn enemy_visual_rgb(
 
 fn player_bullet_limit(upgrade_level: u8) -> usize {
     if upgrade_level >= 2 { 2 } else { 1 }
+}
+
+fn player_bullet_speed(upgrade_level: u8) -> f32 {
+    if upgrade_level >= 1 {
+        PLAYER_FAST_BULLET_SPEED
+    } else {
+        BULLET_SPEED
+    }
+}
+
+fn player_bullets_break_steel(upgrade_level: u8, stage_rules: StageRules) -> bool {
+    upgrade_level >= 3 && stage_rules.player_steel_destruction
+}
+
+fn bullet_destroys_tile(tile: TileKind, breaks_steel: bool) -> bool {
+    matches!(tile, TileKind::Brick) || (breaks_steel && tile == TileKind::Steel)
 }
 
 fn should_drop_powerup(enemies_destroyed: usize) -> bool {
@@ -4016,6 +4077,19 @@ mod tests {
     }
 
     #[test]
+    fn level_rules_default_to_normal_steel_and_stage_three_enables_upgrade_breaking() {
+        let stage_1 = parse_level(LEVEL_1).expect("level should parse");
+        let stage_3 = parse_level(LEVEL_3).expect("level should parse");
+        assert_eq!(StageRules::from_level(&stage_1), StageRules::default());
+        assert_eq!(
+            StageRules::from_level(&stage_3),
+            StageRules {
+                player_steel_destruction: true
+            }
+        );
+    }
+
+    #[test]
     fn authored_arena_file_matches_deathmatch_shape() {
         let arena = parse_arena(ARENA_1).expect("arena should parse");
         assert_eq!(arena.name, "Arena 1");
@@ -4187,6 +4261,32 @@ mod tests {
         assert_eq!(player_bullet_limit(1), 1);
         assert_eq!(player_bullet_limit(2), 2);
         assert_eq!(player_bullet_limit(3), 2);
+    }
+
+    #[test]
+    fn player_bullet_speed_increases_after_first_star_upgrade() {
+        assert_eq!(player_bullet_speed(0), BULLET_SPEED);
+        assert_eq!(player_bullet_speed(1), PLAYER_FAST_BULLET_SPEED);
+        assert_eq!(player_bullet_speed(3), PLAYER_FAST_BULLET_SPEED);
+    }
+
+    #[test]
+    fn player_steel_breaking_requires_full_upgrade_and_stage_rule() {
+        let disabled = StageRules::default();
+        let enabled = StageRules {
+            player_steel_destruction: true,
+        };
+        assert!(!player_bullets_break_steel(2, enabled));
+        assert!(!player_bullets_break_steel(3, disabled));
+        assert!(player_bullets_break_steel(3, enabled));
+    }
+
+    #[test]
+    fn bullet_tile_destruction_respects_steel_breaking_flag() {
+        assert!(bullet_destroys_tile(TileKind::Brick, false));
+        assert!(!bullet_destroys_tile(TileKind::Steel, false));
+        assert!(bullet_destroys_tile(TileKind::Steel, true));
+        assert!(!bullet_destroys_tile(TileKind::Base, true));
     }
 
     #[test]

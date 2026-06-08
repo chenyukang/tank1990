@@ -348,6 +348,12 @@ enum SoundKind {
     GameOver,
 }
 
+const CAMPAIGN_BASE_DESTROYED_SOUNDS: [SoundKind; 2] =
+    [SoundKind::BaseDestroyed, SoundKind::GameOver];
+const VERSUS_BASE_DESTROYED_SOUNDS: [SoundKind; 2] =
+    [SoundKind::BaseDestroyed, SoundKind::LevelClear];
+const NO_BASE_DESTROYED_SOUNDS: [SoundKind; 0] = [];
+
 #[derive(Asset, TypePath)]
 struct RetroSound {
     samples: Arc<[f32]>,
@@ -3373,21 +3379,23 @@ fn move_bullets(
                     )),
                 ));
 
+                let sound_sequence = base_destroyed_sounds(*game_mode, base_owner);
                 match *game_mode {
                     GameMode::Campaign => {
                         game_status.phase = GamePhase::GameOver;
-                        play_sound(&mut commands, &sounds, SoundKind::BaseDestroyed);
                     }
                     GameMode::VersusBaseBattle => {
                         if let Some(owner) = base_owner {
                             game_status.phase = GamePhase::RoundOver;
                             game_status.winner = Some(base_battle_winner_for_base(owner));
-                            play_sound(&mut commands, &sounds, SoundKind::BaseDestroyed);
                         }
                     }
                     GameMode::VersusDeathmatch => {}
                 }
 
+                for sound in sound_sequence {
+                    play_sound(&mut commands, &sounds, *sound);
+                }
                 spawn_base_destruction_effect(&mut commands, &assets, base_top_left);
             } else if tile == TileKind::Steel && !bullet.breaks_steel {
                 play_sound(&mut commands, &sounds, SoundKind::SteelHit);
@@ -3490,6 +3498,17 @@ fn deathmatch_winner_after_hit(
 
 fn base_battle_winner_for_base(base_owner: PlayerId) -> PlayerId {
     base_owner.opponent()
+}
+
+fn base_destroyed_sounds(
+    game_mode: GameMode,
+    base_owner: Option<PlayerId>,
+) -> &'static [SoundKind] {
+    match game_mode {
+        GameMode::Campaign => &CAMPAIGN_BASE_DESTROYED_SOUNDS,
+        GameMode::VersusBaseBattle if base_owner.is_some() => &VERSUS_BASE_DESTROYED_SOUNDS,
+        GameMode::VersusBaseBattle | GameMode::VersusDeathmatch => &NO_BASE_DESTROYED_SOUNDS,
+    }
 }
 
 fn clock_freeze_target(game_mode: GameMode, collector: PlayerId) -> Option<PlayerId> {
@@ -8124,6 +8143,20 @@ mod tests {
     fn base_battle_winner_is_the_destroyed_base_opponent() {
         assert_eq!(base_battle_winner_for_base(PlayerId::One), PlayerId::Two);
         assert_eq!(base_battle_winner_for_base(PlayerId::Two), PlayerId::One);
+    }
+
+    #[test]
+    fn base_destroyed_sounds_include_terminal_jingles() {
+        assert_eq!(
+            base_destroyed_sounds(GameMode::Campaign, None),
+            [SoundKind::BaseDestroyed, SoundKind::GameOver]
+        );
+        assert_eq!(
+            base_destroyed_sounds(GameMode::VersusBaseBattle, Some(PlayerId::One)),
+            [SoundKind::BaseDestroyed, SoundKind::LevelClear]
+        );
+        assert_eq!(base_destroyed_sounds(GameMode::VersusBaseBattle, None), []);
+        assert_eq!(base_destroyed_sounds(GameMode::VersusDeathmatch, None), []);
     }
 
     #[test]

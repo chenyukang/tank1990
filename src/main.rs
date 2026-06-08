@@ -35,6 +35,7 @@ const POWERUP_DROP_INTERVAL: usize = 5;
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
+const ENEMY_ALIGNMENT_FIRE_FRACTION: f32 = 0.45;
 const SOUND_SAMPLE_RATE: u32 = 22_050;
 
 fn main() {
@@ -1443,6 +1444,35 @@ fn base_wall_positions(tile_grid: &TileGrid) -> Vec<(usize, usize)> {
     positions
 }
 
+fn base_center_from_grid(tile_grid: &TileGrid) -> Option<Vec2> {
+    let mut min_x = BOARD_TILES;
+    let mut min_y = BOARD_TILES;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    let mut found_base = false;
+
+    for y in 0..BOARD_TILES {
+        for x in 0..BOARD_TILES {
+            if tile_grid.tiles[y * BOARD_TILES + x] == TileKind::Base {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+                found_base = true;
+            }
+        }
+    }
+
+    if !found_base {
+        return None;
+    }
+
+    Some(Vec2::new(
+        (min_x + max_x + 1) as f32 * TILE_SIZE / 2.0,
+        (min_y + max_y + 1) as f32 * TILE_SIZE / 2.0,
+    ))
+}
+
 fn spawn_player_tank(
     commands: &mut Commands,
     assets: &SpriteAssets,
@@ -1687,15 +1717,22 @@ fn move_enemy_tanks(
         .iter()
         .map(|(tank, player)| (tank.top_left, player.is_some()))
         .collect();
-    let player_top_left = occupied
+    let player_top_lefts: Vec<Vec2> = occupied
         .iter()
-        .find_map(|(top_left, is_player)| is_player.then_some(*top_left));
+        .filter_map(|(top_left, is_player)| is_player.then_some(*top_left))
+        .collect();
     let occupied_positions: Vec<Vec2> = occupied.iter().map(|(top_left, _)| *top_left).collect();
+    let base_center = base_center_from_grid(&grid);
 
     for (mut tank, mut sprite, mut transform, mut ai, mut tank_sprite) in &mut tank_queries.p1() {
         ai.turn_timer.tick(time.delta());
         if ai.turn_timer.just_finished() {
-            tank.facing = preferred_enemy_direction(tank.top_left, tank.facing, player_top_left);
+            tank.facing = preferred_enemy_direction(
+                tank.top_left,
+                tank.facing,
+                &player_top_lefts,
+                base_center,
+            );
         }
 
         let mut next = tank.top_left;
@@ -1732,26 +1769,47 @@ fn fire_enemy_bullets(
     sounds: Res<SoundAssets>,
     game_status: Res<GameStatus>,
     enemy_freeze: Res<EnemyFreeze>,
+    grid: Res<TileGrid>,
+    players: Query<&Tank, With<Player>>,
     enemy_bullets: Query<&Bullet>,
-    mut enemies: Query<(&Tank, &EnemyTank, &mut EnemyAi)>,
+    mut enemies: Query<
+        (
+            &mut Tank,
+            &EnemyTank,
+            &mut EnemyAi,
+            &mut Sprite,
+            &TankSpriteState,
+        ),
+        (With<EnemyTank>, Without<Player>),
+    >,
 ) {
-    if !game_status.is_playing()
-        || enemy_freeze.is_active()
-        || enemy_bullets
-            .iter()
-            .filter(|bullet| bullet.owner == Team::Enemy)
-            .count()
-            >= 4
-    {
+    if !game_status.is_playing() || enemy_freeze.is_active() {
         return;
     }
 
-    for (tank, enemy, mut ai) in &mut enemies {
+    let player_top_lefts: Vec<Vec2> = players.iter().map(|tank| tank.top_left).collect();
+    let base_center = base_center_from_grid(&grid);
+    let mut active_enemy_bullets = enemy_bullets
+        .iter()
+        .filter(|bullet| bullet.owner == Team::Enemy)
+        .count();
+    if active_enemy_bullets >= 4 {
+        return;
+    }
+
+    for (mut tank, enemy, mut ai, mut sprite, tank_sprite) in &mut enemies {
         ai.fire_timer.tick(time.delta());
-        if !ai.fire_timer.just_finished() {
+        let aim_direction = enemy_aim_direction(tank.top_left, &player_top_lefts, base_center);
+        let snap_fire_ready = aim_direction.is_some()
+            && enemy_alignment_fire_ready(enemy.kind, ai.fire_timer.elapsed_secs());
+        if !ai.fire_timer.just_finished() && !snap_fire_ready {
             continue;
         }
 
+        if let Some(direction) = aim_direction {
+            tank.facing = direction;
+            set_tank_sprite_direction(&mut sprite, tank_sprite, tank.facing);
+        }
         let bullet_top_left = spawn_bullet_position(tank.top_left, tank.facing);
         commands.spawn((
             Sprite::from_atlas_image(
@@ -1776,8 +1834,10 @@ fn fire_enemy_bullets(
             GameEntity,
         ));
         play_sound(&mut commands, &sounds, SoundKind::Fire);
+        ai.fire_timer.reset();
+        active_enemy_bullets += 1;
 
-        if enemy.kind == EnemyKind::Power {
+        if enemy.kind == EnemyKind::Power || active_enemy_bullets >= 4 {
             break;
         }
     }
@@ -2753,19 +2813,102 @@ fn spawn_powerup(
     ));
 }
 
+fn tank_center(top_left: Vec2) -> Vec2 {
+    top_left + Vec2::splat(TANK_SIZE / 2.0)
+}
+
+fn closest_player_center(from_center: Vec2, player_top_lefts: &[Vec2]) -> Option<Vec2> {
+    let mut closest = None;
+    let mut closest_distance = f32::MAX;
+
+    for player_top_left in player_top_lefts {
+        let player_center = tank_center(*player_top_left);
+        let distance = from_center.distance_squared(player_center);
+        if distance < closest_distance {
+            closest = Some(player_center);
+            closest_distance = distance;
+        }
+    }
+
+    closest
+}
+
+fn axis_direction_toward(from_center: Vec2, target_center: Vec2) -> Direction {
+    let delta = target_center - from_center;
+    if delta.x.abs() > delta.y.abs() {
+        if delta.x < 0.0 {
+            Direction::Left
+        } else {
+            Direction::Right
+        }
+    } else if delta.y < 0.0 {
+        Direction::Up
+    } else {
+        Direction::Down
+    }
+}
+
+fn aligned_fire_direction(from_center: Vec2, target_center: Vec2) -> Option<Direction> {
+    let delta = target_center - from_center;
+    if delta.x.abs() <= TILE_SIZE / 2.0 && delta.y.abs() >= TILE_SIZE {
+        Some(if delta.y < 0.0 {
+            Direction::Up
+        } else {
+            Direction::Down
+        })
+    } else if delta.y.abs() <= TILE_SIZE / 2.0 && delta.x.abs() >= TILE_SIZE {
+        Some(if delta.x < 0.0 {
+            Direction::Left
+        } else {
+            Direction::Right
+        })
+    } else {
+        None
+    }
+}
+
+fn enemy_aim_direction(
+    enemy_top_left: Vec2,
+    player_top_lefts: &[Vec2],
+    base_center: Option<Vec2>,
+) -> Option<Direction> {
+    let enemy_center = tank_center(enemy_top_left);
+    for player_top_left in player_top_lefts {
+        if let Some(direction) = aligned_fire_direction(enemy_center, tank_center(*player_top_left))
+        {
+            return Some(direction);
+        }
+    }
+
+    base_center.and_then(|base| aligned_fire_direction(enemy_center, base))
+}
+
 fn preferred_enemy_direction(
     top_left: Vec2,
     current: Direction,
-    player_top_left: Option<Vec2>,
+    player_top_lefts: &[Vec2],
+    base_center: Option<Vec2>,
 ) -> Direction {
-    if let Some(player) = player_top_left {
-        let delta = player - top_left;
-        if delta.x.abs() > delta.y.abs() && delta.x.abs() > 24.0 {
+    if let Some(direction) = enemy_aim_direction(top_left, player_top_lefts, base_center) {
+        return direction;
+    }
+
+    let own_center = tank_center(top_left);
+    if let Some(player_center) = closest_player_center(own_center, player_top_lefts) {
+        let delta = player_center - own_center;
+        if delta.x.abs() > delta.y.abs() && delta.x.abs() > TANK_SIZE {
             return if delta.x < 0.0 {
                 Direction::Left
             } else {
                 Direction::Right
             };
+        }
+    }
+
+    if let Some(base_center) = base_center {
+        let delta = base_center - own_center;
+        if delta.length_squared() > TANK_SIZE * TANK_SIZE {
+            return axis_direction_toward(own_center, base_center);
         }
     }
 
@@ -2778,6 +2921,10 @@ fn preferred_enemy_direction(
     } else {
         current
     }
+}
+
+fn enemy_alignment_fire_ready(kind: EnemyKind, elapsed_secs: f32) -> bool {
+    elapsed_secs >= enemy_fire_interval(kind) * ENEMY_ALIGNMENT_FIRE_FRACTION
 }
 
 fn next_direction(direction: Direction) -> Direction {
@@ -2889,6 +3036,16 @@ fn animated_tank_sprite_index(team: Team, direction: Direction, frame: usize) ->
     base + frame.min(1) * 4 + direction.tank_sprite_index()
 }
 
+fn set_tank_sprite_direction(
+    sprite: &mut Sprite,
+    tank_sprite: &TankSpriteState,
+    facing: Direction,
+) {
+    if let Some(atlas) = &mut sprite.texture_atlas {
+        atlas.index = animated_tank_sprite_index(tank_sprite.team, facing, tank_sprite.frame);
+    }
+}
+
 fn update_tank_sprite(
     sprite: &mut Sprite,
     tank_sprite: &mut TankSpriteState,
@@ -2906,9 +3063,7 @@ fn update_tank_sprite(
         tank_sprite.timer.reset();
     }
 
-    if let Some(atlas) = &mut sprite.texture_atlas {
-        atlas.index = animated_tank_sprite_index(tank_sprite.team, facing, tank_sprite.frame);
-    }
+    set_tank_sprite_direction(sprite, tank_sprite, facing);
 }
 
 fn tank_rects_overlap(a: Vec2, b: Vec2) -> bool {
@@ -3991,6 +4146,57 @@ mod tests {
                 .iter()
                 .all(|(x, y)| grid.tiles[y * BOARD_TILES + x] != TileKind::Base)
         );
+    }
+
+    #[test]
+    fn base_center_tracks_campaign_base_tiles() {
+        let level = parse_level(LEVEL_1).expect("level should parse");
+        let grid = TileGrid::from_level(&level).expect("grid should build");
+        assert_eq!(base_center_from_grid(&grid), Some(Vec2::new(104.0, 200.0)));
+    }
+
+    #[test]
+    fn aligned_fire_direction_requires_shared_lane() {
+        let enemy = Vec2::new(104.0, 48.0);
+        assert_eq!(
+            aligned_fire_direction(enemy, Vec2::new(104.0, 96.0)),
+            Some(Direction::Down)
+        );
+        assert_eq!(
+            aligned_fire_direction(enemy, Vec2::new(72.0, 48.0)),
+            Some(Direction::Left)
+        );
+        assert_eq!(aligned_fire_direction(enemy, Vec2::new(112.0, 61.0)), None);
+    }
+
+    #[test]
+    fn enemy_aim_prefers_aligned_player_before_base() {
+        let enemy_top_left = Vec2::new(96.0, 40.0);
+        let player_top_lefts = [Vec2::new(48.0, 40.0)];
+        let base_center = Some(Vec2::new(104.0, 200.0));
+        assert_eq!(
+            enemy_aim_direction(enemy_top_left, &player_top_lefts, base_center),
+            Some(Direction::Left)
+        );
+    }
+
+    #[test]
+    fn preferred_enemy_direction_pressures_base_without_player() {
+        assert_eq!(
+            preferred_enemy_direction(
+                Vec2::new(24.0, 64.0),
+                Direction::Up,
+                &[],
+                Some(Vec2::new(104.0, 200.0))
+            ),
+            Direction::Down
+        );
+    }
+
+    #[test]
+    fn enemy_alignment_fire_uses_fractional_cooldown() {
+        assert!(!enemy_alignment_fire_ready(EnemyKind::Basic, 0.70));
+        assert!(enemy_alignment_fire_ready(EnemyKind::Basic, 0.72));
     }
 
     #[test]

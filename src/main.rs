@@ -50,6 +50,7 @@ fn main() {
         .insert_resource(Time::<Fixed>::from_hz(60.0))
         .insert_resource(PlayerControl::default())
         .insert_resource(GameMode::Campaign)
+        .insert_resource(ModeSelect::default())
         .insert_resource(GameStatus::default())
         .insert_resource(EnemyFreeze::default())
         .insert_resource(BaseReinforcement::default())
@@ -229,6 +230,19 @@ enum GameMode {
     VersusDeathmatch,
 }
 
+#[derive(Resource)]
+struct ModeSelect {
+    selected: GameMode,
+}
+
+impl Default for ModeSelect {
+    fn default() -> Self {
+        Self {
+            selected: GameMode::Campaign,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PlayerId {
     One,
@@ -256,7 +270,7 @@ struct GameStatus {
 impl Default for GameStatus {
     fn default() -> Self {
         Self {
-            phase: GamePhase::Playing,
+            phase: GamePhase::ModeSelect,
             stage: 1,
             arena: VERSUS_ARENA,
             winner: None,
@@ -273,6 +287,7 @@ impl GameStatus {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum GamePhase {
+    ModeSelect,
     Playing,
     Paused,
     GameOver,
@@ -520,6 +535,12 @@ struct TileGrid {
 }
 
 impl TileGrid {
+    fn empty() -> Self {
+        Self {
+            tiles: vec![TileKind::Empty; BOARD_TILES * BOARD_TILES],
+        }
+    }
+
     fn from_level(level: &LevelDefinition) -> Result<Self, String> {
         Self::from_map(&level.map)
     }
@@ -897,6 +918,9 @@ struct EnemyMarker {
 struct PhaseBanner;
 
 #[derive(Component)]
+struct ModeSelectCursor;
+
+#[derive(Component)]
 struct SpriteAnimation {
     first: usize,
     last: usize,
@@ -929,29 +953,14 @@ fn setup(
 
     let sprite_assets = create_sprite_assets(&mut images, &mut atlas_layouts);
     let sound_assets = create_sound_assets(&mut retro_sounds);
-    let level = load_stage_definition(1).expect("level should load");
-    info!("Loaded {}", level.name);
-    let tile_grid = TileGrid::from_level(&level).expect("level map should be valid");
-    let stage_rules = StageRules::from_level(&level);
-    let enemy_director = EnemyDirector::from_level(&level);
-    let score_board = ScoreBoard::campaign(level.enemies.len());
-
-    spawn_screen_frame(&mut commands, &sprite_assets, GameMode::Campaign);
-    spawn_level(
-        &mut commands,
-        &sprite_assets,
-        &level,
-        &tile_grid,
-        score_board.lives,
-    );
-    play_sound(&mut commands, &sound_assets, SoundKind::StageStart);
+    spawn_mode_select_screen(&mut commands, &sprite_assets, GameMode::Campaign);
 
     commands.insert_resource(sprite_assets);
     commands.insert_resource(sound_assets);
-    commands.insert_resource(tile_grid);
-    commands.insert_resource(stage_rules);
-    commands.insert_resource(enemy_director);
-    commands.insert_resource(score_board);
+    commands.insert_resource(TileGrid::empty());
+    commands.insert_resource(StageRules::default());
+    commands.insert_resource(EnemyDirector::inactive());
+    commands.insert_resource(ScoreBoard::campaign(0));
 }
 
 fn handle_shared_controls(
@@ -966,38 +975,50 @@ fn handle_shared_controls(
     mut score_board: ResMut<ScoreBoard>,
     mut stage_rules: ResMut<StageRules>,
     mut versus_powerups: ResMut<VersusPowerUpDirector>,
+    mut mode_select: ResMut<ModeSelect>,
     mut enemy_freeze: ResMut<EnemyFreeze>,
     mut base_reinforcement: ResMut<BaseReinforcement>,
     game_entities: Query<Entity, With<GameEntity>>,
+    mut mode_select_cursors: Query<&mut Transform, With<ModeSelectCursor>>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) {
-        game_status.phase = toggle_pause_phase(game_status.phase);
-    }
+    if game_status.phase == GamePhase::ModeSelect {
+        if keys.just_pressed(KeyCode::KeyW)
+            || keys.just_pressed(KeyCode::ArrowUp)
+            || keys.just_pressed(KeyCode::KeyS)
+            || keys.just_pressed(KeyCode::ArrowDown)
+        {
+            mode_select.selected = other_mode(mode_select.selected);
+            update_mode_select_cursor(&mut mode_select_cursors, mode_select.selected);
+        }
 
-    if keys.just_pressed(KeyCode::KeyM) {
-        match *game_mode {
-            GameMode::Campaign => start_versus_round(
-                &mut commands,
-                &assets,
-                &sounds,
-                &mut game_mode,
-                &mut game_status,
-                &mut tile_grid,
-                &mut director,
-                &mut score_board,
-                &mut stage_rules,
-                &mut versus_powerups,
-                &mut enemy_freeze,
-                &mut base_reinforcement,
-                &game_entities,
-            ),
-            GameMode::VersusDeathmatch => {
-                game_status.stage = 1;
-                *game_mode = GameMode::Campaign;
-                restart_level(
+        if keys.just_pressed(KeyCode::Space)
+            || keys.just_pressed(KeyCode::Enter)
+            || keys.just_pressed(KeyCode::ShiftRight)
+        {
+            match mode_select.selected {
+                GameMode::Campaign => {
+                    game_status.stage = 1;
+                    *game_mode = GameMode::Campaign;
+                    restart_level(
+                        &mut commands,
+                        &assets,
+                        &sounds,
+                        &mut game_status,
+                        &mut tile_grid,
+                        &mut director,
+                        &mut score_board,
+                        &mut stage_rules,
+                        &mut versus_powerups,
+                        &mut enemy_freeze,
+                        &mut base_reinforcement,
+                        &game_entities,
+                    );
+                }
+                GameMode::VersusDeathmatch => start_versus_round(
                     &mut commands,
                     &assets,
                     &sounds,
+                    &mut game_mode,
                     &mut game_status,
                     &mut tile_grid,
                     &mut director,
@@ -1007,9 +1028,32 @@ fn handle_shared_controls(
                     &mut enemy_freeze,
                     &mut base_reinforcement,
                     &game_entities,
-                );
+                ),
             }
         }
+        return;
+    }
+
+    if keys.just_pressed(KeyCode::Escape) {
+        game_status.phase = toggle_pause_phase(game_status.phase);
+    }
+
+    if keys.just_pressed(KeyCode::KeyM) {
+        enter_mode_select(
+            &mut commands,
+            &assets,
+            &mut game_status,
+            &mut tile_grid,
+            &mut director,
+            &mut score_board,
+            &mut stage_rules,
+            &mut versus_powerups,
+            &mut mode_select,
+            &mut enemy_freeze,
+            &mut base_reinforcement,
+            *game_mode,
+            &game_entities,
+        );
         return;
     }
 
@@ -1048,6 +1092,40 @@ fn handle_shared_controls(
     }
 }
 
+fn enter_mode_select(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    game_status: &mut GameStatus,
+    tile_grid: &mut TileGrid,
+    director: &mut EnemyDirector,
+    score_board: &mut ScoreBoard,
+    stage_rules: &mut StageRules,
+    versus_powerups: &mut VersusPowerUpDirector,
+    mode_select: &mut ModeSelect,
+    enemy_freeze: &mut EnemyFreeze,
+    base_reinforcement: &mut BaseReinforcement,
+    selected_mode: GameMode,
+    game_entities: &Query<Entity, With<GameEntity>>,
+) {
+    for entity in game_entities {
+        commands.entity(entity).despawn();
+    }
+
+    mode_select.selected = selected_mode;
+    spawn_mode_select_screen(commands, assets, mode_select.selected);
+
+    *tile_grid = TileGrid::empty();
+    *director = EnemyDirector::inactive();
+    *score_board = ScoreBoard::campaign(0);
+    *stage_rules = StageRules::default();
+    *versus_powerups = VersusPowerUpDirector::inactive();
+    enemy_freeze.reset();
+    base_reinforcement.reset();
+    game_status.phase = GamePhase::ModeSelect;
+    game_status.winner = None;
+    game_status.transition_timer.reset();
+}
+
 fn restart_level(
     commands: &mut Commands,
     assets: &SpriteAssets,
@@ -1063,6 +1141,7 @@ fn restart_level(
     game_entities: &Query<Entity, With<GameEntity>>,
 ) {
     let level = load_stage_definition(game_status.stage).expect("level should load");
+    info!("Loaded {}", level.name);
     let new_tile_grid = TileGrid::from_level(&level).expect("level map should be valid");
 
     for entity in game_entities {
@@ -1216,6 +1295,55 @@ fn parse_arena(contents: &str) -> Result<ArenaDefinition, String> {
     }
 
     Ok(arena)
+}
+
+fn spawn_mode_select_screen(commands: &mut Commands, assets: &SpriteAssets, selected: GameMode) {
+    commands.spawn((
+        Sprite::from_color(
+            Color::srgb_u8(16, 16, 14),
+            Vec2::new(208.0 * WINDOW_SCALE, 208.0 * WINDOW_SCALE),
+        ),
+        Transform::from_translation(virtual_center_scaled(
+            Vec2::new(0.0, 16.0),
+            Vec2::new(208.0, 208.0),
+            0.0,
+        )),
+        GameEntity,
+    ));
+
+    spawn_pixel_text(commands, assets, "TANK", Vec2::new(86.0, 66.0), 0.3);
+    spawn_pixel_text(commands, assets, "1990", Vec2::new(88.0, 79.0), 0.3);
+    spawn_pixel_text(
+        commands,
+        assets,
+        "1 PLAYER",
+        mode_select_option_top_left(GameMode::Campaign),
+        0.3,
+    );
+    spawn_pixel_text(
+        commands,
+        assets,
+        "BATTLE",
+        mode_select_option_top_left(GameMode::VersusDeathmatch),
+        0.3,
+    );
+    spawn_mode_select_cursor(commands, assets, selected);
+}
+
+fn spawn_mode_select_cursor(commands: &mut Commands, assets: &SpriteAssets, selected: GameMode) {
+    commands.spawn((
+        Sprite::from_atlas_image(
+            assets.tank_image.clone(),
+            TextureAtlas {
+                layout: assets.tank_layout.clone(),
+                index: animated_tank_sprite_index(Team::Player1, Direction::Right, 0),
+            },
+        ),
+        Transform::from_translation(mode_select_cursor_translation(selected))
+            .with_scale(Vec3::splat(WINDOW_SCALE)),
+        ModeSelectCursor,
+        GameEntity,
+    ));
 }
 
 fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets, mode: GameMode) {
@@ -2812,6 +2940,7 @@ fn advance_after_level_clear(
 
     let next_stage = game_status.stage + 1;
     let level = load_stage_definition(next_stage).expect("next level should load");
+    info!("Loaded {}", level.name);
     let new_tile_grid = TileGrid::from_level(&level).expect("next level map should be valid");
 
     for entity in &game_entities {
@@ -2896,6 +3025,7 @@ fn update_status_panel(
     }
 
     let message = match game_status.phase {
+        GamePhase::ModeSelect => return,
         GamePhase::Playing => return,
         GamePhase::Paused => "PAUSED",
         GamePhase::GameOver => "GAME OVER",
@@ -2940,6 +3070,40 @@ fn toggle_pause_phase(phase: GamePhase) -> GamePhase {
         GamePhase::Playing => GamePhase::Paused,
         GamePhase::Paused => GamePhase::Playing,
         phase => phase,
+    }
+}
+
+fn other_mode(mode: GameMode) -> GameMode {
+    match mode {
+        GameMode::Campaign => GameMode::VersusDeathmatch,
+        GameMode::VersusDeathmatch => GameMode::Campaign,
+    }
+}
+
+fn mode_select_option_top_left(mode: GameMode) -> Vec2 {
+    match mode {
+        GameMode::Campaign => Vec2::new(82.0, 105.0),
+        GameMode::VersusDeathmatch => Vec2::new(88.0, 125.0),
+    }
+}
+
+fn mode_select_cursor_translation(mode: GameMode) -> Vec3 {
+    let option = mode_select_option_top_left(mode);
+    board_object_center(
+        60.0,
+        option.y - 4.0 - BOARD_ORIGIN_Y,
+        Vec2::splat(TANK_SIZE),
+        0.3,
+    )
+}
+
+fn update_mode_select_cursor(
+    cursors: &mut Query<&mut Transform, With<ModeSelectCursor>>,
+    selected: GameMode,
+) {
+    let translation = mode_select_cursor_translation(selected);
+    for mut transform in cursors {
+        transform.translation = translation;
     }
 }
 
@@ -4426,6 +4590,10 @@ mod tests {
 
     #[test]
     fn pause_toggle_only_affects_active_or_paused_game() {
+        assert_eq!(
+            toggle_pause_phase(GamePhase::ModeSelect),
+            GamePhase::ModeSelect
+        );
         assert_eq!(toggle_pause_phase(GamePhase::Playing), GamePhase::Paused);
         assert_eq!(toggle_pause_phase(GamePhase::Paused), GamePhase::Playing);
         assert_eq!(toggle_pause_phase(GamePhase::GameOver), GamePhase::GameOver);
@@ -4438,6 +4606,25 @@ mod tests {
             GamePhase::RoundOver
         );
         assert_eq!(toggle_pause_phase(GamePhase::Victory), GamePhase::Victory);
+    }
+
+    #[test]
+    fn game_starts_at_mode_select() {
+        assert_eq!(GameStatus::default().phase, GamePhase::ModeSelect);
+    }
+
+    #[test]
+    fn mode_select_toggles_between_campaign_and_battle() {
+        assert_eq!(other_mode(GameMode::Campaign), GameMode::VersusDeathmatch);
+        assert_eq!(other_mode(GameMode::VersusDeathmatch), GameMode::Campaign);
+    }
+
+    #[test]
+    fn mode_select_cursor_tracks_selected_option() {
+        let campaign = mode_select_cursor_translation(GameMode::Campaign);
+        let battle = mode_select_cursor_translation(GameMode::VersusDeathmatch);
+        assert_eq!(campaign.x, battle.x);
+        assert!(campaign.y > battle.y);
     }
 
     #[test]

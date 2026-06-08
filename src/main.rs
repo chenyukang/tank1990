@@ -320,7 +320,7 @@ struct SoundAssets {
     game_over: Handle<RetroSound>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SoundKind {
     Fire,
     BrickHit,
@@ -3136,6 +3136,7 @@ fn move_bullets(
                     }
 
                     health.current -= 1;
+                    let hit_sound = enemy_hit_sound(health.current);
                     if health.current <= 0 {
                         score_board.record_enemy_destroyed(enemy.kind);
                         mark_enemy_tank_destroyed(
@@ -3144,7 +3145,6 @@ fn move_bullets(
                             enemy_entity,
                             enemy_tank.top_left,
                         );
-                        play_sound(&mut commands, &sounds, SoundKind::TankExplosion);
                         if let Some(powerup_kind) = enemy.carried_powerup {
                             spawn_powerup(
                                 &mut commands,
@@ -3156,6 +3156,7 @@ fn move_bullets(
                             );
                         }
                     }
+                    play_sound(&mut commands, &sounds, hit_sound);
                     commands.entity(entity).despawn();
                     hit_enemy = true;
                     break;
@@ -4884,6 +4885,14 @@ fn enemy_score(kind: EnemyKind) -> u32 {
         EnemyKind::Fast => 200,
         EnemyKind::Power => 300,
         EnemyKind::Armor => 400,
+    }
+}
+
+fn enemy_hit_sound(health_after_hit: i32) -> SoundKind {
+    if health_after_hit <= 0 {
+        SoundKind::TankExplosion
+    } else {
+        SoundKind::SteelHit
     }
 }
 
@@ -7425,6 +7434,14 @@ mod tests {
         assert_eq!(enemy_score(EnemyKind::Fast), 200);
         assert_eq!(enemy_score(EnemyKind::Power), 300);
         assert_eq!(enemy_score(EnemyKind::Armor), 400);
+    }
+
+    #[test]
+    fn enemy_hit_sound_distinguishes_armor_hits_from_kills() {
+        assert_eq!(enemy_hit_sound(2), SoundKind::SteelHit);
+        assert_eq!(enemy_hit_sound(1), SoundKind::SteelHit);
+        assert_eq!(enemy_hit_sound(0), SoundKind::TankExplosion);
+        assert_eq!(enemy_hit_sound(-1), SoundKind::TankExplosion);
     }
 
     #[test]

@@ -4069,18 +4069,53 @@ fn preferred_enemy_direction(
     if let Some(base_center) = base_center {
         let delta = base_center - own_center;
         if delta.length_squared() > TANK_SIZE * TANK_SIZE {
+            if enemy_should_roam(top_left, current) {
+                return enemy_patrol_direction(top_left, current);
+            }
             return axis_direction_toward(own_center, base_center);
         }
     }
 
+    enemy_patrol_direction(top_left, current)
+}
+
+fn enemy_patrol_direction(top_left: Vec2, current: Direction) -> Direction {
     if top_left.y < 20.0 {
         Direction::Down
-    } else if top_left.x < 80.0 {
-        Direction::Right
-    } else if top_left.x > 112.0 {
-        Direction::Left
     } else {
-        current
+        enemy_roam_direction(top_left, current)
+    }
+}
+
+fn enemy_should_roam(top_left: Vec2, current: Direction) -> bool {
+    enemy_roam_seed(top_left, current).is_multiple_of(4)
+}
+
+fn enemy_roam_direction(top_left: Vec2, current: Direction) -> Direction {
+    direction_from_index((enemy_roam_seed(top_left, current) / 4) % 4)
+}
+
+fn enemy_roam_seed(top_left: Vec2, current: Direction) -> u32 {
+    let tile_x = (top_left.x / TILE_SIZE).round() as u32;
+    let tile_y = (top_left.y / TILE_SIZE).round() as u32;
+    tile_x.wrapping_mul(31) ^ tile_y.wrapping_mul(17) ^ direction_index(current).wrapping_mul(13)
+}
+
+fn direction_index(direction: Direction) -> u32 {
+    match direction {
+        Direction::Up => 0,
+        Direction::Right => 1,
+        Direction::Down => 2,
+        Direction::Left => 3,
+    }
+}
+
+fn direction_from_index(index: u32) -> Direction {
+    match index % 4 {
+        0 => Direction::Up,
+        1 => Direction::Right,
+        2 => Direction::Down,
+        _ => Direction::Left,
     }
 }
 
@@ -6761,6 +6796,28 @@ mod tests {
                 &[],
                 Some(Vec2::new(104.0, 200.0))
             ),
+            Direction::Down
+        );
+    }
+
+    #[test]
+    fn enemy_direction_can_roam_instead_of_always_pressuring_base() {
+        let top_left = Vec2::new(80.0, 80.0);
+        assert!(enemy_should_roam(top_left, Direction::Up));
+        assert_eq!(
+            enemy_patrol_direction(top_left, Direction::Up),
+            Direction::Left
+        );
+        assert_eq!(
+            preferred_enemy_direction(top_left, Direction::Up, &[], Some(Vec2::new(104.0, 200.0))),
+            Direction::Left
+        );
+    }
+
+    #[test]
+    fn enemy_patrol_still_pushes_top_spawns_downward() {
+        assert_eq!(
+            enemy_patrol_direction(Vec2::new(96.0, 0.0), Direction::Left),
             Direction::Down
         );
     }

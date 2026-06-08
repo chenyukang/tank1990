@@ -6038,6 +6038,26 @@ mod tests {
     }
 
     #[test]
+    fn arena_five_base_battle_spawns_have_open_forward_lanes() {
+        let arena = parse_arena(ARENA_5).expect("arena should parse");
+        let grid = TileGrid::from_arena(&arena).expect("grid should build");
+
+        for spawn in [&arena.p1_spawn, &arena.p2_spawn] {
+            let forward = spawn_point_top_left(spawn) + spawn.facing.movement() * TILE_SIZE;
+            assert!(
+                grid.can_tank_occupy(forward),
+                "spawn at ({}, {}) should be able to move {:?}",
+                spawn.x,
+                spawn.y,
+                spawn.facing
+            );
+        }
+
+        assert_eq!(grid.get(2, 24), Some(TileKind::Brick));
+        assert_eq!(grid.get(22, 0), Some(TileKind::Brick));
+    }
+
+    #[test]
     fn arena_rejects_base_battle_rules_with_invalid_values() {
         let no_lives = base_battle_arena_text().replacen("lives: 3", "lives: 0", 1);
         assert!(

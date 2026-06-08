@@ -1,12 +1,16 @@
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 use bevy::asset::RenderAssetUsages;
+use bevy::audio::{AddAudioSource, AudioPlayer, Decodable, PlaybackSettings, Source, Volume};
 use bevy::prelude::*;
+use bevy::reflect::TypePath;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::window::PresentMode;
 use serde::Deserialize;
 use std::collections::VecDeque;
 use std::fs;
+use std::sync::Arc;
+use std::time::Duration;
 
 const LEVEL_COUNT: usize = 3;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
@@ -29,6 +33,7 @@ const SNAP_DISTANCE: f32 = 2.0;
 const GLYPHS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const POWERUP_DROP_INTERVAL: usize = 5;
 const HELMET_SECONDS: f32 = 6.0;
+const SOUND_SAMPLE_RATE: u32 = 22_050;
 
 fn main() {
     App::new()
@@ -55,6 +60,7 @@ fn main() {
                     ..default()
                 }),
         )
+        .add_audio_source::<RetroSound>()
         .add_systems(Startup, setup)
         .add_systems(
             FixedUpdate,
@@ -96,6 +102,87 @@ struct SpriteAssets {
     glyph_layout: Handle<TextureAtlasLayout>,
     base_intact: Handle<Image>,
     base_destroyed: Handle<Image>,
+}
+
+#[derive(Resource)]
+struct SoundAssets {
+    fire: Handle<RetroSound>,
+    brick_hit: Handle<RetroSound>,
+    steel_hit: Handle<RetroSound>,
+    tank_explosion: Handle<RetroSound>,
+    base_destroyed: Handle<RetroSound>,
+    powerup_pickup: Handle<RetroSound>,
+    stage_start: Handle<RetroSound>,
+    level_clear: Handle<RetroSound>,
+    game_over: Handle<RetroSound>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SoundKind {
+    Fire,
+    BrickHit,
+    SteelHit,
+    TankExplosion,
+    BaseDestroyed,
+    PowerupPickup,
+    StageStart,
+    LevelClear,
+    GameOver,
+}
+
+#[derive(Asset, TypePath)]
+struct RetroSound {
+    samples: Arc<[f32]>,
+    sample_rate: u32,
+}
+
+struct RetroSoundDecoder {
+    samples: Arc<[f32]>,
+    sample_rate: u32,
+    cursor: usize,
+}
+
+impl Iterator for RetroSoundDecoder {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let sample = self.samples.get(self.cursor).copied();
+        self.cursor += usize::from(sample.is_some());
+        sample
+    }
+}
+
+impl Source for RetroSoundDecoder {
+    fn current_frame_len(&self) -> Option<usize> {
+        Some(self.samples.len().saturating_sub(self.cursor))
+    }
+
+    fn channels(&self) -> u16 {
+        1
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs_f32(
+            self.samples.len() as f32 / self.sample_rate as f32,
+        ))
+    }
+}
+
+impl Decodable for RetroSound {
+    type DecoderItem = f32;
+    type Decoder = RetroSoundDecoder;
+
+    fn decoder(&self) -> Self::Decoder {
+        RetroSoundDecoder {
+            samples: self.samples.clone(),
+            sample_rate: self.sample_rate,
+            cursor: 0,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -604,10 +691,12 @@ fn setup(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+    mut retro_sounds: ResMut<Assets<RetroSound>>,
 ) {
     commands.spawn(Camera2d);
 
     let sprite_assets = create_sprite_assets(&mut images, &mut atlas_layouts);
+    let sound_assets = create_sound_assets(&mut retro_sounds);
     let level = load_stage_definition(1).expect("level should load");
     info!("Loaded {}", level.name);
     let tile_grid = TileGrid::from_level(&level).expect("level map should be valid");
@@ -622,8 +711,10 @@ fn setup(
         &tile_grid,
         score_board.lives,
     );
+    play_sound(&mut commands, &sound_assets, SoundKind::StageStart);
 
     commands.insert_resource(sprite_assets);
+    commands.insert_resource(sound_assets);
     commands.insert_resource(tile_grid);
     commands.insert_resource(enemy_director);
     commands.insert_resource(score_board);
@@ -633,6 +724,7 @@ fn handle_shared_controls(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     assets: Res<SpriteAssets>,
+    sounds: Res<SoundAssets>,
     mut game_mode: ResMut<GameMode>,
     mut game_status: ResMut<GameStatus>,
     mut tile_grid: ResMut<TileGrid>,
@@ -649,6 +741,7 @@ fn handle_shared_controls(
             GameMode::Campaign => start_versus_round(
                 &mut commands,
                 &assets,
+                &sounds,
                 &mut game_mode,
                 &mut game_status,
                 &mut tile_grid,
@@ -662,6 +755,7 @@ fn handle_shared_controls(
                 restart_level(
                     &mut commands,
                     &assets,
+                    &sounds,
                     &mut game_status,
                     &mut tile_grid,
                     &mut director,
@@ -678,6 +772,7 @@ fn handle_shared_controls(
             GameMode::Campaign => restart_level(
                 &mut commands,
                 &assets,
+                &sounds,
                 &mut game_status,
                 &mut tile_grid,
                 &mut director,
@@ -687,6 +782,7 @@ fn handle_shared_controls(
             GameMode::VersusDeathmatch => start_versus_round(
                 &mut commands,
                 &assets,
+                &sounds,
                 &mut game_mode,
                 &mut game_status,
                 &mut tile_grid,
@@ -701,6 +797,7 @@ fn handle_shared_controls(
 fn restart_level(
     commands: &mut Commands,
     assets: &SpriteAssets,
+    sounds: &SoundAssets,
     game_status: &mut GameStatus,
     tile_grid: &mut TileGrid,
     director: &mut EnemyDirector,
@@ -716,6 +813,7 @@ fn restart_level(
 
     spawn_screen_frame(commands, assets, GameMode::Campaign);
     spawn_level(commands, assets, &level, &new_tile_grid, 3);
+    play_sound(commands, sounds, SoundKind::StageStart);
 
     *tile_grid = new_tile_grid;
     *director = EnemyDirector::from_level(&level);
@@ -728,6 +826,7 @@ fn restart_level(
 fn start_versus_round(
     commands: &mut Commands,
     assets: &SpriteAssets,
+    sounds: &SoundAssets,
     game_mode: &mut GameMode,
     game_status: &mut GameStatus,
     tile_grid: &mut TileGrid,
@@ -750,6 +849,7 @@ fn start_versus_round(
 
     spawn_screen_frame(commands, assets, GameMode::VersusDeathmatch);
     spawn_arena(commands, assets, &arena, &new_tile_grid, lives);
+    play_sound(commands, sounds, SoundKind::StageStart);
 
     *game_mode = GameMode::VersusDeathmatch;
     *tile_grid = new_tile_grid;
@@ -1401,6 +1501,7 @@ fn fire_enemy_bullets(
     mut commands: Commands,
     time: Res<Time>,
     assets: Res<SpriteAssets>,
+    sounds: Res<SoundAssets>,
     game_status: Res<GameStatus>,
     enemy_bullets: Query<&Bullet>,
     mut enemies: Query<(&Tank, &EnemyTank, &mut EnemyAi)>,
@@ -1444,6 +1545,7 @@ fn fire_enemy_bullets(
             },
             GameEntity,
         ));
+        play_sound(&mut commands, &sounds, SoundKind::Fire);
 
         if enemy.kind == EnemyKind::Power {
             break;
@@ -1455,6 +1557,7 @@ fn fire_player_bullet(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     assets: Res<SpriteAssets>,
+    sounds: Res<SoundAssets>,
     game_status: Res<GameStatus>,
     players: Query<(&Tank, &PlayerUpgrade, &Player), With<Player>>,
     bullets: Query<&Bullet>,
@@ -1500,6 +1603,7 @@ fn fire_player_bullet(
             },
             GameEntity,
         ));
+        play_sound(&mut commands, &sounds, SoundKind::Fire);
     }
 }
 
@@ -1507,6 +1611,7 @@ fn move_bullets(
     mut commands: Commands,
     time: Res<Time>,
     assets: Res<SpriteAssets>,
+    sounds: Res<SoundAssets>,
     game_mode: Res<GameMode>,
     mut grid: ResMut<TileGrid>,
     mut game_status: ResMut<GameStatus>,
@@ -1562,6 +1667,7 @@ fn move_bullets(
                         score_board.score += enemy_score(enemy.kind);
                         score_board.enemies_destroyed += 1;
                         spawn_explosion(&mut commands, &assets, enemy_tank.top_left);
+                        play_sound(&mut commands, &sounds, SoundKind::TankExplosion);
                         if should_drop_powerup(score_board.enemies_destroyed) {
                             spawn_powerup(
                                 &mut commands,
@@ -1610,8 +1716,10 @@ fn move_bullets(
 
                 if shield.is_none() {
                     spawn_explosion(&mut commands, &assets, player_tank.top_left);
+                    play_sound(&mut commands, &sounds, SoundKind::TankExplosion);
                     resolve_player_destroyed(
                         &mut commands,
+                        &sounds,
                         &mut game_status,
                         &mut score_board,
                         player_entity,
@@ -1663,8 +1771,10 @@ fn move_bullets(
                 }
 
                 spawn_explosion(&mut commands, &assets, player_tank.top_left);
+                play_sound(&mut commands, &sounds, SoundKind::TankExplosion);
                 resolve_player_destroyed(
                     &mut commands,
+                    &sounds,
                     &mut game_status,
                     &mut score_board,
                     player_entity,
@@ -1693,6 +1803,7 @@ fn move_bullets(
         if tile.bullet_blocks() {
             if tile == TileKind::Brick {
                 grid.set(tile_x, tile_y, TileKind::Empty);
+                play_sound(&mut commands, &sounds, SoundKind::BrickHit);
                 for (tile_entity, grid_tile) in &tile_sprites {
                     if grid_tile.x == tile_x && grid_tile.y == tile_y {
                         commands.entity(tile_entity).despawn();
@@ -1711,9 +1822,12 @@ fn move_bullets(
                     &assets,
                     Vec2::new(tile_x as f32 * TILE_SIZE, tile_y as f32 * TILE_SIZE),
                 );
+                play_sound(&mut commands, &sounds, SoundKind::BaseDestroyed);
                 for mut sprite in &mut base_sprites {
                     sprite.image = assets.base_destroyed.clone();
                 }
+            } else if tile == TileKind::Steel {
+                play_sound(&mut commands, &sounds, SoundKind::SteelHit);
             }
 
             commands.entity(entity).despawn();
@@ -1731,6 +1845,7 @@ fn move_bullets(
 
 fn resolve_player_destroyed(
     commands: &mut Commands,
+    sounds: &SoundAssets,
     game_status: &mut GameStatus,
     score_board: &mut ScoreBoard,
     player_entity: Entity,
@@ -1751,6 +1866,7 @@ fn resolve_player_destroyed(
             score_board.lives = lives.current;
             if lives.current <= 0 {
                 game_status.phase = GamePhase::GameOver;
+                play_sound(commands, sounds, SoundKind::GameOver);
                 return;
             }
         }
@@ -1766,6 +1882,7 @@ fn resolve_player_destroyed(
                 ) {
                     game_status.phase = GamePhase::RoundOver;
                     game_status.winner = Some(winner);
+                    play_sound(commands, sounds, SoundKind::LevelClear);
                     return;
                 }
             }
@@ -1817,6 +1934,7 @@ fn cancel_colliding_bullets(mut commands: Commands, bullets: Query<(Entity, &Bul
 fn pickup_powerups(
     mut commands: Commands,
     game_status: Res<GameStatus>,
+    sounds: Res<SoundAssets>,
     powerups: Query<(Entity, &PowerUp, &Transform)>,
     mut players: Query<(Entity, &Tank, &mut PlayerUpgrade), With<Player>>,
 ) {
@@ -1847,6 +1965,7 @@ fn pickup_powerups(
                 }
             }
             commands.entity(powerup_entity).despawn();
+            play_sound(&mut commands, &sounds, SoundKind::PowerupPickup);
             break;
         }
     }
@@ -1900,7 +2019,9 @@ fn tick_shields(
 }
 
 fn check_game_phase(
+    mut commands: Commands,
     game_mode: Res<GameMode>,
+    sounds: Res<SoundAssets>,
     mut game_status: ResMut<GameStatus>,
     score_board: Res<ScoreBoard>,
     director: Res<EnemyDirector>,
@@ -1920,6 +2041,11 @@ fn check_game_phase(
     if next_phase != GamePhase::Playing {
         game_status.phase = next_phase;
         game_status.transition_timer.reset();
+        match next_phase {
+            GamePhase::LevelClear => play_sound(&mut commands, &sounds, SoundKind::LevelClear),
+            GamePhase::GameOver => play_sound(&mut commands, &sounds, SoundKind::GameOver),
+            _ => {}
+        }
     }
 }
 
@@ -1927,6 +2053,7 @@ fn advance_after_level_clear(
     mut commands: Commands,
     time: Res<Time>,
     assets: Res<SpriteAssets>,
+    sounds: Res<SoundAssets>,
     mut game_status: ResMut<GameStatus>,
     mut tile_grid: ResMut<TileGrid>,
     mut director: ResMut<EnemyDirector>,
@@ -1968,6 +2095,7 @@ fn advance_after_level_clear(
         &new_tile_grid,
         score_board.lives.max(1),
     );
+    play_sound(&mut commands, &sounds, SoundKind::StageStart);
 
     *tile_grid = new_tile_grid;
     *director = EnemyDirector::from_level(&level);
@@ -2493,6 +2621,202 @@ fn create_sprite_assets(
         glyph_layout,
         base_intact,
         base_destroyed,
+    }
+}
+
+fn create_sound_assets(sounds: &mut Assets<RetroSound>) -> SoundAssets {
+    SoundAssets {
+        fire: sounds.add(make_sweep_sound(0.08, 920.0, 420.0, 0.22)),
+        brick_hit: sounds.add(make_noise_sound(0.07, 0.18, 0x1234_5678)),
+        steel_hit: sounds.add(make_sweep_sound(0.08, 1380.0, 1780.0, 0.16)),
+        tank_explosion: sounds.add(make_noise_sound(0.24, 0.30, 0xBEEF_9001)),
+        base_destroyed: sounds.add(make_layered_sound(&[
+            SoundNote {
+                duration_secs: 0.14,
+                frequency: 180.0,
+                volume: 0.24,
+            },
+            SoundNote {
+                duration_secs: 0.16,
+                frequency: 120.0,
+                volume: 0.22,
+            },
+            SoundNote {
+                duration_secs: 0.20,
+                frequency: 80.0,
+                volume: 0.20,
+            },
+        ])),
+        powerup_pickup: sounds.add(make_layered_sound(&[
+            SoundNote {
+                duration_secs: 0.05,
+                frequency: 660.0,
+                volume: 0.18,
+            },
+            SoundNote {
+                duration_secs: 0.05,
+                frequency: 880.0,
+                volume: 0.18,
+            },
+            SoundNote {
+                duration_secs: 0.08,
+                frequency: 1320.0,
+                volume: 0.16,
+            },
+        ])),
+        stage_start: sounds.add(make_layered_sound(&[
+            SoundNote {
+                duration_secs: 0.07,
+                frequency: 392.0,
+                volume: 0.16,
+            },
+            SoundNote {
+                duration_secs: 0.07,
+                frequency: 523.25,
+                volume: 0.16,
+            },
+            SoundNote {
+                duration_secs: 0.12,
+                frequency: 659.25,
+                volume: 0.15,
+            },
+        ])),
+        level_clear: sounds.add(make_layered_sound(&[
+            SoundNote {
+                duration_secs: 0.08,
+                frequency: 523.25,
+                volume: 0.18,
+            },
+            SoundNote {
+                duration_secs: 0.08,
+                frequency: 659.25,
+                volume: 0.18,
+            },
+            SoundNote {
+                duration_secs: 0.08,
+                frequency: 783.99,
+                volume: 0.18,
+            },
+            SoundNote {
+                duration_secs: 0.18,
+                frequency: 1046.5,
+                volume: 0.16,
+            },
+        ])),
+        game_over: sounds.add(make_layered_sound(&[
+            SoundNote {
+                duration_secs: 0.12,
+                frequency: 392.0,
+                volume: 0.18,
+            },
+            SoundNote {
+                duration_secs: 0.12,
+                frequency: 261.63,
+                volume: 0.18,
+            },
+            SoundNote {
+                duration_secs: 0.24,
+                frequency: 130.81,
+                volume: 0.16,
+            },
+        ])),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SoundNote {
+    duration_secs: f32,
+    frequency: f32,
+    volume: f32,
+}
+
+fn play_sound(commands: &mut Commands, sounds: &SoundAssets, kind: SoundKind) {
+    let handle = match kind {
+        SoundKind::Fire => sounds.fire.clone(),
+        SoundKind::BrickHit => sounds.brick_hit.clone(),
+        SoundKind::SteelHit => sounds.steel_hit.clone(),
+        SoundKind::TankExplosion => sounds.tank_explosion.clone(),
+        SoundKind::BaseDestroyed => sounds.base_destroyed.clone(),
+        SoundKind::PowerupPickup => sounds.powerup_pickup.clone(),
+        SoundKind::StageStart => sounds.stage_start.clone(),
+        SoundKind::LevelClear => sounds.level_clear.clone(),
+        SoundKind::GameOver => sounds.game_over.clone(),
+    };
+    commands.spawn((
+        AudioPlayer(handle),
+        PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.45)),
+    ));
+}
+
+fn make_sweep_sound(
+    duration_secs: f32,
+    start_frequency: f32,
+    end_frequency: f32,
+    volume: f32,
+) -> RetroSound {
+    let sample_count = sample_count(duration_secs);
+    let mut samples = Vec::with_capacity(sample_count);
+    let mut phase = 0.0_f32;
+
+    for index in 0..sample_count {
+        let t = index as f32 / sample_count as f32;
+        let frequency = start_frequency + (end_frequency - start_frequency) * t;
+        phase = (phase + frequency / SOUND_SAMPLE_RATE as f32) % 1.0;
+        let wave = if phase < 0.5 { 1.0 } else { -1.0 };
+        samples.push(wave * volume * decay_envelope(t));
+    }
+
+    sound_from_samples(samples)
+}
+
+fn make_noise_sound(duration_secs: f32, volume: f32, seed: u32) -> RetroSound {
+    let sample_count = sample_count(duration_secs);
+    let mut samples = Vec::with_capacity(sample_count);
+    let mut state = seed.max(1);
+
+    for index in 0..sample_count {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let t = index as f32 / sample_count as f32;
+        let bit = if state & 0x8000_0000 == 0 { -1.0 } else { 1.0 };
+        samples.push(bit * volume * decay_envelope(t));
+    }
+
+    sound_from_samples(samples)
+}
+
+fn make_layered_sound(notes: &[SoundNote]) -> RetroSound {
+    let mut samples = Vec::new();
+    for note in notes {
+        append_square_note(&mut samples, *note);
+    }
+    sound_from_samples(samples)
+}
+
+fn append_square_note(samples: &mut Vec<f32>, note: SoundNote) {
+    let sample_count = sample_count(note.duration_secs);
+    let mut phase = 0.0_f32;
+    for index in 0..sample_count {
+        let t = index as f32 / sample_count as f32;
+        phase = (phase + note.frequency / SOUND_SAMPLE_RATE as f32) % 1.0;
+        let wave = if phase < 0.5 { 1.0 } else { -1.0 };
+        samples.push(wave * note.volume * decay_envelope(t));
+    }
+}
+
+fn sample_count(duration_secs: f32) -> usize {
+    (duration_secs * SOUND_SAMPLE_RATE as f32).round().max(1.0) as usize
+}
+
+fn decay_envelope(t: f32) -> f32 {
+    let attack = (t / 0.08).clamp(0.0, 1.0);
+    let release = (1.0 - t).clamp(0.0, 1.0);
+    attack * release * release
+}
+
+fn sound_from_samples(samples: Vec<f32>) -> RetroSound {
+    RetroSound {
+        samples: samples.into(),
+        sample_rate: SOUND_SAMPLE_RATE,
     }
 }
 
@@ -3060,6 +3384,40 @@ mod tests {
         assert!(should_drop_powerup(5));
         assert_eq!(powerup_for_drop(5), PowerUpKind::Star);
         assert_eq!(powerup_for_drop(10), PowerUpKind::Helmet);
+    }
+
+    #[test]
+    fn generated_retro_sounds_are_short_and_bounded() {
+        let sounds = [
+            make_sweep_sound(0.08, 920.0, 420.0, 0.22),
+            make_noise_sound(0.07, 0.18, 0x1234_5678),
+            make_sweep_sound(0.08, 1380.0, 1780.0, 0.16),
+            make_noise_sound(0.24, 0.30, 0xBEEF_9001),
+            make_layered_sound(&[
+                SoundNote {
+                    duration_secs: 0.14,
+                    frequency: 180.0,
+                    volume: 0.24,
+                },
+                SoundNote {
+                    duration_secs: 0.16,
+                    frequency: 120.0,
+                    volume: 0.22,
+                },
+            ]),
+        ];
+
+        for sound in sounds {
+            assert_eq!(sound.sample_rate, SOUND_SAMPLE_RATE);
+            assert!(!sound.samples.is_empty());
+            assert!(sound.samples.len() <= SOUND_SAMPLE_RATE as usize);
+            assert!(sound.samples.iter().all(|sample| sample.abs() <= 1.0));
+        }
+    }
+
+    #[test]
+    fn sound_sample_count_never_returns_zero() {
+        assert_eq!(sample_count(0.0), 1);
     }
 
     #[test]

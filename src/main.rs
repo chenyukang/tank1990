@@ -3590,8 +3590,13 @@ fn cancel_colliding_bullets(
     mut commands: Commands,
     assets: Res<SpriteAssets>,
     sounds: Res<SoundAssets>,
+    game_status: Res<GameStatus>,
     bullets: Query<(Entity, &Bullet)>,
 ) {
+    if !bullet_clashes_can_resolve(game_status.phase) {
+        return;
+    }
+
     let bullets: Vec<(Entity, Vec2)> = bullets
         .iter()
         .map(|(entity, bullet)| (entity, bullet.top_left))
@@ -3618,6 +3623,10 @@ fn cancel_colliding_bullets(
     for entity in destroyed {
         commands.entity(entity).despawn();
     }
+}
+
+fn bullet_clashes_can_resolve(phase: GamePhase) -> bool {
+    phase == GamePhase::Playing
 }
 
 fn spawn_versus_powerups(
@@ -7624,6 +7633,18 @@ mod tests {
         assert!(visual_effects_can_advance(GamePhase::GameOver));
         assert!(visual_effects_can_advance(GamePhase::RoundOver));
         assert!(visual_effects_can_advance(GamePhase::Victory));
+    }
+
+    #[test]
+    fn bullet_clashes_resolve_only_while_playing() {
+        assert!(bullet_clashes_can_resolve(GamePhase::Playing));
+        assert!(!bullet_clashes_can_resolve(GamePhase::Paused));
+        assert!(!bullet_clashes_can_resolve(GamePhase::StageIntro));
+        assert!(!bullet_clashes_can_resolve(GamePhase::LevelClear));
+        assert!(!bullet_clashes_can_resolve(GamePhase::GameOver));
+        assert!(!bullet_clashes_can_resolve(GamePhase::RoundOver));
+        assert!(!bullet_clashes_can_resolve(GamePhase::Victory));
+        assert!(!bullet_clashes_can_resolve(GamePhase::ModeSelect));
     }
 
     #[test]

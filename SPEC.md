@@ -521,6 +521,7 @@ Current implementation note:
 
 - `assets/manifest.ron` maps generated tank, terrain, power-up, and effect atlas entries to semantic names and frame ranges.
 - Tank manifest entries include separate two-frame directional groups for P1, P2, Basic, Fast, Power, and Armor tanks.
+- Terrain manifest entries include a two-frame water animation range plus static brick, steel, forest, and ice entries.
 - Effect manifest entries include explosion, spawn shimmer, and base destruction frame ranges.
 - Glyphs and sounds still use generated placeholder assets and will be moved into the manifest in later asset-pipeline stages.
 

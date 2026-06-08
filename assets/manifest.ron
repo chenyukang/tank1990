@@ -30,9 +30,9 @@
   terrain: (
     brick: 0,
     steel: 1,
-    water: 2,
-    forest: 3,
-    ice: 4,
+    water: (first: 2, last: 3),
+    forest: 4,
+    ice: 5,
   ),
   effects: (
     explosion: (first: 0, last: 3),

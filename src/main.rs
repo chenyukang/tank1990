@@ -19,7 +19,7 @@ const ARENA_COUNT: usize = 2;
 const DEFAULT_VERSUS_ARENA: usize = 1;
 const TANK_ATLAS_TILES: usize = 48;
 const TANK_ANIMATION_FRAMES: usize = 2;
-const TERRAIN_ATLAS_TILES: usize = 5;
+const TERRAIN_ATLAS_TILES: usize = 6;
 const EFFECT_ATLAS_TILES: usize = 12;
 const POWERUP_ATLAS_TILES: usize = 6;
 
@@ -154,10 +154,17 @@ impl AssetManifest {
         match tile {
             TileKind::Brick => Some(self.terrain.brick),
             TileKind::Steel => Some(self.terrain.steel),
-            TileKind::Water => Some(self.terrain.water),
+            TileKind::Water => Some(self.terrain.water.first),
             TileKind::Forest => Some(self.terrain.forest),
             TileKind::Ice => Some(self.terrain.ice),
             TileKind::Empty | TileKind::Base => None,
+        }
+    }
+
+    fn terrain_animation_frames(&self, tile: TileKind) -> Option<SpriteFrameRange> {
+        match tile {
+            TileKind::Water => Some(self.terrain.water),
+            _ => None,
         }
     }
 
@@ -236,7 +243,7 @@ impl DirectionalSpriteManifest {
 struct TerrainSpriteManifest {
     brick: usize,
     steel: usize,
-    water: usize,
+    water: SpriteFrameRange,
     forest: usize,
     ice: usize,
 }
@@ -1474,7 +1481,6 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
     for (name, index) in [
         ("terrain.brick", manifest.terrain.brick),
         ("terrain.steel", manifest.terrain.steel),
-        ("terrain.water", manifest.terrain.water),
         ("terrain.forest", manifest.terrain.forest),
         ("terrain.ice", manifest.terrain.ice),
     ] {
@@ -1484,6 +1490,12 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
             ));
         }
     }
+    validate_frame_range(
+        "terrain.water",
+        manifest.terrain.water,
+        TERRAIN_ATLAS_TILES,
+        "terrain",
+    )?;
 
     for (name, frames) in [
         ("effects.explosion", manifest.effects.explosion),
@@ -1493,7 +1505,7 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
             manifest.effects.base_destruction,
         ),
     ] {
-        validate_frame_range(name, frames, EFFECT_ATLAS_TILES)?;
+        validate_frame_range(name, frames, EFFECT_ATLAS_TILES, "effect")?;
     }
 
     for (name, index) in [
@@ -1553,6 +1565,7 @@ fn validate_frame_range(
     name: &str,
     frames: SpriteFrameRange,
     atlas_tiles: usize,
+    atlas_name: &str,
 ) -> Result<(), String> {
     if frames.first > frames.last {
         return Err(format!(
@@ -1563,7 +1576,7 @@ fn validate_frame_range(
 
     if frames.last >= atlas_tiles {
         return Err(format!(
-            "{name} frame range {}..={} is outside the generated effect atlas",
+            "{name} frame range {}..={} is outside the generated {atlas_name} atlas",
             frames.first, frames.last
         ));
     }
@@ -2015,22 +2028,43 @@ fn spawn_terrain(commands: &mut Commands, assets: &SpriteAssets, tile_grid: &Til
     for y in 0..BOARD_TILES {
         for x in 0..BOARD_TILES {
             let tile = tile_grid.tiles[y * BOARD_TILES + x];
-            if let Some(index) = assets.manifest.terrain_index(tile) {
-                commands.spawn((
-                    Sprite::from_atlas_image(
-                        assets.terrain_image.clone(),
-                        TextureAtlas {
-                            layout: assets.terrain_layout.clone(),
-                            index,
-                        },
-                    ),
-                    Transform::from_translation(board_tile_center(x, y, terrain_z(tile)))
-                        .with_scale(Vec3::splat(WINDOW_SCALE)),
-                    GridTile { x, y },
-                    GameEntity,
-                ));
-            }
+            spawn_terrain_tile(commands, assets, tile, x, y);
         }
+    }
+}
+
+fn spawn_terrain_tile(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    tile: TileKind,
+    x: usize,
+    y: usize,
+) {
+    let Some(index) = assets.manifest.terrain_index(tile) else {
+        return;
+    };
+
+    let mut entity = commands.spawn((
+        Sprite::from_atlas_image(
+            assets.terrain_image.clone(),
+            TextureAtlas {
+                layout: assets.terrain_layout.clone(),
+                index,
+            },
+        ),
+        Transform::from_translation(board_tile_center(x, y, terrain_z(tile)))
+            .with_scale(Vec3::splat(WINDOW_SCALE)),
+        GridTile { x, y },
+        GameEntity,
+    ));
+
+    if let Some(frames) = assets.manifest.terrain_animation_frames(tile) {
+        entity.insert(SpriteAnimation {
+            first: frames.first,
+            last: frames.last,
+            timer: Timer::from_seconds(0.35, TimerMode::Repeating),
+            despawn_on_finish: false,
+        });
     }
 }
 
@@ -2055,21 +2089,7 @@ fn sync_tile_sprite(
         }
     }
 
-    if let Some(index) = assets.manifest.terrain_index(tile) {
-        commands.spawn((
-            Sprite::from_atlas_image(
-                assets.terrain_image.clone(),
-                TextureAtlas {
-                    layout: assets.terrain_layout.clone(),
-                    index,
-                },
-            ),
-            Transform::from_translation(board_tile_center(x, y, terrain_z(tile)))
-                .with_scale(Vec3::splat(WINDOW_SCALE)),
-            GridTile { x, y },
-            GameEntity,
-        ));
-    }
+    spawn_terrain_tile(commands, assets, tile, x, y);
 }
 
 fn base_wall_positions(tile_grid: &TileGrid) -> Vec<(usize, usize)> {
@@ -4429,15 +4449,17 @@ fn sound_from_samples(samples: Vec<f32>) -> RetroSound {
 }
 
 fn create_terrain_atlas() -> Image {
-    let mut pixels = vec![0; 8 * 5 * 8 * 4];
+    let width = 8 * TERRAIN_ATLAS_TILES;
+    let mut pixels = vec![0; width * 8 * 4];
 
-    draw_brick(&mut pixels, 40, 0);
-    draw_steel(&mut pixels, 40, 8);
-    draw_water(&mut pixels, 40, 16);
-    draw_forest(&mut pixels, 40, 24);
-    draw_ice(&mut pixels, 40, 32);
+    draw_brick(&mut pixels, width, 0);
+    draw_steel(&mut pixels, width, 8);
+    draw_water(&mut pixels, width, 16, 0);
+    draw_water(&mut pixels, width, 24, 1);
+    draw_forest(&mut pixels, width, 32);
+    draw_ice(&mut pixels, width, 40);
 
-    image_from_pixels(40, 8, pixels)
+    image_from_pixels(width, 8, pixels)
 }
 
 fn draw_brick(pixels: &mut [u8], width: usize, x_offset: usize) {
@@ -4457,11 +4479,11 @@ fn draw_steel(pixels: &mut [u8], width: usize, x_offset: usize) {
     fill_rect(pixels, width, x_offset + 3, 3, 2, 2, [64, 72, 80, 255]);
 }
 
-fn draw_water(pixels: &mut [u8], width: usize, x_offset: usize) {
+fn draw_water(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
     fill_rect(pixels, width, x_offset, 0, 8, 8, [24, 64, 144, 255]);
     for y in [1, 4, 6] {
         for x in 0..8 {
-            if (x + y) % 3 != 0 {
+            if !(x + y + frame).is_multiple_of(3) {
                 set_pixel(pixels, width, x_offset + x, y, [80, 144, 224, 255]);
             }
         }
@@ -5049,10 +5071,15 @@ mod tests {
         assert_eq!(manifest.terrain_index(TileKind::Brick), Some(0));
         assert_eq!(manifest.terrain_index(TileKind::Steel), Some(1));
         assert_eq!(manifest.terrain_index(TileKind::Water), Some(2));
-        assert_eq!(manifest.terrain_index(TileKind::Forest), Some(3));
-        assert_eq!(manifest.terrain_index(TileKind::Ice), Some(4));
+        assert_eq!(manifest.terrain_index(TileKind::Forest), Some(4));
+        assert_eq!(manifest.terrain_index(TileKind::Ice), Some(5));
         assert_eq!(manifest.terrain_index(TileKind::Empty), None);
         assert_eq!(manifest.terrain_index(TileKind::Base), None);
+        assert_eq!(
+            manifest.terrain_animation_frames(TileKind::Water),
+            Some(SpriteFrameRange { first: 2, last: 3 })
+        );
+        assert_eq!(manifest.terrain_animation_frames(TileKind::Brick), None);
 
         assert_eq!(
             manifest.explosion_frames(),
@@ -5100,10 +5127,21 @@ mod tests {
                 .contains("must define 2 animation frames")
         );
 
-        let invalid = MANIFEST.replacen("ice: 4", "ice: 5", 1);
+        let invalid = MANIFEST.replacen("ice: 5", "ice: 6", 1);
         assert!(
             parse_asset_manifest(&invalid)
                 .expect_err("invalid terrain index should fail")
+                .contains("outside the generated terrain atlas")
+        );
+
+        let invalid = MANIFEST.replacen(
+            "water: (first: 2, last: 3)",
+            "water: (first: 2, last: 6)",
+            1,
+        );
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("invalid terrain animation range should fail")
                 .contains("outside the generated terrain atlas")
         );
 

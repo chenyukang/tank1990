@@ -77,6 +77,7 @@ fn main() {
                 pickup_powerups,
                 animate_sprites,
                 tick_shields,
+                update_enemy_visual_feedback,
                 check_game_phase,
                 advance_after_level_clear,
                 update_status_panel,
@@ -332,6 +333,7 @@ struct EnemyDirector {
     spawn_timer: Timer,
     max_active: usize,
     spawn_cursor: usize,
+    spawned_count: usize,
 }
 
 impl EnemyDirector {
@@ -342,6 +344,7 @@ impl EnemyDirector {
             spawn_timer: Timer::from_seconds(level.spawn_interval_secs, TimerMode::Repeating),
             max_active: level.max_enemies_on_screen,
             spawn_cursor: 0,
+            spawned_count: 0,
         }
     }
 
@@ -352,6 +355,7 @@ impl EnemyDirector {
             spawn_timer: Timer::from_seconds(1.0, TimerMode::Repeating),
             max_active: 0,
             spawn_cursor: 0,
+            spawned_count: 0,
         }
     }
 }
@@ -566,6 +570,7 @@ struct GameEntity;
 #[derive(Component)]
 struct EnemyTank {
     kind: EnemyKind,
+    carried_powerup: Option<PowerUpKind>,
 }
 
 #[derive(Component)]
@@ -579,6 +584,23 @@ struct Tank {
     top_left: Vec2,
     facing: Direction,
     speed: f32,
+}
+
+#[derive(Component)]
+struct TankSpriteState {
+    team: Team,
+    frame: usize,
+    timer: Timer,
+}
+
+impl TankSpriteState {
+    fn new(team: Team) -> Self {
+        Self {
+            team,
+            frame: 0,
+            timer: Timer::from_seconds(0.14, TimerMode::Repeating),
+        }
+    }
 }
 
 #[derive(Component)]
@@ -1274,7 +1296,7 @@ fn spawn_player_tank(
             assets.tank_image.clone(),
             TextureAtlas {
                 layout: assets.tank_layout.clone(),
-                index: tank_sprite_index(player_id.team(), spawn.facing),
+                index: animated_tank_sprite_index(player_id.team(), spawn.facing, 0),
             },
         ),
         Transform::from_translation(board_object_center(
@@ -1289,6 +1311,7 @@ fn spawn_player_tank(
             facing: spawn.facing,
             speed: PLAYER_SPEED,
         },
+        TankSpriteState::new(player_id.team()),
         Health { current: 1 },
         RespawnPoint {
             top_left: player_top_left,
@@ -1335,7 +1358,16 @@ fn move_player_tank(
     game_status: Res<GameStatus>,
     mut tank_queries: ParamSet<(
         Query<&Tank>,
-        Query<(&mut Tank, &mut Sprite, &mut Transform, &Player), With<Player>>,
+        Query<
+            (
+                &mut Tank,
+                &mut Sprite,
+                &mut Transform,
+                &mut TankSpriteState,
+                &Player,
+            ),
+            With<Player>,
+        >,
     )>,
 ) {
     if !game_status.is_playing() {
@@ -1344,28 +1376,41 @@ fn move_player_tank(
 
     let occupied: Vec<Vec2> = tank_queries.p0().iter().map(|tank| tank.top_left).collect();
 
-    for (mut tank, mut sprite, mut transform, player) in &mut tank_queries.p1() {
+    for (mut tank, mut sprite, mut transform, mut tank_sprite, player) in &mut tank_queries.p1() {
         let Some(direction) =
             held_direction(&keys, player_last_direction(&control, player.id), player.id)
         else {
+            update_tank_sprite(
+                &mut sprite,
+                &mut tank_sprite,
+                tank.facing,
+                false,
+                time.delta(),
+            );
             continue;
         };
 
         tank.facing = direction;
-        if let Some(atlas) = &mut sprite.texture_atlas {
-            atlas.index = tank_sprite_index(player.id.team(), direction);
-        }
 
         let mut next = tank.top_left;
         snap_to_lane(&mut next, direction);
         next += direction.movement() * tank.speed * time.delta_secs();
         next = round_vec2(next);
 
+        let mut moved = false;
         if grid.can_tank_occupy(next) && tank_position_free(next, tank.top_left, &occupied) {
             tank.top_left = next;
             transform.translation =
                 board_object_center(next.x, next.y, Vec2::splat(TANK_SIZE), 6.0);
+            moved = true;
         }
+        update_tank_sprite(
+            &mut sprite,
+            &mut tank_sprite,
+            tank.facing,
+            moved,
+            time.delta(),
+        );
     }
 }
 
@@ -1408,13 +1453,16 @@ fn spawn_enemies(
             .roster
             .pop_front()
             .expect("checked non-empty roster above");
+        director.spawned_count += 1;
+        let carried_powerup = should_drop_powerup(director.spawned_count)
+            .then_some(powerup_for_drop(director.spawned_count));
 
         commands.spawn((
             Sprite::from_atlas_image(
                 assets.tank_image.clone(),
                 TextureAtlas {
                     layout: assets.tank_layout.clone(),
-                    index: tank_sprite_index(Team::Enemy, spawn.facing),
+                    index: animated_tank_sprite_index(Team::Enemy, spawn.facing, 0),
                 },
             ),
             Transform::from_translation(board_object_center(
@@ -1432,7 +1480,11 @@ fn spawn_enemies(
             Health {
                 current: enemy_health(kind),
             },
-            EnemyTank { kind },
+            TankSpriteState::new(Team::Enemy),
+            EnemyTank {
+                kind,
+                carried_powerup,
+            },
             EnemyAi {
                 turn_timer: Timer::from_seconds(1.2, TimerMode::Repeating),
                 fire_timer: Timer::from_seconds(enemy_fire_interval(kind), TimerMode::Repeating),
@@ -1451,7 +1503,13 @@ fn move_enemy_tanks(
     mut tank_queries: ParamSet<(
         Query<(&Tank, Option<&Player>)>,
         Query<
-            (&mut Tank, &mut Sprite, &mut Transform, &mut EnemyAi),
+            (
+                &mut Tank,
+                &mut Sprite,
+                &mut Transform,
+                &mut EnemyAi,
+                &mut TankSpriteState,
+            ),
             (With<EnemyTank>, Without<Player>),
         >,
     )>,
@@ -1470,7 +1528,7 @@ fn move_enemy_tanks(
         .find_map(|(top_left, is_player)| is_player.then_some(*top_left));
     let occupied_positions: Vec<Vec2> = occupied.iter().map(|(top_left, _)| *top_left).collect();
 
-    for (mut tank, mut sprite, mut transform, mut ai) in &mut tank_queries.p1() {
+    for (mut tank, mut sprite, mut transform, mut ai, mut tank_sprite) in &mut tank_queries.p1() {
         ai.turn_timer.tick(time.delta());
         if ai.turn_timer.just_finished() {
             tank.facing = preferred_enemy_direction(tank.top_left, tank.facing, player_top_left);
@@ -1481,19 +1539,25 @@ fn move_enemy_tanks(
         next += tank.facing.movement() * tank.speed * time.delta_secs();
         next = round_vec2(next);
 
+        let mut moved = false;
         if grid.can_tank_occupy(next)
             && tank_position_free(next, tank.top_left, &occupied_positions)
         {
             tank.top_left = next;
             transform.translation =
                 board_object_center(next.x, next.y, Vec2::splat(TANK_SIZE), 6.0);
+            moved = true;
         } else {
             tank.facing = next_direction(tank.facing);
         }
 
-        if let Some(atlas) = &mut sprite.texture_atlas {
-            atlas.index = tank_sprite_index(Team::Enemy, tank.facing);
-        }
+        update_tank_sprite(
+            &mut sprite,
+            &mut tank_sprite,
+            tank.facing,
+            moved,
+            time.delta(),
+        );
     }
 }
 
@@ -1668,11 +1732,11 @@ fn move_bullets(
                         score_board.enemies_destroyed += 1;
                         spawn_explosion(&mut commands, &assets, enemy_tank.top_left);
                         play_sound(&mut commands, &sounds, SoundKind::TankExplosion);
-                        if should_drop_powerup(score_board.enemies_destroyed) {
+                        if let Some(powerup_kind) = enemy.carried_powerup {
                             spawn_powerup(
                                 &mut commands,
                                 &assets,
-                                powerup_for_drop(score_board.enemies_destroyed),
+                                powerup_kind,
                                 enemy_tank.top_left,
                             );
                         }
@@ -2015,6 +2079,20 @@ fn tick_shields(
             sprite.color = Color::WHITE;
             commands.entity(entity).remove::<Shield>();
         }
+    }
+}
+
+fn update_enemy_visual_feedback(
+    time: Res<Time>,
+    mut enemies: Query<(&EnemyTank, &Health, &mut Sprite)>,
+) {
+    for (enemy, health, mut sprite) in &mut enemies {
+        sprite.color = enemy_visual_color(
+            enemy.kind,
+            enemy.carried_powerup,
+            health.current,
+            time.elapsed_secs(),
+        );
     }
 }
 
@@ -2432,6 +2510,33 @@ fn enemy_score(kind: EnemyKind) -> u32 {
     }
 }
 
+fn enemy_visual_color(
+    kind: EnemyKind,
+    carried_powerup: Option<PowerUpKind>,
+    health: i32,
+    elapsed_secs: f32,
+) -> Color {
+    let [r, g, b] = enemy_visual_rgb(kind, carried_powerup, health, elapsed_secs);
+    Color::srgb_u8(r, g, b)
+}
+
+fn enemy_visual_rgb(
+    kind: EnemyKind,
+    carried_powerup: Option<PowerUpKind>,
+    health: i32,
+    elapsed_secs: f32,
+) -> [u8; 3] {
+    if carried_powerup.is_some() && elapsed_secs % 0.25 < 0.125 {
+        return [248, 232, 96];
+    }
+
+    match (kind, health) {
+        (EnemyKind::Armor, 1) => [248, 168, 88],
+        (EnemyKind::Armor, 2) => [216, 96, 72],
+        _ => [255, 255, 255],
+    }
+}
+
 fn player_bullet_limit(upgrade_level: u8) -> usize {
     if upgrade_level >= 2 { 2 } else { 1 }
 }
@@ -2455,13 +2560,35 @@ fn powerup_sprite_index(kind: PowerUpKind) -> usize {
     }
 }
 
-fn tank_sprite_index(team: Team, direction: Direction) -> usize {
+fn animated_tank_sprite_index(team: Team, direction: Direction, frame: usize) -> usize {
     let base = match team {
         Team::Player1 => 0,
-        Team::Player2 => 4,
-        Team::Enemy => 4,
+        Team::Player2 => 8,
+        Team::Enemy => 16,
     };
-    base + direction.tank_sprite_index()
+    base + frame.min(1) * 4 + direction.tank_sprite_index()
+}
+
+fn update_tank_sprite(
+    sprite: &mut Sprite,
+    tank_sprite: &mut TankSpriteState,
+    facing: Direction,
+    moving: bool,
+    delta: Duration,
+) {
+    if moving {
+        tank_sprite.timer.tick(delta);
+        if tank_sprite.timer.just_finished() {
+            tank_sprite.frame = 1 - tank_sprite.frame;
+        }
+    } else {
+        tank_sprite.frame = 0;
+        tank_sprite.timer.reset();
+    }
+
+    if let Some(atlas) = &mut sprite.texture_atlas {
+        atlas.index = animated_tank_sprite_index(tank_sprite.team, facing, tank_sprite.frame);
+    }
 }
 
 fn tank_rects_overlap(a: Vec2, b: Vec2) -> bool {
@@ -2561,7 +2688,7 @@ fn create_sprite_assets(
     let tank_image = images.add(create_tank_atlas());
     let tank_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::splat(16),
-        8,
+        24,
         1,
         None,
         None,
@@ -2876,12 +3003,18 @@ fn draw_ice(pixels: &mut [u8], width: usize, x_offset: usize) {
 }
 
 fn create_tank_atlas() -> Image {
-    let mut pixels = vec![0; 16 * 8 * 16 * 4];
-    let player_palette = TankPalette {
+    let mut pixels = vec![0; 16 * 24 * 16 * 4];
+    let player1_palette = TankPalette {
         dark: [48, 56, 24, 255],
         body: [184, 160, 64, 255],
         light: [240, 216, 104, 255],
         tread: [88, 80, 40, 255],
+    };
+    let player2_palette = TankPalette {
+        dark: [24, 48, 72, 255],
+        body: [64, 144, 184, 255],
+        light: [128, 216, 240, 255],
+        tread: [32, 80, 112, 255],
     };
     let enemy_palette = TankPalette {
         dark: [64, 24, 24, 255],
@@ -2890,15 +3023,10 @@ fn create_tank_atlas() -> Image {
         tread: [88, 40, 32, 255],
     };
 
-    draw_tank(&mut pixels, 128, 0, Direction::Up, player_palette);
-    draw_tank(&mut pixels, 128, 16, Direction::Down, player_palette);
-    draw_tank(&mut pixels, 128, 32, Direction::Left, player_palette);
-    draw_tank(&mut pixels, 128, 48, Direction::Right, player_palette);
-    draw_tank(&mut pixels, 128, 64, Direction::Up, enemy_palette);
-    draw_tank(&mut pixels, 128, 80, Direction::Down, enemy_palette);
-    draw_tank(&mut pixels, 128, 96, Direction::Left, enemy_palette);
-    draw_tank(&mut pixels, 128, 112, Direction::Right, enemy_palette);
-    image_from_pixels(128, 16, pixels)
+    draw_tank_group(&mut pixels, 384, 0, player1_palette);
+    draw_tank_group(&mut pixels, 384, 128, player2_palette);
+    draw_tank_group(&mut pixels, 384, 256, enemy_palette);
+    image_from_pixels(384, 16, pixels)
 }
 
 #[derive(Clone, Copy)]
@@ -2915,9 +3043,14 @@ fn draw_tank(
     x_offset: usize,
     direction: Direction,
     palette: TankPalette,
+    frame: usize,
 ) {
     fill_rect(pixels, width, x_offset + 2, 2, 4, 12, palette.tread);
     fill_rect(pixels, width, x_offset + 10, 2, 4, 12, palette.tread);
+    for y in [3 + frame % 2, 7 + frame % 2, 11 + frame % 2] {
+        fill_rect(pixels, width, x_offset + 2, y, 4, 1, palette.dark);
+        fill_rect(pixels, width, x_offset + 10, y, 4, 1, palette.dark);
+    }
     fill_rect(pixels, width, x_offset + 4, 4, 8, 8, palette.body);
     fill_rect(pixels, width, x_offset + 6, 6, 4, 4, palette.light);
     fill_rect(pixels, width, x_offset + 4, 11, 8, 1, palette.dark);
@@ -2927,6 +3060,37 @@ fn draw_tank(
         Direction::Down => fill_rect(pixels, width, x_offset + 7, 9, 2, 7, palette.light),
         Direction::Left => fill_rect(pixels, width, x_offset, 7, 7, 2, palette.light),
         Direction::Right => fill_rect(pixels, width, x_offset + 9, 7, 7, 2, palette.light),
+    }
+}
+
+fn draw_tank_group(pixels: &mut [u8], width: usize, x_offset: usize, palette: TankPalette) {
+    for frame in 0..2 {
+        let frame_offset = x_offset + frame * 64;
+        draw_tank(pixels, width, frame_offset, Direction::Up, palette, frame);
+        draw_tank(
+            pixels,
+            width,
+            frame_offset + 16,
+            Direction::Down,
+            palette,
+            frame,
+        );
+        draw_tank(
+            pixels,
+            width,
+            frame_offset + 32,
+            Direction::Left,
+            palette,
+            frame,
+        );
+        draw_tank(
+            pixels,
+            width,
+            frame_offset + 48,
+            Direction::Right,
+            palette,
+            frame,
+        );
     }
 }
 
@@ -3367,6 +3531,54 @@ mod tests {
         assert_eq!(enemy_score(EnemyKind::Fast), 200);
         assert_eq!(enemy_score(EnemyKind::Power), 300);
         assert_eq!(enemy_score(EnemyKind::Armor), 400);
+    }
+
+    #[test]
+    fn tank_sprite_indices_separate_players_and_enemy_animation_frames() {
+        assert_eq!(
+            animated_tank_sprite_index(Team::Player1, Direction::Up, 0),
+            0
+        );
+        assert_eq!(
+            animated_tank_sprite_index(Team::Player1, Direction::Up, 1),
+            4
+        );
+        assert_eq!(
+            animated_tank_sprite_index(Team::Player2, Direction::Up, 0),
+            8
+        );
+        assert_eq!(
+            animated_tank_sprite_index(Team::Player2, Direction::Up, 1),
+            12
+        );
+        assert_eq!(
+            animated_tank_sprite_index(Team::Enemy, Direction::Up, 0),
+            16
+        );
+        assert_eq!(
+            animated_tank_sprite_index(Team::Enemy, Direction::Up, 99),
+            20
+        );
+    }
+
+    #[test]
+    fn enemy_visual_feedback_marks_carriers_and_damaged_armor() {
+        assert_eq!(
+            enemy_visual_rgb(EnemyKind::Basic, Some(PowerUpKind::Star), 1, 0.05),
+            [248, 232, 96]
+        );
+        assert_eq!(
+            enemy_visual_rgb(EnemyKind::Basic, Some(PowerUpKind::Star), 1, 0.20),
+            [255, 255, 255]
+        );
+        assert_eq!(
+            enemy_visual_rgb(EnemyKind::Armor, None, 2, 0.20),
+            [216, 96, 72]
+        );
+        assert_eq!(
+            enemy_visual_rgb(EnemyKind::Armor, None, 1, 0.20),
+            [248, 168, 88]
+        );
     }
 
     #[test]

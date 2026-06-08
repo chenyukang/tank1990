@@ -30,6 +30,8 @@ const BULLET_SIZE: f32 = 4.0;
 const PLAYER_SPEED: f32 = 60.0;
 const BULLET_SPEED: f32 = 240.0;
 const PLAYER_FAST_BULLET_SPEED: f32 = 300.0;
+const ENEMY_BULLET_LIMIT: usize = 4;
+const ENEMY_BULLET_LIMIT_PER_TANK: usize = 1;
 const SNAP_DISTANCE: f32 = 2.0;
 const GLYPHS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const POWERUP_DROP_INTERVAL: usize = 5;
@@ -708,6 +710,11 @@ struct Bullet {
     owner: Team,
     speed: f32,
     breaks_steel: bool,
+}
+
+#[derive(Component)]
+struct EnemyBulletSource {
+    shooter: Entity,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1821,9 +1828,10 @@ fn fire_enemy_bullets(
     enemy_freeze: Res<EnemyFreeze>,
     grid: Res<TileGrid>,
     players: Query<&Tank, With<Player>>,
-    enemy_bullets: Query<&Bullet>,
+    enemy_bullets: Query<&EnemyBulletSource>,
     mut enemies: Query<
         (
+            Entity,
             &mut Tank,
             &EnemyTank,
             &mut EnemyAi,
@@ -1839,16 +1847,22 @@ fn fire_enemy_bullets(
 
     let player_top_lefts: Vec<Vec2> = players.iter().map(|tank| tank.top_left).collect();
     let base_center = base_center_from_grid(&grid);
-    let mut active_enemy_bullets = enemy_bullets
-        .iter()
-        .filter(|bullet| bullet.owner == Team::Enemy)
-        .count();
-    if active_enemy_bullets >= 4 {
+    let mut active_enemy_bullet_shooters: Vec<Entity> =
+        enemy_bullets.iter().map(|source| source.shooter).collect();
+    if active_enemy_bullet_shooters.len() >= ENEMY_BULLET_LIMIT {
         return;
     }
 
-    for (mut tank, enemy, mut ai, mut sprite, tank_sprite) in &mut enemies {
+    for (enemy_entity, mut tank, enemy, mut ai, mut sprite, tank_sprite) in &mut enemies {
         ai.fire_timer.tick(time.delta());
+        let active_for_tank = active_enemy_bullet_shooters
+            .iter()
+            .filter(|shooter| **shooter == enemy_entity)
+            .count();
+        if !enemy_fire_slot_available(active_enemy_bullet_shooters.len(), active_for_tank) {
+            continue;
+        }
+
         let aim_direction = enemy_aim_direction(tank.top_left, &player_top_lefts, base_center);
         let snap_fire_ready = aim_direction.is_some()
             && enemy_alignment_fire_ready(enemy.kind, ai.fire_timer.elapsed_secs());
@@ -1883,13 +1897,18 @@ fn fire_enemy_bullets(
                 speed: BULLET_SPEED,
                 breaks_steel: false,
             },
+            EnemyBulletSource {
+                shooter: enemy_entity,
+            },
             GameEntity,
         ));
         play_sound(&mut commands, &sounds, SoundKind::Fire);
         ai.fire_timer.reset();
-        active_enemy_bullets += 1;
+        active_enemy_bullet_shooters.push(enemy_entity);
 
-        if enemy.kind == EnemyKind::Power || active_enemy_bullets >= 4 {
+        if enemy.kind == EnemyKind::Power
+            || active_enemy_bullet_shooters.len() >= ENEMY_BULLET_LIMIT
+        {
             break;
         }
     }
@@ -3023,6 +3042,10 @@ fn preferred_enemy_direction(
 
 fn enemy_alignment_fire_ready(kind: EnemyKind, elapsed_secs: f32) -> bool {
     elapsed_secs >= enemy_fire_interval(kind) * ENEMY_ALIGNMENT_FIRE_FRACTION
+}
+
+fn enemy_fire_slot_available(active_enemy_bullets: usize, active_for_tank: usize) -> bool {
+    active_enemy_bullets < ENEMY_BULLET_LIMIT && active_for_tank < ENEMY_BULLET_LIMIT_PER_TANK
 }
 
 fn next_direction(direction: Direction) -> Direction {
@@ -4386,6 +4409,14 @@ mod tests {
     fn enemy_alignment_fire_uses_fractional_cooldown() {
         assert!(!enemy_alignment_fire_ready(EnemyKind::Basic, 0.70));
         assert!(enemy_alignment_fire_ready(EnemyKind::Basic, 0.72));
+    }
+
+    #[test]
+    fn enemy_fire_slots_limit_total_and_per_tank_bullets() {
+        assert!(enemy_fire_slot_available(0, 0));
+        assert!(enemy_fire_slot_available(ENEMY_BULLET_LIMIT - 1, 0));
+        assert!(!enemy_fire_slot_available(ENEMY_BULLET_LIMIT, 0));
+        assert!(!enemy_fire_slot_available(1, ENEMY_BULLET_LIMIT_PER_TANK));
     }
 
     #[test]

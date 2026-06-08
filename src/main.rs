@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const ASSET_MANIFEST_PATH: &str = "assets/manifest.ron";
-const LEVEL_COUNT: usize = 8;
+const LEVEL_COUNT: usize = 9;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const ARENA_COUNT: usize = 2;
 const DEFAULT_VERSUS_ARENA: usize = 1;
@@ -5087,6 +5087,7 @@ mod tests {
     const LEVEL_6: &str = include_str!("../assets/levels/006.level.ron");
     const LEVEL_7: &str = include_str!("../assets/levels/007.level.ron");
     const LEVEL_8: &str = include_str!("../assets/levels/008.level.ron");
+    const LEVEL_9: &str = include_str!("../assets/levels/009.level.ron");
     const ARENA_1: &str = include_str!("../assets/arenas/arena_01.ron");
     const ARENA_2: &str = include_str!("../assets/arenas/arena_02.ron");
 
@@ -5100,6 +5101,7 @@ mod tests {
             (6, LEVEL_6),
             (7, LEVEL_7),
             (8, LEVEL_8),
+            (9, LEVEL_9),
         ]
     }
 
@@ -5287,7 +5289,9 @@ mod tests {
     fn level_rules_default_to_normal_steel_and_later_levels_enable_upgrade_breaking() {
         let stage_1 = parse_level(LEVEL_1).expect("level should parse");
         assert_eq!(StageRules::from_level(&stage_1), StageRules::default());
-        for contents in [LEVEL_3, LEVEL_4, LEVEL_5, LEVEL_6, LEVEL_7, LEVEL_8] {
+        for contents in [
+            LEVEL_3, LEVEL_4, LEVEL_5, LEVEL_6, LEVEL_7, LEVEL_8, LEVEL_9,
+        ] {
             let level = parse_level(contents).expect("level should parse");
             assert_eq!(
                 StageRules::from_level(&level),
@@ -5390,6 +5394,17 @@ mod tests {
         let grid = TileGrid::from_level(&stage_8).expect("grid should build");
         assert!(grid.tiles.contains(&TileKind::Steel));
         assert!(grid.tiles.contains(&TileKind::Brick));
+    }
+
+    #[test]
+    fn stage_nine_authors_mixed_terrain_pressure() {
+        let stage_9 = parse_level(LEVEL_9).expect("level should parse");
+        let grid = TileGrid::from_level(&stage_9).expect("grid should build");
+        assert!(grid.tiles.contains(&TileKind::Steel));
+        assert!(grid.tiles.contains(&TileKind::Water));
+        assert!(grid.tiles.contains(&TileKind::Forest));
+        assert!(grid.tiles.contains(&TileKind::Ice));
+        assert_eq!(stage_9.spawn_interval_secs, 1.5);
     }
 
     #[test]

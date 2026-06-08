@@ -39,6 +39,7 @@
     spawn_shimmer: (first: 4, last: 7),
     base_destruction: (first: 8, last: 11),
     powerup_sparkle: (first: 12, last: 15),
+    bullet_impact: (first: 16, last: 19),
   ),
   powerups: (
     star: 0,

@@ -22,7 +22,7 @@ const DEFAULT_VERSUS_ARENA: usize = 1;
 const TANK_ATLAS_TILES: usize = 48;
 const TANK_ANIMATION_FRAMES: usize = 2;
 const TERRAIN_ATLAS_TILES: usize = 6;
-const EFFECT_ATLAS_TILES: usize = 16;
+const EFFECT_ATLAS_TILES: usize = 20;
 const POWERUP_ATLAS_TILES: usize = 6;
 
 const VIRTUAL_WIDTH: f32 = 256.0;
@@ -62,6 +62,7 @@ const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
 const EXPLOSION_FRAME_SECONDS: f32 = 0.07;
+const BULLET_IMPACT_FRAME_SECONDS: f32 = 0.05;
 const STAGE_CLEAR_LIFE_BONUS: u32 = 1000;
 const ENEMY_ALIGNMENT_FIRE_FRACTION: f32 = 0.45;
 const ENEMY_SPAWN_PROTECTION_SECONDS: f32 = 0.35;
@@ -226,6 +227,10 @@ impl AssetManifest {
     fn powerup_sparkle_frames(&self) -> SpriteFrameRange {
         self.effects.powerup_sparkle
     }
+
+    fn bullet_impact_frames(&self) -> SpriteFrameRange {
+        self.effects.bullet_impact
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -290,6 +295,7 @@ struct EffectSpriteManifest {
     spawn_shimmer: SpriteFrameRange,
     base_destruction: SpriteFrameRange,
     powerup_sparkle: SpriteFrameRange,
+    bullet_impact: SpriteFrameRange,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
@@ -1743,6 +1749,7 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
             manifest.effects.base_destruction,
         ),
         ("effects.powerup_sparkle", manifest.effects.powerup_sparkle),
+        ("effects.bullet_impact", manifest.effects.bullet_impact),
     ] {
         validate_frame_range(name, frames, EFFECT_ATLAS_TILES, "effect")?;
     }
@@ -3130,6 +3137,7 @@ fn move_bullets(
                     Vec2::splat(TANK_SIZE),
                 ) {
                     if spawn_protection.is_some() {
+                        spawn_bullet_impact_effect(&mut commands, &assets, bullet.top_left);
                         commands.entity(entity).despawn();
                         play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                         hit_enemy = true;
@@ -3156,6 +3164,8 @@ fn move_bullets(
                                 &active_sparkles,
                             );
                         }
+                    } else {
+                        spawn_bullet_impact_effect(&mut commands, &assets, bullet.top_left);
                     }
                     play_sound(&mut commands, &sounds, hit_sound);
                     commands.entity(entity).despawn();
@@ -3212,6 +3222,7 @@ fn move_bullets(
                         *game_mode,
                     );
                 } else {
+                    spawn_bullet_impact_effect(&mut commands, &assets, bullet.top_left);
                     play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                 }
                 commands.entity(entity).despawn();
@@ -3245,6 +3256,7 @@ fn move_bullets(
                 }
 
                 if shield.is_some() {
+                    spawn_bullet_impact_effect(&mut commands, &assets, bullet.top_left);
                     commands.entity(entity).despawn();
                     play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                     hit_player = true;
@@ -3282,6 +3294,7 @@ fn move_bullets(
         let tile = grid.tiles[tile_y * BOARD_TILES + tile_x];
 
         if tile.bullet_blocks() {
+            spawn_bullet_impact_effect(&mut commands, &assets, bullet.top_left);
             if bullet_destroys_tile(tile, bullet.breaks_steel) {
                 grid.set(tile_x, tile_y, TileKind::Empty);
                 play_sound(
@@ -4439,6 +4452,37 @@ fn spawn_bullet_position(tank_top_left: Vec2, direction: Direction) -> Vec2 {
 
 fn explosion_duration_secs(frames: SpriteFrameRange) -> f32 {
     (frames.last - frames.first + 1) as f32 * EXPLOSION_FRAME_SECONDS
+}
+
+fn spawn_bullet_impact_effect(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    bullet_top_left: Vec2,
+) {
+    let frames = assets.manifest.bullet_impact_frames();
+    commands.spawn((
+        Sprite::from_atlas_image(
+            assets.effect_image.clone(),
+            TextureAtlas {
+                layout: assets.effect_layout.clone(),
+                index: frames.first,
+            },
+        ),
+        Transform::from_translation(board_object_center(
+            bullet_top_left.x,
+            bullet_top_left.y,
+            Vec2::splat(BULLET_SIZE),
+            8.1,
+        ))
+        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        SpriteAnimation {
+            first: frames.first,
+            last: frames.last,
+            timer: Timer::from_seconds(BULLET_IMPACT_FRAME_SECONDS, TimerMode::Repeating),
+            despawn_on_finish: true,
+        },
+        GameEntity,
+    ));
 }
 
 fn spawn_explosion(commands: &mut Commands, assets: &SpriteAssets, top_left: Vec2) {
@@ -5715,6 +5759,9 @@ fn create_effect_atlas() -> Image {
     for frame in 0..4 {
         draw_powerup_sparkle_frame(&mut pixels, width, 192 + frame * 16, frame);
     }
+    for frame in 0..4 {
+        draw_bullet_impact_frame(&mut pixels, width, 256 + frame * 16, frame);
+    }
     image_from_pixels(width, 16, pixels)
 }
 
@@ -5830,6 +5877,33 @@ fn draw_powerup_sparkle_frame(pixels: &mut [u8], width: usize, x_offset: usize, 
     if frame == 1 || frame == 3 {
         fill_rect(pixels, width, x_offset + 7, 0, 2, 3, color);
         fill_rect(pixels, width, x_offset + 7, 13, 2, 3, color);
+    }
+}
+
+fn draw_bullet_impact_frame(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
+    match frame {
+        0 => {
+            fill_rect(pixels, width, x_offset + 7, 7, 2, 2, [255, 248, 184, 255]);
+            set_pixel(pixels, width, x_offset + 8, 6, [255, 255, 255, 240]);
+        }
+        1 => {
+            fill_rect(pixels, width, x_offset + 6, 7, 4, 2, [248, 216, 96, 255]);
+            fill_rect(pixels, width, x_offset + 7, 6, 2, 4, [248, 216, 96, 255]);
+            set_pixel(pixels, width, x_offset + 5, 5, [255, 255, 255, 220]);
+            set_pixel(pixels, width, x_offset + 10, 10, [232, 96, 40, 230]);
+        }
+        2 => {
+            for (x, y) in [(4, 7), (6, 5), (8, 4), (11, 7), (9, 11), (5, 10)] {
+                set_pixel(pixels, width, x_offset + x, y, [248, 200, 72, 220]);
+            }
+            fill_rect(pixels, width, x_offset + 7, 7, 2, 2, [232, 96, 40, 210]);
+        }
+        _ => {
+            for (x, y) in [(5, 6), (9, 5), (11, 9), (7, 11)] {
+                set_pixel(pixels, width, x_offset + x, y, [104, 88, 80, 150]);
+            }
+            set_pixel(pixels, width, x_offset + 8, 8, [72, 56, 48, 130]);
+        }
     }
 }
 
@@ -6336,6 +6410,13 @@ mod tests {
                 last: 15
             }
         );
+        assert_eq!(
+            manifest.bullet_impact_frames(),
+            SpriteFrameRange {
+                first: 16,
+                last: 19
+            }
+        );
 
         assert_eq!(manifest.powerup_index(PowerUpKind::Star), 0);
         assert_eq!(manifest.powerup_index(PowerUpKind::Helmet), 1);
@@ -6390,7 +6471,7 @@ mod tests {
 
         let invalid = MANIFEST.replacen(
             "powerup_sparkle: (first: 12, last: 15)",
-            "powerup_sparkle: (first: 12, last: 16)",
+            "powerup_sparkle: (first: 12, last: 20)",
             1,
         );
         assert!(

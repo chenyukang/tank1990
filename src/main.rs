@@ -61,6 +61,7 @@ static MODE_SELECT_HINT_LINES: [&str; 3] = ["WS SELECT", "AD ARENA", "SPACE STAR
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
+const SHOVEL_WARNING_SECONDS: f32 = 2.0;
 const EXPLOSION_FRAME_SECONDS: f32 = 0.07;
 const BULLET_IMPACT_FRAME_SECONDS: f32 = 0.05;
 const STAGE_CLEAR_LIFE_BONUS: u32 = 1000;
@@ -120,6 +121,12 @@ fn main() {
             update_versus_frozen_player_visuals
                 .after(tick_shields)
                 .before(update_enemy_visual_feedback),
+        )
+        .add_systems(
+            FixedUpdate,
+            update_base_reinforcement_visuals
+                .after(tick_powerup_effects)
+                .before(update_powerup_visuals),
         )
         .add_systems(FixedUpdate, tick_destroyed_tanks.after(animate_sprites))
         .add_systems(
@@ -720,6 +727,17 @@ impl BaseReinforcement {
         };
         timer.tick(delta);
         timer.is_finished()
+    }
+
+    fn warning_elapsed_secs(&self) -> Option<f32> {
+        let timer = self.timer.as_ref()?;
+        (timer.remaining_secs() <= SHOVEL_WARNING_SECONDS).then_some(timer.elapsed_secs())
+    }
+
+    fn contains_position(&self, x: usize, y: usize) -> bool {
+        self.saved_tiles
+            .iter()
+            .any(|(tile_x, tile_y, _)| *tile_x == x && *tile_y == y)
     }
 }
 
@@ -3653,6 +3671,27 @@ fn tick_powerup_effects(
     }
 }
 
+fn update_base_reinforcement_visuals(
+    game_status: Res<GameStatus>,
+    base_reinforcement: Res<BaseReinforcement>,
+    mut tile_sprites: Query<(&GridTile, &mut Sprite)>,
+) {
+    if !game_status.is_playing() || base_reinforcement.saved_tiles.is_empty() {
+        return;
+    }
+
+    let color = base_reinforcement
+        .warning_elapsed_secs()
+        .map(shovel_warning_visual_color)
+        .unwrap_or(Color::WHITE);
+
+    for (grid_tile, mut sprite) in &mut tile_sprites {
+        if base_reinforcement.contains_position(grid_tile.x, grid_tile.y) {
+            sprite.color = color;
+        }
+    }
+}
+
 fn update_powerup_visuals(
     time: Res<Time>,
     game_status: Res<GameStatus>,
@@ -5059,6 +5098,19 @@ fn player_frozen_visual_rgb(elapsed_secs: f32) -> [u8; 3] {
         [136, 216, 255]
     } else {
         [216, 248, 255]
+    }
+}
+
+fn shovel_warning_visual_color(elapsed_secs: f32) -> Color {
+    let [r, g, b] = shovel_warning_visual_rgb(elapsed_secs);
+    Color::srgb_u8(r, g, b)
+}
+
+fn shovel_warning_visual_rgb(elapsed_secs: f32) -> [u8; 3] {
+    if elapsed_secs % 0.24 < 0.12 {
+        [255, 255, 255]
+    } else {
+        [248, 232, 96]
     }
 }
 
@@ -8071,6 +8123,30 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    #[test]
+    fn shovel_reinforcement_warns_only_near_expiration() {
+        let mut reinforcement = BaseReinforcement {
+            timer: None,
+            saved_tiles: vec![(10, 24, TileKind::Brick)],
+        };
+        reinforcement.start();
+
+        assert_eq!(reinforcement.warning_elapsed_secs(), None);
+        assert!(reinforcement.contains_position(10, 24));
+        assert!(!reinforcement.contains_position(12, 24));
+
+        assert!(!reinforcement.tick(Duration::from_secs_f32(
+            SHOVEL_SECONDS - SHOVEL_WARNING_SECONDS + 0.01
+        )));
+        assert!(reinforcement.warning_elapsed_secs().is_some());
+    }
+
+    #[test]
+    fn shovel_warning_visuals_flash_yellow() {
+        assert_eq!(shovel_warning_visual_rgb(0.05), [255, 255, 255]);
+        assert_eq!(shovel_warning_visual_rgb(0.18), [248, 232, 96]);
     }
 
     #[test]

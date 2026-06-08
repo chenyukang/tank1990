@@ -36,6 +36,7 @@ const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
 const ENEMY_ALIGNMENT_FIRE_FRACTION: f32 = 0.45;
+const ENEMY_SPAWN_PROTECTION_SECONDS: f32 = 0.35;
 const SOUND_SAMPLE_RATE: u32 = 22_050;
 
 fn main() {
@@ -82,6 +83,7 @@ fn main() {
                 pickup_powerups,
                 tick_powerup_effects,
                 animate_sprites,
+                tick_spawn_protections,
                 tick_shields,
                 update_enemy_visual_feedback,
                 check_game_phase,
@@ -639,6 +641,24 @@ struct EnemyTank {
 struct EnemyAi {
     turn_timer: Timer,
     fire_timer: Timer,
+}
+
+#[derive(Component)]
+struct SpawnProtection {
+    timer: Timer,
+}
+
+impl SpawnProtection {
+    fn enemy() -> Self {
+        Self {
+            timer: Timer::from_seconds(ENEMY_SPAWN_PROTECTION_SECONDS, TimerMode::Once),
+        }
+    }
+
+    fn tick(&mut self, delta: Duration) -> bool {
+        self.timer.tick(delta);
+        self.timer.is_finished()
+    }
 }
 
 #[derive(Component)]
@@ -1682,6 +1702,7 @@ fn spawn_enemies(
                 turn_timer: Timer::from_seconds(1.2, TimerMode::Repeating),
                 fire_timer: Timer::from_seconds(enemy_fire_interval(kind), TimerMode::Repeating),
             },
+            SpawnProtection::enemy(),
             GameEntity,
         ));
         spawn_spawn_effect(&mut commands, &assets, top_left);
@@ -1704,7 +1725,7 @@ fn move_enemy_tanks(
                 &mut EnemyAi,
                 &mut TankSpriteState,
             ),
-            (With<EnemyTank>, Without<Player>),
+            (With<EnemyTank>, Without<Player>, Without<SpawnProtection>),
         >,
     )>,
 ) {
@@ -1780,7 +1801,7 @@ fn fire_enemy_bullets(
             &mut Sprite,
             &TankSpriteState,
         ),
-        (With<EnemyTank>, Without<Player>),
+        (With<EnemyTank>, Without<Player>, Without<SpawnProtection>),
     >,
 ) {
     if !game_status.is_playing() || enemy_freeze.is_active() {
@@ -1911,7 +1932,13 @@ fn move_bullets(
     active_powerups: Query<Entity, With<PowerUp>>,
     mut base_sprites: Query<&mut Sprite, With<BaseSprite>>,
     mut enemy_tanks: Query<
-        (Entity, &Tank, &EnemyTank, &mut Health),
+        (
+            Entity,
+            &Tank,
+            &EnemyTank,
+            &mut Health,
+            Option<&SpawnProtection>,
+        ),
         (With<EnemyTank>, Without<Player>),
     >,
     mut player_tanks: Query<
@@ -1946,13 +1973,21 @@ fn move_bullets(
 
         if *game_mode == GameMode::Campaign && bullet.owner.is_player() {
             let mut hit_enemy = false;
-            for (enemy_entity, enemy_tank, enemy, mut health) in &mut enemy_tanks {
+            for (enemy_entity, enemy_tank, enemy, mut health, spawn_protection) in &mut enemy_tanks
+            {
                 if rects_overlap(
                     bullet.top_left,
                     Vec2::splat(BULLET_SIZE),
                     enemy_tank.top_left,
                     Vec2::splat(TANK_SIZE),
                 ) {
+                    if spawn_protection.is_some() {
+                        commands.entity(entity).despawn();
+                        play_sound(&mut commands, &sounds, SoundKind::SteelHit);
+                        hit_enemy = true;
+                        break;
+                    }
+
                     health.current -= 1;
                     if health.current <= 0 {
                         score_board.score += enemy_score(enemy.kind);
@@ -2426,6 +2461,23 @@ fn animate_sprites(
     }
 }
 
+fn tick_spawn_protections(
+    mut commands: Commands,
+    time: Res<Time>,
+    game_status: Res<GameStatus>,
+    mut protected_tanks: Query<(Entity, &mut SpawnProtection)>,
+) {
+    if !game_status.is_playing() {
+        return;
+    }
+
+    for (entity, mut protection) in &mut protected_tanks {
+        if protection.tick(time.delta()) {
+            commands.entity(entity).remove::<SpawnProtection>();
+        }
+    }
+}
+
 fn tick_shields(
     mut commands: Commands,
     time: Res<Time>,
@@ -2448,14 +2500,15 @@ fn tick_shields(
 
 fn update_enemy_visual_feedback(
     time: Res<Time>,
-    mut enemies: Query<(&EnemyTank, &Health, &mut Sprite)>,
+    mut enemies: Query<(&EnemyTank, &Health, Option<&SpawnProtection>, &mut Sprite)>,
 ) {
-    for (enemy, health, mut sprite) in &mut enemies {
+    for (enemy, health, spawn_protection, mut sprite) in &mut enemies {
         sprite.color = enemy_visual_color(
             enemy.kind,
             enemy.carried_powerup,
             health.current,
             time.elapsed_secs(),
+            spawn_protection.is_some(),
         );
     }
 }
@@ -2975,9 +3028,24 @@ fn enemy_visual_color(
     carried_powerup: Option<PowerUpKind>,
     health: i32,
     elapsed_secs: f32,
+    spawn_protected: bool,
 ) -> Color {
-    let [r, g, b] = enemy_visual_rgb(kind, carried_powerup, health, elapsed_secs);
+    let [r, g, b] = enemy_display_rgb(kind, carried_powerup, health, elapsed_secs, spawn_protected);
     Color::srgb_u8(r, g, b)
+}
+
+fn enemy_display_rgb(
+    kind: EnemyKind,
+    carried_powerup: Option<PowerUpKind>,
+    health: i32,
+    elapsed_secs: f32,
+    spawn_protected: bool,
+) -> [u8; 3] {
+    if spawn_protected && elapsed_secs % 0.16 < 0.08 {
+        return [160, 220, 255];
+    }
+
+    enemy_visual_rgb(kind, carried_powerup, health, elapsed_secs)
 }
 
 fn enemy_visual_rgb(
@@ -4089,6 +4157,27 @@ mod tests {
         assert_eq!(
             enemy_visual_rgb(EnemyKind::Armor, None, 1, 0.20),
             [248, 168, 88]
+        );
+    }
+
+    #[test]
+    fn spawn_protection_expires_after_spawn_shimmer() {
+        let mut protection = SpawnProtection::enemy();
+        assert!(!protection.tick(Duration::from_secs_f32(
+            ENEMY_SPAWN_PROTECTION_SECONDS - 0.01
+        )));
+        assert!(protection.tick(Duration::from_secs_f32(0.02)));
+    }
+
+    #[test]
+    fn spawn_protection_visual_overrides_enemy_feedback_temporarily() {
+        assert_eq!(
+            enemy_display_rgb(EnemyKind::Armor, Some(PowerUpKind::Star), 1, 0.02, true),
+            [160, 220, 255]
+        );
+        assert_eq!(
+            enemy_display_rgb(EnemyKind::Armor, Some(PowerUpKind::Star), 1, 0.10, true),
+            [248, 232, 96]
         );
     }
 

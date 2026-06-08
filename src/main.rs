@@ -12,7 +12,7 @@ use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 
-const LEVEL_COUNT: usize = 6;
+const LEVEL_COUNT: usize = 7;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const ARENA_COUNT: usize = 2;
 const DEFAULT_VERSUS_ARENA: usize = 1;
@@ -4594,6 +4594,7 @@ mod tests {
     const LEVEL_4: &str = include_str!("../assets/levels/004.level.ron");
     const LEVEL_5: &str = include_str!("../assets/levels/005.level.ron");
     const LEVEL_6: &str = include_str!("../assets/levels/006.level.ron");
+    const LEVEL_7: &str = include_str!("../assets/levels/007.level.ron");
     const ARENA_1: &str = include_str!("../assets/arenas/arena_01.ron");
     const ARENA_2: &str = include_str!("../assets/arenas/arena_02.ron");
 
@@ -4605,6 +4606,7 @@ mod tests {
             (4, LEVEL_4),
             (5, LEVEL_5),
             (6, LEVEL_6),
+            (7, LEVEL_7),
         ]
     }
 
@@ -4646,7 +4648,7 @@ mod tests {
     fn level_rules_default_to_normal_steel_and_later_levels_enable_upgrade_breaking() {
         let stage_1 = parse_level(LEVEL_1).expect("level should parse");
         assert_eq!(StageRules::from_level(&stage_1), StageRules::default());
-        for contents in [LEVEL_3, LEVEL_4, LEVEL_5, LEVEL_6] {
+        for contents in [LEVEL_3, LEVEL_4, LEVEL_5, LEVEL_6, LEVEL_7] {
             let level = parse_level(contents).expect("level should parse");
             assert_eq!(
                 StageRules::from_level(&level),
@@ -4733,6 +4735,14 @@ mod tests {
         let stage_6 = parse_level(LEVEL_6).expect("level should parse");
         let grid = TileGrid::from_level(&stage_6).expect("grid should build");
         assert!(grid.tiles.contains(&TileKind::Ice));
+    }
+
+    #[test]
+    fn stage_seven_authors_forest_pressure_lanes() {
+        let stage_7 = parse_level(LEVEL_7).expect("level should parse");
+        let grid = TileGrid::from_level(&stage_7).expect("grid should build");
+        assert!(grid.tiles.contains(&TileKind::Forest));
+        assert!(grid.tiles.contains(&TileKind::Water));
     }
 
     #[test]

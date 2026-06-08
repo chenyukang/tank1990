@@ -519,8 +519,8 @@ Suggested contents:
 
 Current implementation note:
 
-- `assets/manifest.ron` maps generated terrain and power-up atlas entries to semantic names.
-- Tank animation frames, effect frames, glyphs, and sounds still use generated placeholder assets and will be moved into the manifest in later asset-pipeline stages.
+- `assets/manifest.ron` maps generated terrain, power-up, and effect atlas entries to semantic names and frame ranges.
+- Tank animation frames, glyphs, and sounds still use generated placeholder assets and will be moved into the manifest in later asset-pipeline stages.
 
 ### 10.2 Audio Style
 

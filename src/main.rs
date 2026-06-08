@@ -18,6 +18,7 @@ const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const ARENA_COUNT: usize = 2;
 const DEFAULT_VERSUS_ARENA: usize = 1;
 const TERRAIN_ATLAS_TILES: usize = 5;
+const EFFECT_ATLAS_TILES: usize = 8;
 const POWERUP_ATLAS_TILES: usize = 6;
 
 const VIRTUAL_WIDTH: f32 = 256.0;
@@ -137,6 +138,7 @@ struct SpriteAssets {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 struct AssetManifest {
     terrain: TerrainSpriteManifest,
+    effects: EffectSpriteManifest,
     powerups: PowerUpSpriteManifest,
 }
 
@@ -162,6 +164,14 @@ impl AssetManifest {
             PowerUpKind::Tank => self.powerups.tank,
         }
     }
+
+    fn explosion_frames(&self) -> SpriteFrameRange {
+        self.effects.explosion
+    }
+
+    fn spawn_shimmer_frames(&self) -> SpriteFrameRange {
+        self.effects.spawn_shimmer
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -171,6 +181,18 @@ struct TerrainSpriteManifest {
     water: usize,
     forest: usize,
     ice: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+struct EffectSpriteManifest {
+    explosion: SpriteFrameRange,
+    spawn_shimmer: SpriteFrameRange,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+struct SpriteFrameRange {
+    first: usize,
+    last: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -1374,6 +1396,13 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
         }
     }
 
+    for (name, frames) in [
+        ("effects.explosion", manifest.effects.explosion),
+        ("effects.spawn_shimmer", manifest.effects.spawn_shimmer),
+    ] {
+        validate_frame_range(name, frames, EFFECT_ATLAS_TILES)?;
+    }
+
     for (name, index) in [
         ("powerups.star", manifest.powerups.star),
         ("powerups.helmet", manifest.powerups.helmet),
@@ -1387,6 +1416,28 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
                 "{name} index {index} is outside the generated power-up atlas"
             ));
         }
+    }
+
+    Ok(())
+}
+
+fn validate_frame_range(
+    name: &str,
+    frames: SpriteFrameRange,
+    atlas_tiles: usize,
+) -> Result<(), String> {
+    if frames.first > frames.last {
+        return Err(format!(
+            "{name} frame range {}..={} starts after it ends",
+            frames.first, frames.last
+        ));
+    }
+
+    if frames.last >= atlas_tiles {
+        return Err(format!(
+            "{name} frame range {}..={} is outside the generated effect atlas",
+            frames.first, frames.last
+        ));
     }
 
     Ok(())
@@ -3408,12 +3459,13 @@ fn spawn_bullet_position(tank_top_left: Vec2, direction: Direction) -> Vec2 {
 }
 
 fn spawn_explosion(commands: &mut Commands, assets: &SpriteAssets, top_left: Vec2) {
+    let frames = assets.manifest.explosion_frames();
     commands.spawn((
         Sprite::from_atlas_image(
             assets.effect_image.clone(),
             TextureAtlas {
                 layout: assets.effect_layout.clone(),
-                index: 0,
+                index: frames.first,
             },
         ),
         Transform::from_translation(board_object_center(
@@ -3424,8 +3476,8 @@ fn spawn_explosion(commands: &mut Commands, assets: &SpriteAssets, top_left: Vec
         ))
         .with_scale(Vec3::splat(WINDOW_SCALE)),
         SpriteAnimation {
-            first: 0,
-            last: 3,
+            first: frames.first,
+            last: frames.last,
             timer: Timer::from_seconds(0.07, TimerMode::Repeating),
             despawn_on_finish: true,
         },
@@ -3434,12 +3486,13 @@ fn spawn_explosion(commands: &mut Commands, assets: &SpriteAssets, top_left: Vec
 }
 
 fn spawn_spawn_effect(commands: &mut Commands, assets: &SpriteAssets, top_left: Vec2) {
+    let frames = assets.manifest.spawn_shimmer_frames();
     commands.spawn((
         Sprite::from_atlas_image(
             assets.effect_image.clone(),
             TextureAtlas {
                 layout: assets.effect_layout.clone(),
-                index: 4,
+                index: frames.first,
             },
         ),
         Transform::from_translation(board_object_center(
@@ -3450,8 +3503,8 @@ fn spawn_spawn_effect(commands: &mut Commands, assets: &SpriteAssets, top_left: 
         ))
         .with_scale(Vec3::splat(WINDOW_SCALE)),
         SpriteAnimation {
-            first: 4,
-            last: 7,
+            first: frames.first,
+            last: frames.last,
             timer: Timer::from_seconds(0.08, TimerMode::Repeating),
             despawn_on_finish: true,
         },
@@ -3934,7 +3987,7 @@ fn create_sprite_assets(
     let effect_image = images.add(create_effect_atlas());
     let effect_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::splat(16),
-        8,
+        EFFECT_ATLAS_TILES as u32,
         1,
         None,
         None,
@@ -4719,6 +4772,15 @@ mod tests {
         assert_eq!(manifest.terrain_index(TileKind::Empty), None);
         assert_eq!(manifest.terrain_index(TileKind::Base), None);
 
+        assert_eq!(
+            manifest.explosion_frames(),
+            SpriteFrameRange { first: 0, last: 3 }
+        );
+        assert_eq!(
+            manifest.spawn_shimmer_frames(),
+            SpriteFrameRange { first: 4, last: 7 }
+        );
+
         assert_eq!(manifest.powerup_index(PowerUpKind::Star), 0);
         assert_eq!(manifest.powerup_index(PowerUpKind::Helmet), 1);
         assert_eq!(manifest.powerup_index(PowerUpKind::Clock), 2);
@@ -4734,6 +4796,28 @@ mod tests {
             parse_asset_manifest(&invalid)
                 .expect_err("invalid terrain index should fail")
                 .contains("outside the generated terrain atlas")
+        );
+
+        let invalid = MANIFEST.replacen(
+            "spawn_shimmer: (first: 4, last: 7)",
+            "spawn_shimmer: (first: 4, last: 8)",
+            1,
+        );
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("invalid effect range should fail")
+                .contains("outside the generated effect atlas")
+        );
+
+        let invalid = MANIFEST.replacen(
+            "explosion: (first: 0, last: 3)",
+            "explosion: (first: 3, last: 0)",
+            1,
+        );
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("reversed effect range should fail")
+                .contains("starts after it ends")
         );
 
         let invalid = MANIFEST.replacen("tank: 5", "tank: 6", 1);

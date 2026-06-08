@@ -3618,6 +3618,13 @@ fn stage_intro_banner_text(stage: usize) -> Vec<String> {
     vec![format!("STAGE {:02}", stage.min(99)), "READY".to_string()]
 }
 
+fn level_clear_banner_text(stage: usize) -> Vec<String> {
+    vec![
+        format!("STAGE {:02}", stage.min(99)),
+        "LEVEL CLEAR".to_string(),
+    ]
+}
+
 fn arena_intro_banner_text(arena: usize) -> Vec<String> {
     vec![format!("ARENA {:02}", arena.min(99)), "READY".to_string()]
 }
@@ -3628,6 +3635,9 @@ fn phase_banner_text(status: &GameStatus, mode: GameMode) -> Option<Vec<String>>
             GameMode::Campaign => stage_intro_banner_text(status.stage),
             GameMode::VersusDeathmatch => arena_intro_banner_text(status.arena),
         });
+    }
+    if status.phase == GamePhase::LevelClear {
+        return Some(level_clear_banner_text(status.stage));
     }
 
     phase_banner_lines(status.phase, status.winner)
@@ -6197,6 +6207,25 @@ mod tests {
         assert_eq!(
             stage_intro_banner_text(135),
             ["STAGE 99".to_string(), "READY".to_string()]
+        );
+    }
+
+    #[test]
+    fn level_clear_banner_shows_cleared_stage_number() {
+        let status = GameStatus {
+            phase: GamePhase::LevelClear,
+            stage: 12,
+            ..GameStatus::default()
+        };
+
+        assert_eq!(
+            phase_banner_text(&status, GameMode::Campaign)
+                .expect("level clear should show a banner"),
+            ["STAGE 12".to_string(), "LEVEL CLEAR".to_string()]
+        );
+        assert_eq!(
+            level_clear_banner_text(135),
+            ["STAGE 99".to_string(), "LEVEL CLEAR".to_string()]
         );
     }
 

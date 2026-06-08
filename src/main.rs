@@ -1605,9 +1605,8 @@ fn restart_level(
     base_reinforcement: &mut BaseReinforcement,
     game_entities: &Query<Entity, With<GameEntity>>,
 ) {
-    let level = load_stage_definition(game_status.stage).expect("level should load");
+    let (level, new_tile_grid) = load_stage_bundle_or_panic(game_status.stage);
     info!("Loaded {}", level.name);
-    let new_tile_grid = TileGrid::from_level(&level).expect("level map should be valid");
 
     for entity in game_entities {
         commands.entity(entity).despawn();
@@ -1647,11 +1646,8 @@ fn start_versus_round(
     game_entities: &Query<Entity, With<GameEntity>>,
 ) {
     let arena_index = game_status.arena.clamp(1, ARENA_COUNT);
-    let arena = load_arena_definition(arena_index).unwrap_or_else(|err| {
-        panic!("failed to load versus arena {arena_index}: {err}");
-    });
+    let (arena, new_tile_grid) = load_arena_bundle_or_panic(arena_index);
     info!("Loaded {}", arena.name);
-    let new_tile_grid = TileGrid::from_arena(&arena).expect("arena map should be valid");
     let (round_mode, target_score, lives, respawn_invulnerability_secs) = match arena.battle_rules {
         BattleRules::Deathmatch {
             target_score,
@@ -1706,12 +1702,50 @@ fn load_stage_definition(stage: usize) -> Result<LevelDefinition, String> {
     load_level(&stage_path(stage))
 }
 
+fn load_stage_bundle(stage: usize) -> Result<(LevelDefinition, TileGrid), String> {
+    let path = stage_path(stage);
+    let level = load_stage_definition(stage)?;
+    let grid = TileGrid::from_level(&level)
+        .map_err(|err| format!("failed to build level grid {path}: {err}"))?;
+    Ok((level, grid))
+}
+
+fn load_stage_bundle_or_panic(stage: usize) -> (LevelDefinition, TileGrid) {
+    let path = stage_path(stage);
+    load_stage_bundle(stage).unwrap_or_else(|err| {
+        panic!("{}", campaign_stage_load_error(stage, &path, &err));
+    })
+}
+
+fn campaign_stage_load_error(stage: usize, path: &str, err: &str) -> String {
+    format!("failed to load campaign stage {stage} from {path}: {err}")
+}
+
 fn arena_path(arena: usize) -> String {
     format!("assets/arenas/arena_{arena:02}.ron")
 }
 
 fn load_arena_definition(arena: usize) -> Result<ArenaDefinition, String> {
     load_arena(&arena_path(arena))
+}
+
+fn load_arena_bundle(arena: usize) -> Result<(ArenaDefinition, TileGrid), String> {
+    let path = arena_path(arena);
+    let arena_definition = load_arena_definition(arena)?;
+    let grid = TileGrid::from_arena(&arena_definition)
+        .map_err(|err| format!("failed to build arena grid {path}: {err}"))?;
+    Ok((arena_definition, grid))
+}
+
+fn load_arena_bundle_or_panic(arena: usize) -> (ArenaDefinition, TileGrid) {
+    let path = arena_path(arena);
+    load_arena_bundle(arena).unwrap_or_else(|err| {
+        panic!("{}", versus_arena_load_error(arena, &path, &err));
+    })
+}
+
+fn versus_arena_load_error(arena: usize, path: &str, err: &str) -> String {
+    format!("failed to load versus arena {arena} from {path}: {err}")
 }
 
 fn load_level(path: &str) -> Result<LevelDefinition, String> {
@@ -4179,9 +4213,8 @@ fn advance_after_level_clear(
     }
 
     let next_stage = game_status.stage + 1;
-    let level = load_stage_definition(next_stage).expect("next level should load");
+    let (level, new_tile_grid) = load_stage_bundle_or_panic(next_stage);
     info!("Loaded {}", level.name);
-    let new_tile_grid = TileGrid::from_level(&level).expect("next level map should be valid");
 
     for entity in &game_entities {
         commands.entity(entity).despawn();
@@ -6591,6 +6624,64 @@ mod tests {
 
         assert!(err.contains(&path_text));
         assert!(err.contains("deathmatch target_score must be greater than zero"));
+    }
+
+    #[test]
+    fn stage_bundle_loads_level_and_authoritative_grid_together() {
+        let (level, grid) = load_stage_bundle(1).expect("stage bundle should load");
+
+        assert_eq!(level.name, "Stage 1");
+        assert_eq!(
+            grid.get(level.base_position.x as i32, level.base_position.y as i32),
+            Some(TileKind::Base)
+        );
+    }
+
+    #[test]
+    fn arena_bundle_loads_arena_and_authoritative_grid_together() {
+        let (arena, grid) = load_arena_bundle(5).expect("arena bundle should load");
+
+        assert_eq!(arena.name, "Arena 5");
+        let BattleRules::BaseBattle {
+            p1_base, p2_base, ..
+        } = arena.battle_rules
+        else {
+            panic!("arena five should be base battle");
+        };
+        assert_eq!(
+            grid.get(p1_base.x as i32, p1_base.y as i32),
+            Some(TileKind::Base)
+        );
+        assert_eq!(
+            grid.get(p2_base.x as i32, p2_base.y as i32),
+            Some(TileKind::Base)
+        );
+    }
+
+    #[test]
+    fn runtime_stage_load_error_names_stage_path_and_reason() {
+        let err = campaign_stage_load_error(
+            7,
+            "assets/levels/007.level.ron",
+            "spawn_interval_secs must be positive",
+        );
+
+        assert!(err.contains("campaign stage 7"));
+        assert!(err.contains("assets/levels/007.level.ron"));
+        assert!(err.contains("spawn_interval_secs must be positive"));
+    }
+
+    #[test]
+    fn runtime_arena_load_error_names_arena_path_and_reason() {
+        let err = versus_arena_load_error(
+            5,
+            "assets/arenas/arena_05.ron",
+            "base battle lives must be greater than zero",
+        );
+
+        assert!(err.contains("versus arena 5"));
+        assert!(err.contains("assets/arenas/arena_05.ron"));
+        assert!(err.contains("base battle lives must be greater than zero"));
     }
 
     #[test]

@@ -1,0 +1,17 @@
+(
+  terrain: (
+    brick: 0,
+    steel: 1,
+    water: 2,
+    forest: 3,
+    ice: 4,
+  ),
+  powerups: (
+    star: 0,
+    helmet: 1,
+    clock: 2,
+    grenade: 3,
+    shovel: 4,
+    tank: 5,
+  ),
+)

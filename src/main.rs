@@ -12,10 +12,13 @@ use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 
+const ASSET_MANIFEST_PATH: &str = "assets/manifest.ron";
 const LEVEL_COUNT: usize = 8;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const ARENA_COUNT: usize = 2;
 const DEFAULT_VERSUS_ARENA: usize = 1;
+const TERRAIN_ATLAS_TILES: usize = 5;
+const POWERUP_ATLAS_TILES: usize = 6;
 
 const VIRTUAL_WIDTH: f32 = 256.0;
 const VIRTUAL_HEIGHT: f32 = 240.0;
@@ -114,6 +117,7 @@ fn main() {
 
 #[derive(Resource)]
 struct SpriteAssets {
+    manifest: AssetManifest,
     terrain_image: Handle<Image>,
     terrain_layout: Handle<TextureAtlasLayout>,
     tank_image: Handle<Image>,
@@ -128,6 +132,55 @@ struct SpriteAssets {
     glyph_layout: Handle<TextureAtlasLayout>,
     base_intact: Handle<Image>,
     base_destroyed: Handle<Image>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct AssetManifest {
+    terrain: TerrainSpriteManifest,
+    powerups: PowerUpSpriteManifest,
+}
+
+impl AssetManifest {
+    fn terrain_index(&self, tile: TileKind) -> Option<usize> {
+        match tile {
+            TileKind::Brick => Some(self.terrain.brick),
+            TileKind::Steel => Some(self.terrain.steel),
+            TileKind::Water => Some(self.terrain.water),
+            TileKind::Forest => Some(self.terrain.forest),
+            TileKind::Ice => Some(self.terrain.ice),
+            TileKind::Empty | TileKind::Base => None,
+        }
+    }
+
+    fn powerup_index(&self, kind: PowerUpKind) -> usize {
+        match kind {
+            PowerUpKind::Star => self.powerups.star,
+            PowerUpKind::Helmet => self.powerups.helmet,
+            PowerUpKind::Clock => self.powerups.clock,
+            PowerUpKind::Grenade => self.powerups.grenade,
+            PowerUpKind::Shovel => self.powerups.shovel,
+            PowerUpKind::Tank => self.powerups.tank,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct TerrainSpriteManifest {
+    brick: usize,
+    steel: usize,
+    water: usize,
+    forest: usize,
+    ice: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct PowerUpSpriteManifest {
+    star: usize,
+    helmet: usize,
+    clock: usize,
+    grenade: usize,
+    shovel: usize,
+    tank: usize,
 }
 
 #[derive(Resource)]
@@ -1293,6 +1346,52 @@ fn load_arena(path: &str) -> Result<ArenaDefinition, String> {
     parse_arena(&contents)
 }
 
+fn load_asset_manifest(path: &str) -> Result<AssetManifest, String> {
+    let contents =
+        fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
+    parse_asset_manifest(&contents)
+}
+
+fn parse_asset_manifest(contents: &str) -> Result<AssetManifest, String> {
+    let manifest: AssetManifest =
+        ron::from_str(contents).map_err(|err| format!("failed to parse asset manifest: {err}"))?;
+    validate_asset_manifest(&manifest)?;
+    Ok(manifest)
+}
+
+fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
+    for (name, index) in [
+        ("terrain.brick", manifest.terrain.brick),
+        ("terrain.steel", manifest.terrain.steel),
+        ("terrain.water", manifest.terrain.water),
+        ("terrain.forest", manifest.terrain.forest),
+        ("terrain.ice", manifest.terrain.ice),
+    ] {
+        if index >= TERRAIN_ATLAS_TILES {
+            return Err(format!(
+                "{name} index {index} is outside the generated terrain atlas"
+            ));
+        }
+    }
+
+    for (name, index) in [
+        ("powerups.star", manifest.powerups.star),
+        ("powerups.helmet", manifest.powerups.helmet),
+        ("powerups.clock", manifest.powerups.clock),
+        ("powerups.grenade", manifest.powerups.grenade),
+        ("powerups.shovel", manifest.powerups.shovel),
+        ("powerups.tank", manifest.powerups.tank),
+    ] {
+        if index >= POWERUP_ATLAS_TILES {
+            return Err(format!(
+                "{name} index {index} is outside the generated power-up atlas"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_level(contents: &str) -> Result<LevelDefinition, String> {
     let level: LevelDefinition =
         ron::from_str(contents).map_err(|err| format!("failed to parse level: {err}"))?;
@@ -1732,7 +1831,7 @@ fn spawn_terrain(commands: &mut Commands, assets: &SpriteAssets, tile_grid: &Til
     for y in 0..BOARD_TILES {
         for x in 0..BOARD_TILES {
             let tile = tile_grid.tiles[y * BOARD_TILES + x];
-            if let Some(index) = terrain_sprite_index(tile) {
+            if let Some(index) = assets.manifest.terrain_index(tile) {
                 commands.spawn((
                     Sprite::from_atlas_image(
                         assets.terrain_image.clone(),
@@ -1772,7 +1871,7 @@ fn sync_tile_sprite(
         }
     }
 
-    if let Some(index) = terrain_sprite_index(tile) {
+    if let Some(index) = assets.manifest.terrain_index(tile) {
         commands.spawn((
             Sprite::from_atlas_image(
                 assets.terrain_image.clone(),
@@ -3385,7 +3484,7 @@ fn spawn_powerup_entity(
             assets.powerup_image.clone(),
             TextureAtlas {
                 layout: assets.powerup_layout.clone(),
-                index: powerup_sprite_index(kind),
+                index: assets.manifest.powerup_index(kind),
             },
         ),
         Transform::from_translation(board_object_center(
@@ -3683,17 +3782,6 @@ fn powerup_for_cycle(index: usize) -> PowerUpKind {
     }
 }
 
-fn powerup_sprite_index(kind: PowerUpKind) -> usize {
-    match kind {
-        PowerUpKind::Star => 0,
-        PowerUpKind::Helmet => 1,
-        PowerUpKind::Clock => 2,
-        PowerUpKind::Grenade => 3,
-        PowerUpKind::Shovel => 4,
-        PowerUpKind::Tank => 5,
-    }
-}
-
 fn powerup_visual_rgb(elapsed_secs: f32) -> [u8; 3] {
     if elapsed_secs % 0.30 < 0.15 {
         [255, 255, 255]
@@ -3811,25 +3899,15 @@ fn terrain_z(tile: TileKind) -> f32 {
     }
 }
 
-fn terrain_sprite_index(tile: TileKind) -> Option<usize> {
-    match tile {
-        TileKind::Brick => Some(0),
-        TileKind::Steel => Some(1),
-        TileKind::Water => Some(2),
-        TileKind::Forest => Some(3),
-        TileKind::Ice => Some(4),
-        TileKind::Empty | TileKind::Base => None,
-    }
-}
-
 fn create_sprite_assets(
     images: &mut Assets<Image>,
     atlas_layouts: &mut Assets<TextureAtlasLayout>,
 ) -> SpriteAssets {
+    let manifest = load_asset_manifest(ASSET_MANIFEST_PATH).expect("asset manifest should load");
     let terrain_image = images.add(create_terrain_atlas());
     let terrain_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::splat(8),
-        5,
+        TERRAIN_ATLAS_TILES as u32,
         1,
         None,
         None,
@@ -3865,7 +3943,7 @@ fn create_sprite_assets(
     let powerup_image = images.add(create_powerup_atlas());
     let powerup_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::splat(16),
-        6,
+        POWERUP_ATLAS_TILES as u32,
         1,
         None,
         None,
@@ -3884,6 +3962,7 @@ fn create_sprite_assets(
     let base_destroyed = images.add(create_base_image(true));
 
     SpriteAssets {
+        manifest,
         terrain_image,
         terrain_layout,
         tank_image,
@@ -4588,6 +4667,7 @@ fn set_pixel(pixels: &mut [u8], width: usize, x: usize, y: usize, color: [u8; 4]
 mod tests {
     use super::*;
 
+    const MANIFEST: &str = include_str!("../assets/manifest.ron");
     const LEVEL_1: &str = include_str!("../assets/levels/001.level.ron");
     const LEVEL_2: &str = include_str!("../assets/levels/002.level.ron");
     const LEVEL_3: &str = include_str!("../assets/levels/003.level.ron");
@@ -4626,6 +4706,42 @@ mod tests {
     fn arena_paths_use_two_digit_arena_numbers() {
         assert_eq!(arena_path(1), "assets/arenas/arena_01.ron");
         assert_eq!(arena_path(12), "assets/arenas/arena_12.ron");
+    }
+
+    #[test]
+    fn authored_asset_manifest_matches_generated_atlases() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        assert_eq!(manifest.terrain_index(TileKind::Brick), Some(0));
+        assert_eq!(manifest.terrain_index(TileKind::Steel), Some(1));
+        assert_eq!(manifest.terrain_index(TileKind::Water), Some(2));
+        assert_eq!(manifest.terrain_index(TileKind::Forest), Some(3));
+        assert_eq!(manifest.terrain_index(TileKind::Ice), Some(4));
+        assert_eq!(manifest.terrain_index(TileKind::Empty), None);
+        assert_eq!(manifest.terrain_index(TileKind::Base), None);
+
+        assert_eq!(manifest.powerup_index(PowerUpKind::Star), 0);
+        assert_eq!(manifest.powerup_index(PowerUpKind::Helmet), 1);
+        assert_eq!(manifest.powerup_index(PowerUpKind::Clock), 2);
+        assert_eq!(manifest.powerup_index(PowerUpKind::Grenade), 3);
+        assert_eq!(manifest.powerup_index(PowerUpKind::Shovel), 4);
+        assert_eq!(manifest.powerup_index(PowerUpKind::Tank), 5);
+    }
+
+    #[test]
+    fn asset_manifest_rejects_out_of_range_indices() {
+        let invalid = MANIFEST.replacen("ice: 4", "ice: 5", 1);
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("invalid terrain index should fail")
+                .contains("outside the generated terrain atlas")
+        );
+
+        let invalid = MANIFEST.replacen("tank: 5", "tank: 6", 1);
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("invalid power-up index should fail")
+                .contains("outside the generated power-up atlas")
+        );
     }
 
     #[test]
@@ -5056,16 +5172,6 @@ mod tests {
 
         let third = director.next_spawn();
         assert_eq!(third, Some((Vec2::new(96.0, 96.0), PowerUpKind::Clock)));
-    }
-
-    #[test]
-    fn powerup_sprite_indices_cover_classic_powerups() {
-        assert_eq!(powerup_sprite_index(PowerUpKind::Star), 0);
-        assert_eq!(powerup_sprite_index(PowerUpKind::Helmet), 1);
-        assert_eq!(powerup_sprite_index(PowerUpKind::Clock), 2);
-        assert_eq!(powerup_sprite_index(PowerUpKind::Grenade), 3);
-        assert_eq!(powerup_sprite_index(PowerUpKind::Shovel), 4);
-        assert_eq!(powerup_sprite_index(PowerUpKind::Tank), 5);
     }
 
     #[test]

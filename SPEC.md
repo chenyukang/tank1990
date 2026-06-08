@@ -517,6 +517,11 @@ Suggested contents:
 - Audio clip paths
 - Palette metadata if needed
 
+Current implementation note:
+
+- `assets/manifest.ron` maps generated terrain and power-up atlas entries to semantic names.
+- Tank animation frames, effect frames, glyphs, and sounds still use generated placeholder assets and will be moved into the manifest in later asset-pipeline stages.
+
 ### 10.2 Audio Style
 
 Audio should be simple and era-appropriate:

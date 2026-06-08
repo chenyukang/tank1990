@@ -3184,7 +3184,10 @@ fn enemy_visual_rgb(
     match (kind, health) {
         (EnemyKind::Armor, 1) => [248, 168, 88],
         (EnemyKind::Armor, 2) => [216, 96, 72],
-        _ => [255, 255, 255],
+        (EnemyKind::Armor, _) => [168, 184, 216],
+        (EnemyKind::Power, _) => [248, 112, 112],
+        (EnemyKind::Fast, _) => [112, 216, 128],
+        (EnemyKind::Basic, _) => [255, 255, 255],
     }
 }
 
@@ -4321,6 +4324,18 @@ mod tests {
         assert_eq!(
             enemy_visual_rgb(EnemyKind::Basic, Some(PowerUpKind::Star), 1, 0.20),
             [255, 255, 255]
+        );
+        assert_eq!(
+            enemy_visual_rgb(EnemyKind::Fast, None, 1, 0.20),
+            [112, 216, 128]
+        );
+        assert_eq!(
+            enemy_visual_rgb(EnemyKind::Power, None, 1, 0.20),
+            [248, 112, 112]
+        );
+        assert_eq!(
+            enemy_visual_rgb(EnemyKind::Armor, None, 3, 0.20),
+            [168, 184, 216]
         );
         assert_eq!(
             enemy_visual_rgb(EnemyKind::Armor, None, 2, 0.20),

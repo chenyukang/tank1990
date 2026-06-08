@@ -3395,12 +3395,14 @@ fn tick_shields(
 fn update_enemy_visual_feedback(
     time: Res<Time>,
     game_status: Res<GameStatus>,
+    enemy_freeze: Res<EnemyFreeze>,
     mut enemies: Query<(&EnemyTank, &Health, Option<&SpawnProtection>, &mut Sprite)>,
 ) {
     if !visual_effects_can_advance(game_status.phase) {
         return;
     }
 
+    let frozen = enemy_freeze.is_active();
     for (enemy, health, spawn_protection, mut sprite) in &mut enemies {
         sprite.color = enemy_visual_color(
             enemy.kind,
@@ -3408,6 +3410,7 @@ fn update_enemy_visual_feedback(
             health.current,
             time.elapsed_secs(),
             spawn_protection.is_some(),
+            frozen,
         );
     }
 }
@@ -4225,8 +4228,16 @@ fn enemy_visual_color(
     health: i32,
     elapsed_secs: f32,
     spawn_protected: bool,
+    frozen: bool,
 ) -> Color {
-    let [r, g, b] = enemy_display_rgb(kind, carried_powerup, health, elapsed_secs, spawn_protected);
+    let [r, g, b] = enemy_display_rgb(
+        kind,
+        carried_powerup,
+        health,
+        elapsed_secs,
+        spawn_protected,
+        frozen,
+    );
     Color::srgb_u8(r, g, b)
 }
 
@@ -4236,12 +4247,24 @@ fn enemy_display_rgb(
     health: i32,
     elapsed_secs: f32,
     spawn_protected: bool,
+    frozen: bool,
 ) -> [u8; 3] {
     if spawn_protected && elapsed_secs % 0.16 < 0.08 {
         return [160, 220, 255];
     }
+    if frozen {
+        return enemy_frozen_visual_rgb(elapsed_secs);
+    }
 
     enemy_visual_rgb(kind, carried_powerup, health, elapsed_secs)
+}
+
+fn enemy_frozen_visual_rgb(elapsed_secs: f32) -> [u8; 3] {
+    if elapsed_secs % 0.24 < 0.12 {
+        [136, 216, 255]
+    } else {
+        [216, 248, 255]
+    }
 }
 
 fn enemy_visual_rgb(
@@ -6605,12 +6628,43 @@ mod tests {
     #[test]
     fn spawn_protection_visual_overrides_enemy_feedback_temporarily() {
         assert_eq!(
-            enemy_display_rgb(EnemyKind::Armor, Some(PowerUpKind::Star), 1, 0.02, true),
+            enemy_display_rgb(
+                EnemyKind::Armor,
+                Some(PowerUpKind::Star),
+                1,
+                0.02,
+                true,
+                false
+            ),
             [160, 220, 255]
         );
         assert_eq!(
-            enemy_display_rgb(EnemyKind::Armor, Some(PowerUpKind::Star), 1, 0.10, true),
+            enemy_display_rgb(
+                EnemyKind::Armor,
+                Some(PowerUpKind::Star),
+                1,
+                0.10,
+                true,
+                false
+            ),
             [248, 232, 96]
+        );
+    }
+
+    #[test]
+    fn clock_freeze_visual_tints_enemies_blue() {
+        assert_eq!(enemy_frozen_visual_rgb(0.05), [136, 216, 255]);
+        assert_eq!(enemy_frozen_visual_rgb(0.18), [216, 248, 255]);
+        assert_eq!(
+            enemy_display_rgb(
+                EnemyKind::Armor,
+                Some(PowerUpKind::Star),
+                1,
+                0.18,
+                false,
+                true
+            ),
+            [216, 248, 255]
         );
     }
 

@@ -12,7 +12,7 @@ use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 
-const LEVEL_COUNT: usize = 3;
+const LEVEL_COUNT: usize = 4;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const VERSUS_ARENA: usize = 1;
 
@@ -4249,6 +4249,7 @@ mod tests {
     const LEVEL_1: &str = include_str!("../assets/levels/001.level.ron");
     const LEVEL_2: &str = include_str!("../assets/levels/002.level.ron");
     const LEVEL_3: &str = include_str!("../assets/levels/003.level.ron");
+    const LEVEL_4: &str = include_str!("../assets/levels/004.level.ron");
     const ARENA_1: &str = include_str!("../assets/arenas/arena_01.ron");
     const ARENA_2: &str = include_str!("../assets/arenas/arena_02.ron");
 
@@ -4266,7 +4267,7 @@ mod tests {
 
     #[test]
     fn authored_level_files_match_classic_shape() {
-        for (stage, contents) in [(1, LEVEL_1), (2, LEVEL_2), (3, LEVEL_3)] {
+        for (stage, contents) in [(1, LEVEL_1), (2, LEVEL_2), (3, LEVEL_3), (4, LEVEL_4)] {
             let level = parse_level(contents).expect("level should parse");
             assert_eq!(level.name, format!("Stage {stage}"));
             assert_eq!(level.map.len(), BOARD_TILES);
@@ -4285,9 +4286,16 @@ mod tests {
     fn level_rules_default_to_normal_steel_and_stage_three_enables_upgrade_breaking() {
         let stage_1 = parse_level(LEVEL_1).expect("level should parse");
         let stage_3 = parse_level(LEVEL_3).expect("level should parse");
+        let stage_4 = parse_level(LEVEL_4).expect("level should parse");
         assert_eq!(StageRules::from_level(&stage_1), StageRules::default());
         assert_eq!(
             StageRules::from_level(&stage_3),
+            StageRules {
+                player_steel_destruction: true
+            }
+        );
+        assert_eq!(
+            StageRules::from_level(&stage_4),
             StageRules {
                 player_steel_destruction: true
             }

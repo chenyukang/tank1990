@@ -87,6 +87,7 @@ fn main() {
                 cancel_colliding_bullets,
                 pickup_powerups,
                 tick_powerup_effects,
+                update_powerup_visuals,
                 animate_sprites,
                 tick_spawn_protections,
                 tick_player_respawns,
@@ -2460,6 +2461,13 @@ fn tick_powerup_effects(
     }
 }
 
+fn update_powerup_visuals(time: Res<Time>, mut powerups: Query<&mut Sprite, With<PowerUp>>) {
+    let [r, g, b] = powerup_visual_rgb(time.elapsed_secs());
+    for mut sprite in &mut powerups {
+        sprite.color = Color::srgb_u8(r, g, b);
+    }
+}
+
 fn destroy_visible_enemies(
     commands: &mut Commands,
     assets: &SpriteAssets,
@@ -3234,6 +3242,14 @@ fn powerup_sprite_index(kind: PowerUpKind) -> usize {
         PowerUpKind::Grenade => 3,
         PowerUpKind::Shovel => 4,
         PowerUpKind::Tank => 5,
+    }
+}
+
+fn powerup_visual_rgb(elapsed_secs: f32) -> [u8; 3] {
+    if elapsed_secs % 0.30 < 0.15 {
+        [255, 255, 255]
+    } else {
+        [255, 232, 104]
     }
 }
 
@@ -4431,6 +4447,13 @@ mod tests {
         assert_eq!(powerup_sprite_index(PowerUpKind::Grenade), 3);
         assert_eq!(powerup_sprite_index(PowerUpKind::Shovel), 4);
         assert_eq!(powerup_sprite_index(PowerUpKind::Tank), 5);
+    }
+
+    #[test]
+    fn powerup_visuals_sparkle_between_bright_tints() {
+        assert_eq!(powerup_visual_rgb(0.05), [255, 255, 255]);
+        assert_eq!(powerup_visual_rgb(0.20), [255, 232, 104]);
+        assert_eq!(powerup_visual_rgb(0.35), [255, 255, 255]);
     }
 
     #[test]

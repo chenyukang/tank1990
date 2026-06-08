@@ -8,10 +8,24 @@
       (up: 8, down: 9, left: 10, right: 11),
       (up: 12, down: 13, left: 14, right: 15),
     ],
-    enemy: [
-      (up: 16, down: 17, left: 18, right: 19),
-      (up: 20, down: 21, left: 22, right: 23),
-    ],
+    enemies: (
+      basic: [
+        (up: 16, down: 17, left: 18, right: 19),
+        (up: 20, down: 21, left: 22, right: 23),
+      ],
+      fast: [
+        (up: 24, down: 25, left: 26, right: 27),
+        (up: 28, down: 29, left: 30, right: 31),
+      ],
+      power: [
+        (up: 32, down: 33, left: 34, right: 35),
+        (up: 36, down: 37, left: 38, right: 39),
+      ],
+      armor: [
+        (up: 40, down: 41, left: 42, right: 43),
+        (up: 44, down: 45, left: 46, right: 47),
+      ],
+    ),
   ),
   terrain: (
     brick: 0,

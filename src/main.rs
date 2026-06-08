@@ -17,7 +17,7 @@ const LEVEL_COUNT: usize = 8;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const ARENA_COUNT: usize = 2;
 const DEFAULT_VERSUS_ARENA: usize = 1;
-const TANK_ATLAS_TILES: usize = 24;
+const TANK_ATLAS_TILES: usize = 48;
 const TANK_ANIMATION_FRAMES: usize = 2;
 const TERRAIN_ATLAS_TILES: usize = 5;
 const EFFECT_ATLAS_TILES: usize = 8;
@@ -146,8 +146,8 @@ struct AssetManifest {
 }
 
 impl AssetManifest {
-    fn tank_index(&self, team: Team, direction: Direction, frame: usize) -> usize {
-        self.tanks.frames_for(team)[frame.min(TANK_ANIMATION_FRAMES - 1)].index(direction)
+    fn tank_index(&self, set: TankSpriteSet, direction: Direction, frame: usize) -> usize {
+        self.tanks.frames_for(set)[frame.min(TANK_ANIMATION_FRAMES - 1)].index(direction)
     }
 
     fn terrain_index(&self, tile: TileKind) -> Option<usize> {
@@ -185,17 +185,28 @@ impl AssetManifest {
 struct TankSpriteManifest {
     player1: Vec<DirectionalSpriteManifest>,
     player2: Vec<DirectionalSpriteManifest>,
-    enemy: Vec<DirectionalSpriteManifest>,
+    enemies: EnemyTankSpriteManifest,
 }
 
 impl TankSpriteManifest {
-    fn frames_for(&self, team: Team) -> &[DirectionalSpriteManifest] {
-        match team {
-            Team::Player1 => &self.player1,
-            Team::Player2 => &self.player2,
-            Team::Enemy => &self.enemy,
+    fn frames_for(&self, set: TankSpriteSet) -> &[DirectionalSpriteManifest] {
+        match set {
+            TankSpriteSet::Player1 => &self.player1,
+            TankSpriteSet::Player2 => &self.player2,
+            TankSpriteSet::EnemyBasic => &self.enemies.basic,
+            TankSpriteSet::EnemyFast => &self.enemies.fast,
+            TankSpriteSet::EnemyPower => &self.enemies.power,
+            TankSpriteSet::EnemyArmor => &self.enemies.armor,
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct EnemyTankSpriteManifest {
+    basic: Vec<DirectionalSpriteManifest>,
+    fast: Vec<DirectionalSpriteManifest>,
+    power: Vec<DirectionalSpriteManifest>,
+    armor: Vec<DirectionalSpriteManifest>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
@@ -947,15 +958,15 @@ struct Tank {
 
 #[derive(Component)]
 struct TankSpriteState {
-    team: Team,
+    set: TankSpriteSet,
     frame: usize,
     timer: Timer,
 }
 
 impl TankSpriteState {
-    fn new(team: Team) -> Self {
+    fn new(set: TankSpriteSet) -> Self {
         Self {
-            team,
+            set,
             frame: 0,
             timer: Timer::from_seconds(0.14, TimerMode::Repeating),
         }
@@ -994,6 +1005,34 @@ impl Team {
 
     fn is_player(self) -> bool {
         self.player_id().is_some()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TankSpriteSet {
+    Player1,
+    Player2,
+    EnemyBasic,
+    EnemyFast,
+    EnemyPower,
+    EnemyArmor,
+}
+
+impl TankSpriteSet {
+    fn player(player: PlayerId) -> Self {
+        match player {
+            PlayerId::One => Self::Player1,
+            PlayerId::Two => Self::Player2,
+        }
+    }
+
+    fn enemy(kind: EnemyKind) -> Self {
+        match kind {
+            EnemyKind::Basic => Self::EnemyBasic,
+            EnemyKind::Fast => Self::EnemyFast,
+            EnemyKind::Power => Self::EnemyPower,
+            EnemyKind::Armor => Self::EnemyArmor,
+        }
     }
 }
 
@@ -1470,7 +1509,10 @@ fn validate_tank_frames(manifest: &TankSpriteManifest) -> Result<(), String> {
     for (name, frames) in [
         ("tanks.player1", &manifest.player1),
         ("tanks.player2", &manifest.player2),
-        ("tanks.enemy", &manifest.enemy),
+        ("tanks.enemies.basic", &manifest.enemies.basic),
+        ("tanks.enemies.fast", &manifest.enemies.fast),
+        ("tanks.enemies.power", &manifest.enemies.power),
+        ("tanks.enemies.armor", &manifest.enemies.armor),
     ] {
         if frames.len() != TANK_ANIMATION_FRAMES {
             return Err(format!(
@@ -1657,7 +1699,7 @@ fn spawn_mode_select_cursor(commands: &mut Commands, assets: &SpriteAssets, sele
                 layout: assets.tank_layout.clone(),
                 index: animated_tank_sprite_index(
                     &assets.manifest,
-                    Team::Player1,
+                    TankSpriteSet::Player1,
                     Direction::Right,
                     0,
                 ),
@@ -2106,7 +2148,7 @@ fn spawn_player_tank(
                 layout: assets.tank_layout.clone(),
                 index: animated_tank_sprite_index(
                     &assets.manifest,
-                    player_id.team(),
+                    TankSpriteSet::player(player_id),
                     spawn.facing,
                     0,
                 ),
@@ -2124,7 +2166,7 @@ fn spawn_player_tank(
             facing: spawn.facing,
             speed: PLAYER_SPEED,
         },
-        TankSpriteState::new(player_id.team()),
+        TankSpriteState::new(TankSpriteSet::player(player_id)),
         Health { current: 1 },
         RespawnPoint {
             top_left: player_top_left,
@@ -2284,7 +2326,7 @@ fn spawn_enemies(
                     layout: assets.tank_layout.clone(),
                     index: animated_tank_sprite_index(
                         &assets.manifest,
-                        Team::Enemy,
+                        TankSpriteSet::enemy(kind),
                         spawn.facing,
                         0,
                     ),
@@ -2305,7 +2347,7 @@ fn spawn_enemies(
             Health {
                 current: enemy_health(kind),
             },
-            TankSpriteState::new(Team::Enemy),
+            TankSpriteState::new(TankSpriteSet::enemy(kind)),
             EnemyTank {
                 kind,
                 carried_powerup,
@@ -3942,11 +3984,11 @@ fn powerup_visual_rgb(elapsed_secs: f32) -> [u8; 3] {
 
 fn animated_tank_sprite_index(
     manifest: &AssetManifest,
-    team: Team,
+    set: TankSpriteSet,
     direction: Direction,
     frame: usize,
 ) -> usize {
-    manifest.tank_index(team, direction, frame)
+    manifest.tank_index(set, direction, frame)
 }
 
 fn set_tank_sprite_direction(
@@ -3957,7 +3999,7 @@ fn set_tank_sprite_direction(
 ) {
     if let Some(atlas) = &mut sprite.texture_atlas {
         atlas.index =
-            animated_tank_sprite_index(manifest, tank_sprite.team, facing, tank_sprite.frame);
+            animated_tank_sprite_index(manifest, tank_sprite.set, facing, tank_sprite.frame);
     }
 }
 
@@ -4385,7 +4427,9 @@ fn draw_ice(pixels: &mut [u8], width: usize, x_offset: usize) {
 }
 
 fn create_tank_atlas() -> Image {
-    let mut pixels = vec![0; 16 * 24 * 16 * 4];
+    let width = 16 * TANK_ATLAS_TILES;
+    let group_stride = 16 * TANK_ANIMATION_FRAMES * 4;
+    let mut pixels = vec![0; width * 16 * 4];
     let player1_palette = TankPalette {
         dark: [48, 56, 24, 255],
         body: [184, 160, 64, 255],
@@ -4398,17 +4442,38 @@ fn create_tank_atlas() -> Image {
         light: [128, 216, 240, 255],
         tread: [32, 80, 112, 255],
     };
-    let enemy_palette = TankPalette {
+    let basic_enemy_palette = TankPalette {
         dark: [64, 24, 24, 255],
         body: [176, 56, 40, 255],
         light: [232, 104, 72, 255],
         tread: [88, 40, 32, 255],
     };
+    let fast_enemy_palette = TankPalette {
+        dark: [24, 72, 32, 255],
+        body: [56, 176, 72, 255],
+        light: [120, 240, 136, 255],
+        tread: [32, 96, 40, 255],
+    };
+    let power_enemy_palette = TankPalette {
+        dark: [72, 24, 56, 255],
+        body: [208, 64, 104, 255],
+        light: [248, 128, 152, 255],
+        tread: [96, 32, 64, 255],
+    };
+    let armor_enemy_palette = TankPalette {
+        dark: [40, 48, 64, 255],
+        body: [112, 128, 160, 255],
+        light: [184, 200, 224, 255],
+        tread: [56, 64, 88, 255],
+    };
 
-    draw_tank_group(&mut pixels, 384, 0, player1_palette);
-    draw_tank_group(&mut pixels, 384, 128, player2_palette);
-    draw_tank_group(&mut pixels, 384, 256, enemy_palette);
-    image_from_pixels(384, 16, pixels)
+    draw_tank_group(&mut pixels, width, 0, player1_palette);
+    draw_tank_group(&mut pixels, width, group_stride, player2_palette);
+    draw_tank_group(&mut pixels, width, group_stride * 2, basic_enemy_palette);
+    draw_tank_group(&mut pixels, width, group_stride * 3, fast_enemy_palette);
+    draw_tank_group(&mut pixels, width, group_stride * 4, power_enemy_palette);
+    draw_tank_group(&mut pixels, width, group_stride * 5, armor_enemy_palette);
+    image_from_pixels(width, 16, pixels)
 }
 
 #[derive(Clone, Copy)]
@@ -4864,10 +4929,34 @@ mod tests {
     #[test]
     fn authored_asset_manifest_matches_generated_atlases() {
         let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
-        assert_eq!(manifest.tank_index(Team::Player1, Direction::Up, 0), 0);
-        assert_eq!(manifest.tank_index(Team::Player1, Direction::Right, 1), 7);
-        assert_eq!(manifest.tank_index(Team::Player2, Direction::Left, 0), 10);
-        assert_eq!(manifest.tank_index(Team::Enemy, Direction::Down, 1), 21);
+        assert_eq!(
+            manifest.tank_index(TankSpriteSet::Player1, Direction::Up, 0),
+            0
+        );
+        assert_eq!(
+            manifest.tank_index(TankSpriteSet::Player1, Direction::Right, 1),
+            7
+        );
+        assert_eq!(
+            manifest.tank_index(TankSpriteSet::Player2, Direction::Left, 0),
+            10
+        );
+        assert_eq!(
+            manifest.tank_index(TankSpriteSet::EnemyBasic, Direction::Down, 1),
+            21
+        );
+        assert_eq!(
+            manifest.tank_index(TankSpriteSet::EnemyFast, Direction::Down, 1),
+            29
+        );
+        assert_eq!(
+            manifest.tank_index(TankSpriteSet::EnemyPower, Direction::Down, 1),
+            37
+        );
+        assert_eq!(
+            manifest.tank_index(TankSpriteSet::EnemyArmor, Direction::Down, 1),
+            45
+        );
 
         assert_eq!(manifest.terrain_index(TileKind::Brick), Some(0));
         assert_eq!(manifest.terrain_index(TileKind::Steel), Some(1));
@@ -4896,7 +4985,7 @@ mod tests {
 
     #[test]
     fn asset_manifest_rejects_out_of_range_indices() {
-        let invalid = MANIFEST.replacen("right: 23", "right: 24", 1);
+        let invalid = MANIFEST.replacen("right: 47", "right: 48", 1);
         assert!(
             parse_asset_manifest(&invalid)
                 .expect_err("invalid tank index should fail")
@@ -5191,31 +5280,55 @@ mod tests {
     }
 
     #[test]
-    fn tank_sprite_indices_separate_players_and_enemy_animation_frames() {
+    fn tank_sprite_indices_separate_players_and_enemy_kind_animation_frames() {
         let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
         assert_eq!(
-            animated_tank_sprite_index(&manifest, Team::Player1, Direction::Up, 0),
+            animated_tank_sprite_index(&manifest, TankSpriteSet::Player1, Direction::Up, 0),
             0
         );
         assert_eq!(
-            animated_tank_sprite_index(&manifest, Team::Player1, Direction::Up, 1),
+            animated_tank_sprite_index(&manifest, TankSpriteSet::Player1, Direction::Up, 1),
             4
         );
         assert_eq!(
-            animated_tank_sprite_index(&manifest, Team::Player2, Direction::Up, 0),
+            animated_tank_sprite_index(&manifest, TankSpriteSet::Player2, Direction::Up, 0),
             8
         );
         assert_eq!(
-            animated_tank_sprite_index(&manifest, Team::Player2, Direction::Up, 1),
+            animated_tank_sprite_index(&manifest, TankSpriteSet::Player2, Direction::Up, 1),
             12
         );
         assert_eq!(
-            animated_tank_sprite_index(&manifest, Team::Enemy, Direction::Up, 0),
+            animated_tank_sprite_index(&manifest, TankSpriteSet::EnemyBasic, Direction::Up, 0),
             16
         );
         assert_eq!(
-            animated_tank_sprite_index(&manifest, Team::Enemy, Direction::Up, 99),
+            animated_tank_sprite_index(&manifest, TankSpriteSet::EnemyBasic, Direction::Up, 99),
             20
+        );
+        assert_eq!(
+            animated_tank_sprite_index(&manifest, TankSpriteSet::EnemyFast, Direction::Up, 0),
+            24
+        );
+        assert_eq!(
+            animated_tank_sprite_index(&manifest, TankSpriteSet::EnemyPower, Direction::Up, 0),
+            32
+        );
+        assert_eq!(
+            animated_tank_sprite_index(&manifest, TankSpriteSet::EnemyArmor, Direction::Up, 0),
+            40
+        );
+        assert_eq!(
+            TankSpriteSet::enemy(EnemyKind::Fast),
+            TankSpriteSet::EnemyFast
+        );
+        assert_eq!(
+            TankSpriteSet::enemy(EnemyKind::Power),
+            TankSpriteSet::EnemyPower
+        );
+        assert_eq!(
+            TankSpriteSet::enemy(EnemyKind::Armor),
+            TankSpriteSet::EnemyArmor
         );
     }
 

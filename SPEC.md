@@ -520,6 +520,7 @@ Suggested contents:
 Current implementation note:
 
 - `assets/manifest.ron` maps generated tank, terrain, power-up, and effect atlas entries to semantic names and frame ranges.
+- Tank manifest entries include separate two-frame directional groups for P1, P2, Basic, Fast, Power, and Armor tanks.
 - Glyphs and sounds still use generated placeholder assets and will be moved into the manifest in later asset-pipeline stages.
 
 ### 10.2 Audio Style

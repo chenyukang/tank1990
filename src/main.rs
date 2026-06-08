@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const ASSET_MANIFEST_PATH: &str = "assets/manifest.ron";
-const LEVEL_COUNT: usize = 12;
+const LEVEL_COUNT: usize = 13;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const ARENA_COUNT: usize = 3;
 const DEFAULT_VERSUS_ARENA: usize = 1;
@@ -5146,6 +5146,7 @@ mod tests {
     const LEVEL_10: &str = include_str!("../assets/levels/010.level.ron");
     const LEVEL_11: &str = include_str!("../assets/levels/011.level.ron");
     const LEVEL_12: &str = include_str!("../assets/levels/012.level.ron");
+    const LEVEL_13: &str = include_str!("../assets/levels/013.level.ron");
     const ARENA_1: &str = include_str!("../assets/arenas/arena_01.ron");
     const ARENA_2: &str = include_str!("../assets/arenas/arena_02.ron");
     const ARENA_3: &str = include_str!("../assets/arenas/arena_03.ron");
@@ -5164,6 +5165,7 @@ mod tests {
             (10, LEVEL_10),
             (11, LEVEL_11),
             (12, LEVEL_12),
+            (13, LEVEL_13),
         ]
     }
 
@@ -5387,7 +5389,7 @@ mod tests {
         assert_eq!(StageRules::from_level(&stage_1), StageRules::default());
         for contents in [
             LEVEL_3, LEVEL_4, LEVEL_5, LEVEL_6, LEVEL_7, LEVEL_8, LEVEL_9, LEVEL_10, LEVEL_11,
-            LEVEL_12,
+            LEVEL_12, LEVEL_13,
         ] {
             let level = parse_level(contents).expect("level should parse");
             assert_eq!(
@@ -5606,6 +5608,17 @@ mod tests {
         assert!(grid.tiles.contains(&TileKind::Steel));
         assert_eq!(stage_12.spawn_interval_secs, 1.3);
         assert_eq!(stage_12.powerup_carriers.len(), 6);
+    }
+
+    #[test]
+    fn stage_thirteen_authors_forest_screen_pressure() {
+        let stage_13 = parse_level(LEVEL_13).expect("level should parse");
+        let grid = TileGrid::from_level(&stage_13).expect("grid should build");
+        assert!(grid.tiles.contains(&TileKind::Forest));
+        assert!(grid.tiles.contains(&TileKind::Water));
+        assert!(grid.tiles.contains(&TileKind::Ice));
+        assert_eq!(stage_13.spawn_interval_secs, 1.25);
+        assert_eq!(stage_13.powerup_carriers.len(), 6);
     }
 
     #[test]

@@ -60,6 +60,7 @@ static MODE_SELECT_HINT_LINES: [&str; 3] = ["WS SELECT", "AD ARENA", "SPACE STAR
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
+const EXPLOSION_FRAME_SECONDS: f32 = 0.07;
 const STAGE_CLEAR_LIFE_BONUS: u32 = 1000;
 const ENEMY_ALIGNMENT_FIRE_FRACTION: f32 = 0.45;
 const ENEMY_SPAWN_PROTECTION_SECONDS: f32 = 0.35;
@@ -118,6 +119,7 @@ fn main() {
                 .after(tick_shields)
                 .before(update_enemy_visual_feedback),
         )
+        .add_systems(FixedUpdate, tick_destroyed_tanks.after(animate_sprites))
         .add_systems(
             FixedUpdate,
             (
@@ -1272,6 +1274,24 @@ struct SpriteAnimation {
     last: usize,
     timer: Timer,
     despawn_on_finish: bool,
+}
+
+#[derive(Component)]
+struct DestroyedTank {
+    timer: Timer,
+}
+
+impl DestroyedTank {
+    fn for_explosion(frames: SpriteFrameRange) -> Self {
+        Self {
+            timer: Timer::from_seconds(explosion_duration_secs(frames), TimerMode::Once),
+        }
+    }
+
+    fn tick(&mut self, delta: Duration) -> bool {
+        self.timer.tick(delta);
+        self.timer.is_finished()
+    }
 }
 
 #[derive(Component)]
@@ -3103,7 +3123,12 @@ fn move_bullets(
                     health.current -= 1;
                     if health.current <= 0 {
                         score_board.record_enemy_destroyed(enemy.kind);
-                        spawn_explosion(&mut commands, &assets, enemy_tank.top_left);
+                        mark_enemy_tank_destroyed(
+                            &mut commands,
+                            &assets,
+                            enemy_entity,
+                            enemy_tank.top_left,
+                        );
                         play_sound(&mut commands, &sounds, SoundKind::TankExplosion);
                         if let Some(powerup_kind) = enemy.carried_powerup {
                             spawn_powerup(
@@ -3115,7 +3140,6 @@ fn move_bullets(
                                 &active_sparkles,
                             );
                         }
-                        commands.entity(enemy_entity).despawn();
                     }
                     commands.entity(entity).despawn();
                     hit_enemy = true;
@@ -3635,8 +3659,7 @@ fn destroy_visible_enemies(
     let mut destroyed_any = false;
     for (enemy_entity, enemy_tank, enemy) in enemy_tanks {
         score_board.record_enemy_destroyed(enemy.kind);
-        spawn_explosion(commands, assets, enemy_tank.top_left);
-        commands.entity(enemy_entity).despawn();
+        mark_enemy_tank_destroyed(commands, assets, enemy_entity, enemy_tank.top_left);
         destroyed_any = true;
     }
 
@@ -3740,6 +3763,23 @@ fn animate_sprites(
             }
         } else {
             atlas.index += 1;
+        }
+    }
+}
+
+fn tick_destroyed_tanks(
+    mut commands: Commands,
+    time: Res<Time>,
+    game_status: Res<GameStatus>,
+    mut destroyed_tanks: Query<(Entity, &mut DestroyedTank)>,
+) {
+    if !visual_effects_can_advance(game_status.phase) {
+        return;
+    }
+
+    for (entity, mut destroyed_tank) in &mut destroyed_tanks {
+        if destroyed_tank.tick(time.delta()) {
+            commands.entity(entity).despawn();
         }
     }
 }
@@ -4330,6 +4370,10 @@ fn spawn_bullet_position(tank_top_left: Vec2, direction: Direction) -> Vec2 {
     }
 }
 
+fn explosion_duration_secs(frames: SpriteFrameRange) -> f32 {
+    (frames.last - frames.first + 1) as f32 * EXPLOSION_FRAME_SECONDS
+}
+
 fn spawn_explosion(commands: &mut Commands, assets: &SpriteAssets, top_left: Vec2) {
     let frames = assets.manifest.explosion_frames();
     commands.spawn((
@@ -4350,11 +4394,25 @@ fn spawn_explosion(commands: &mut Commands, assets: &SpriteAssets, top_left: Vec
         SpriteAnimation {
             first: frames.first,
             last: frames.last,
-            timer: Timer::from_seconds(0.07, TimerMode::Repeating),
+            timer: Timer::from_seconds(EXPLOSION_FRAME_SECONDS, TimerMode::Repeating),
             despawn_on_finish: true,
         },
         GameEntity,
     ));
+}
+
+fn mark_enemy_tank_destroyed(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    enemy_entity: Entity,
+    top_left: Vec2,
+) {
+    let frames = assets.manifest.explosion_frames();
+    spawn_explosion(commands, assets, top_left);
+    commands
+        .entity(enemy_entity)
+        .remove::<(Tank, Health, EnemyTank, EnemyAi, SpawnProtection)>()
+        .insert(DestroyedTank::for_explosion(frames));
 }
 
 fn spawn_spawn_effect(commands: &mut Commands, assets: &SpriteAssets, top_left: Vec2) {
@@ -7382,6 +7440,25 @@ mod tests {
         let mut delay = PlayerRespawnDelay::new();
         assert!(!delay.tick(Duration::from_secs_f32(PLAYER_RESPAWN_DELAY_SECONDS - 0.01)));
         assert!(delay.tick(Duration::from_secs_f32(0.02)));
+    }
+
+    #[test]
+    fn explosion_duration_matches_animation_frames() {
+        assert_eq!(
+            explosion_duration_secs(SpriteFrameRange { first: 0, last: 3 }),
+            EXPLOSION_FRAME_SECONDS * 4.0
+        );
+    }
+
+    #[test]
+    fn destroyed_tank_stays_until_explosion_finishes() {
+        let frames = SpriteFrameRange { first: 0, last: 3 };
+        let mut destroyed_tank = DestroyedTank::for_explosion(frames);
+
+        assert!(!destroyed_tank.tick(Duration::from_secs_f32(
+            explosion_duration_secs(frames) - 0.01
+        )));
+        assert!(destroyed_tank.tick(Duration::from_secs_f32(0.02)));
     }
 
     #[test]

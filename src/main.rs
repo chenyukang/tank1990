@@ -2610,14 +2610,18 @@ fn fire_enemy_bullets(
         let aim_direction = enemy_aim_direction(tank.top_left, &player_top_lefts, base_center);
         let snap_fire_ready = aim_direction.is_some()
             && enemy_alignment_fire_ready(enemy.kind, ai.fire_timer.elapsed_secs());
-        if !ai.fire_timer.just_finished() && !snap_fire_ready {
+        if let Some(direction) = aim_direction {
+            if !ai.fire_timer.just_finished() && !snap_fire_ready {
+                continue;
+            }
+            tank.facing = direction;
+            set_tank_sprite_direction(&mut sprite, tank_sprite, tank.facing, &assets.manifest);
+        } else if !ai.fire_timer.just_finished()
+            || !enemy_random_fire_ready(tank.top_left, tank.facing, enemy.kind)
+        {
             continue;
         }
 
-        if let Some(direction) = aim_direction {
-            tank.facing = direction;
-            set_tank_sprite_direction(&mut sprite, tank_sprite, tank.facing, &assets.manifest);
-        }
         let bullet_top_left = spawn_bullet_position(tank.top_left, tank.facing);
         commands.spawn((
             Sprite::from_atlas_image(
@@ -4125,6 +4129,36 @@ fn enemy_alignment_fire_ready(kind: EnemyKind, elapsed_secs: f32) -> bool {
 
 fn enemy_fire_slot_available(active_enemy_bullets: usize, active_for_tank: usize) -> bool {
     active_enemy_bullets < ENEMY_BULLET_LIMIT && active_for_tank < ENEMY_BULLET_LIMIT_PER_TANK
+}
+
+fn enemy_random_fire_ready(top_left: Vec2, facing: Direction, kind: EnemyKind) -> bool {
+    enemy_fire_seed(top_left, facing, kind).is_multiple_of(enemy_random_fire_rate(kind))
+}
+
+fn enemy_random_fire_rate(kind: EnemyKind) -> u32 {
+    match kind {
+        EnemyKind::Power => 2,
+        EnemyKind::Fast => 3,
+        EnemyKind::Basic | EnemyKind::Armor => 4,
+    }
+}
+
+fn enemy_fire_seed(top_left: Vec2, facing: Direction, kind: EnemyKind) -> u32 {
+    let tile_x = (top_left.x / TILE_SIZE).round() as u32;
+    let tile_y = (top_left.y / TILE_SIZE).round() as u32;
+    tile_x.wrapping_mul(29)
+        ^ tile_y.wrapping_mul(37)
+        ^ direction_index(facing).wrapping_mul(11)
+        ^ enemy_kind_index(kind).wrapping_mul(19)
+}
+
+fn enemy_kind_index(kind: EnemyKind) -> u32 {
+    match kind {
+        EnemyKind::Basic => 0,
+        EnemyKind::Fast => 1,
+        EnemyKind::Power => 2,
+        EnemyKind::Armor => 3,
+    }
 }
 
 fn next_direction(direction: Direction) -> Direction {
@@ -6834,6 +6868,30 @@ mod tests {
         assert!(enemy_fire_slot_available(ENEMY_BULLET_LIMIT - 1, 0));
         assert!(!enemy_fire_slot_available(ENEMY_BULLET_LIMIT, 0));
         assert!(!enemy_fire_slot_available(1, ENEMY_BULLET_LIMIT_PER_TANK));
+    }
+
+    #[test]
+    fn enemy_random_fire_is_low_rate_and_deterministic() {
+        assert_eq!(enemy_random_fire_rate(EnemyKind::Basic), 4);
+        assert_eq!(enemy_random_fire_rate(EnemyKind::Armor), 4);
+        assert_eq!(enemy_random_fire_rate(EnemyKind::Fast), 3);
+        assert_eq!(enemy_random_fire_rate(EnemyKind::Power), 2);
+
+        assert!(enemy_random_fire_ready(
+            Vec2::new(0.0, 0.0),
+            Direction::Up,
+            EnemyKind::Basic
+        ));
+        assert!(!enemy_random_fire_ready(
+            Vec2::new(TILE_SIZE, 0.0),
+            Direction::Up,
+            EnemyKind::Basic
+        ));
+        assert!(enemy_random_fire_ready(
+            Vec2::new(0.0, 0.0),
+            Direction::Up,
+            EnemyKind::Power
+        ));
     }
 
     #[test]

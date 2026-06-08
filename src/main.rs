@@ -503,6 +503,7 @@ struct ScoreBoard {
     lives: i32,
     enemies_destroyed: usize,
     total_enemies: usize,
+    enemy_kills: EnemyKillCounts,
     p1_score: u32,
     p2_score: u32,
     p1_lives: i32,
@@ -518,6 +519,7 @@ impl ScoreBoard {
             lives: 3,
             enemies_destroyed: 0,
             total_enemies,
+            enemy_kills: EnemyKillCounts::default(),
             p1_score: 0,
             p2_score: 0,
             p1_lives: 3,
@@ -533,6 +535,7 @@ impl ScoreBoard {
             lives,
             enemies_destroyed: 0,
             total_enemies: 0,
+            enemy_kills: EnemyKillCounts::default(),
             p1_score: 0,
             p2_score: 0,
             p1_lives: lives,
@@ -556,10 +559,52 @@ impl ScoreBoard {
         }
     }
 
+    fn record_enemy_destroyed(&mut self, kind: EnemyKind) {
+        self.score += enemy_score(kind);
+        self.enemies_destroyed += 1;
+        self.enemy_kills.add(kind);
+    }
+
     fn set_player_lives(&mut self, player: PlayerId, lives: i32) {
         match player {
             PlayerId::One => self.p1_lives = lives,
             PlayerId::Two => self.p2_lives = lives,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct EnemyKillCounts {
+    basic: usize,
+    fast: usize,
+    power: usize,
+    armor: usize,
+}
+
+impl EnemyKillCounts {
+    fn add(&mut self, kind: EnemyKind) {
+        *self.count_mut(kind) += 1;
+    }
+
+    fn count(self, kind: EnemyKind) -> usize {
+        match kind {
+            EnemyKind::Basic => self.basic,
+            EnemyKind::Fast => self.fast,
+            EnemyKind::Power => self.power,
+            EnemyKind::Armor => self.armor,
+        }
+    }
+
+    fn total(self) -> usize {
+        self.basic + self.fast + self.power + self.armor
+    }
+
+    fn count_mut(&mut self, kind: EnemyKind) -> &mut usize {
+        match kind {
+            EnemyKind::Basic => &mut self.basic,
+            EnemyKind::Fast => &mut self.fast,
+            EnemyKind::Power => &mut self.power,
+            EnemyKind::Armor => &mut self.armor,
         }
     }
 }
@@ -3057,8 +3102,7 @@ fn move_bullets(
 
                     health.current -= 1;
                     if health.current <= 0 {
-                        score_board.score += enemy_score(enemy.kind);
-                        score_board.enemies_destroyed += 1;
+                        score_board.record_enemy_destroyed(enemy.kind);
                         spawn_explosion(&mut commands, &assets, enemy_tank.top_left);
                         play_sound(&mut commands, &sounds, SoundKind::TankExplosion);
                         if let Some(powerup_kind) = enemy.carried_powerup {
@@ -3590,8 +3634,7 @@ fn destroy_visible_enemies(
 ) {
     let mut destroyed_any = false;
     for (enemy_entity, enemy_tank, enemy) in enemy_tanks {
-        score_board.score += enemy_score(enemy.kind);
-        score_board.enemies_destroyed += 1;
+        score_board.record_enemy_destroyed(enemy.kind);
         spawn_explosion(commands, assets, enemy_tank.top_left);
         commands.entity(enemy_entity).despawn();
         destroyed_any = true;
@@ -3914,6 +3957,7 @@ fn advance_after_level_clear(
     *stage_rules = StageRules::from_level(&level);
     score_board.enemies_destroyed = 0;
     score_board.total_enemies = level.enemies.len();
+    score_board.enemy_kills = EnemyKillCounts::default();
     enemy_freeze.reset();
     versus_freeze.reset();
     base_reinforcement.reset();
@@ -4027,12 +4071,40 @@ fn stage_intro_banner_text(stage: usize) -> Vec<String> {
     vec![format!("STAGE {:02}", stage.min(99)), "READY".to_string()]
 }
 
-fn level_clear_banner_text(stage: usize, lives: i32) -> Vec<String> {
+fn level_clear_banner_text(stage: usize, score_board: &ScoreBoard) -> Vec<String> {
     vec![
         format!("STAGE {:02}", stage.min(99)),
         "LEVEL CLEAR".to_string(),
-        format!("BONUS {}", stage_clear_bonus(lives)),
+        stage_clear_kill_line(
+            EnemyKind::Basic,
+            score_board.enemy_kills.count(EnemyKind::Basic),
+            EnemyKind::Fast,
+            score_board.enemy_kills.count(EnemyKind::Fast),
+        ),
+        stage_clear_kill_line(
+            EnemyKind::Power,
+            score_board.enemy_kills.count(EnemyKind::Power),
+            EnemyKind::Armor,
+            score_board.enemy_kills.count(EnemyKind::Armor),
+        ),
+        format!("TOTAL {:02}", score_board.enemy_kills.total().min(99)),
+        format!("BONUS {}", stage_clear_bonus(score_board.lives)),
     ]
+}
+
+fn stage_clear_kill_line(
+    left: EnemyKind,
+    left_count: usize,
+    right: EnemyKind,
+    right_count: usize,
+) -> String {
+    format!(
+        "{}X{:02} {}X{:02}",
+        enemy_score(left),
+        left_count.min(99),
+        enemy_score(right),
+        right_count.min(99)
+    )
 }
 
 fn arena_intro_banner_text(arena: usize, mode: GameMode) -> Vec<String> {
@@ -4065,7 +4137,7 @@ fn phase_banner_text(
         });
     }
     if status.phase == GamePhase::LevelClear {
-        return Some(level_clear_banner_text(status.stage, score_board.lives));
+        return Some(level_clear_banner_text(status.stage, score_board));
     }
 
     phase_banner_lines(status.phase, status.winner)
@@ -5785,6 +5857,9 @@ fn glyph_pattern(ch: char) -> [&'static str; 7] {
         'W' => [
             "#...#", "#...#", "#...#", "#...#", "#.#.#", "##.##", "#...#",
         ],
+        'X' => [
+            "#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#",
+        ],
         'Y' => [
             "#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#..",
         ],
@@ -6830,6 +6905,25 @@ mod tests {
     }
 
     #[test]
+    fn score_board_tracks_enemy_kill_breakdown() {
+        let mut score_board = ScoreBoard::campaign(20);
+
+        score_board.record_enemy_destroyed(EnemyKind::Basic);
+        score_board.record_enemy_destroyed(EnemyKind::Fast);
+        score_board.record_enemy_destroyed(EnemyKind::Fast);
+        score_board.record_enemy_destroyed(EnemyKind::Power);
+        score_board.record_enemy_destroyed(EnemyKind::Armor);
+
+        assert_eq!(score_board.score, 1200);
+        assert_eq!(score_board.enemies_destroyed, 5);
+        assert_eq!(score_board.enemy_kills.count(EnemyKind::Basic), 1);
+        assert_eq!(score_board.enemy_kills.count(EnemyKind::Fast), 2);
+        assert_eq!(score_board.enemy_kills.count(EnemyKind::Power), 1);
+        assert_eq!(score_board.enemy_kills.count(EnemyKind::Armor), 1);
+        assert_eq!(score_board.enemy_kills.total(), 5);
+    }
+
+    #[test]
     fn pause_toggle_only_affects_active_or_paused_game() {
         assert_eq!(
             toggle_pause_phase(GamePhase::ModeSelect),
@@ -6909,6 +7003,11 @@ mod tests {
         };
         let mut score_board = ScoreBoard::campaign(20);
         score_board.lives = 2;
+        score_board.record_enemy_destroyed(EnemyKind::Basic);
+        score_board.record_enemy_destroyed(EnemyKind::Fast);
+        score_board.record_enemy_destroyed(EnemyKind::Fast);
+        score_board.record_enemy_destroyed(EnemyKind::Power);
+        score_board.record_enemy_destroyed(EnemyKind::Armor);
 
         assert_eq!(
             phase_banner_text(&status, GameMode::Campaign, &score_board)
@@ -6916,14 +7015,23 @@ mod tests {
             [
                 "STAGE 12".to_string(),
                 "LEVEL CLEAR".to_string(),
+                "100X01 200X02".to_string(),
+                "300X01 400X01".to_string(),
+                "TOTAL 05".to_string(),
                 "BONUS 2000".to_string()
             ]
         );
+
+        let mut late_score_board = ScoreBoard::campaign(20);
+        late_score_board.lives = 3;
         assert_eq!(
-            level_clear_banner_text(135, 3),
+            level_clear_banner_text(135, &late_score_board),
             [
                 "STAGE 99".to_string(),
                 "LEVEL CLEAR".to_string(),
+                "100X00 200X00".to_string(),
+                "300X00 400X00".to_string(),
+                "TOTAL 00".to_string(),
                 "BONUS 3000".to_string()
             ]
         );

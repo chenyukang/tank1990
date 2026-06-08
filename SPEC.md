@@ -536,6 +536,7 @@ Current implementation note:
 - Terrain manifest entries include a two-frame water animation range plus static brick, steel, forest, and ice entries.
 - Effect manifest entries include explosion, spawn shimmer, base destruction, and power-up sparkle frame ranges.
 - Glyphs and sounds still use generated placeholder assets and will be moved into the manifest in later asset-pipeline stages.
+- `assets/arenas/arena_05.ron` is the first playable `BaseBattle` arena; destroying a player's base ends the round for the opponent.
 
 ### 10.2 Audio Style
 

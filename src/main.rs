@@ -16,7 +16,7 @@ const ASSET_MANIFEST_PATH: &str = "assets/manifest.ron";
 const LEVEL_COUNT: usize = 35;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const STAGE_INTRO_SECONDS: f32 = 1.2;
-const ARENA_COUNT: usize = 4;
+const ARENA_COUNT: usize = 5;
 const DEFAULT_VERSUS_ARENA: usize = 1;
 const TANK_ATLAS_TILES: usize = 48;
 const TANK_ANIMATION_FRAMES: usize = 2;
@@ -398,6 +398,20 @@ impl Default for PlayerControl {
 enum GameMode {
     Campaign,
     VersusDeathmatch,
+    VersusBaseBattle,
+}
+
+impl GameMode {
+    fn is_versus(self) -> bool {
+        matches!(self, Self::VersusDeathmatch | Self::VersusBaseBattle)
+    }
+
+    fn mode_select_option(self) -> Self {
+        match self {
+            Self::Campaign => Self::Campaign,
+            Self::VersusDeathmatch | Self::VersusBaseBattle => Self::VersusDeathmatch,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -426,6 +440,13 @@ impl PlayerId {
         match self {
             Self::One => Team::Player1,
             Self::Two => Team::Player2,
+        }
+    }
+
+    fn opponent(self) -> Self {
+        match self {
+            Self::One => Self::Two,
+            Self::Two => Self::One,
         }
     }
 }
@@ -1115,7 +1136,10 @@ struct GridTile {
 }
 
 #[derive(Component)]
-struct BaseSprite;
+struct BaseSprite {
+    owner: Option<PlayerId>,
+    top_left: Vec2,
+}
 
 #[derive(Component)]
 struct StatusGlyph {
@@ -1231,14 +1255,14 @@ fn handle_shared_controls(
             update_mode_select_cursor(&mut menu_queries.p1(), mode_select.selected);
         }
 
-        if mode_select.selected == GameMode::VersusDeathmatch
+        if mode_select.selected.is_versus()
             && (keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft))
         {
             mode_select.arena = previous_arena(mode_select.arena);
             update_mode_select_arena_digits(&mut menu_queries.p2(), mode_select.arena);
         }
 
-        if mode_select.selected == GameMode::VersusDeathmatch
+        if mode_select.selected.is_versus()
             && (keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight))
         {
             mode_select.arena = next_arena(mode_select.arena);
@@ -1268,7 +1292,7 @@ fn handle_shared_controls(
                         &menu_queries.p0(),
                     );
                 }
-                GameMode::VersusDeathmatch => {
+                GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
                     game_status.arena = mode_select.arena;
                     start_versus_round(
                         &mut commands,
@@ -1330,7 +1354,7 @@ fn handle_shared_controls(
                 &mut base_reinforcement,
                 &menu_queries.p0(),
             ),
-            GameMode::VersusDeathmatch => start_versus_round(
+            GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => start_versus_round(
                 &mut commands,
                 &assets,
                 &sounds,
@@ -1368,7 +1392,7 @@ fn enter_mode_select(
         commands.entity(entity).despawn();
     }
 
-    mode_select.selected = selected_mode;
+    mode_select.selected = selected_mode.mode_select_option();
     mode_select.arena = game_status.arena.clamp(1, ARENA_COUNT);
     spawn_mode_select_screen(commands, assets, mode_select.selected, mode_select.arena);
 
@@ -1443,26 +1467,38 @@ fn start_versus_round(
     });
     info!("Loaded {}", arena.name);
     let new_tile_grid = TileGrid::from_arena(&arena).expect("arena map should be valid");
-    let (target_score, lives, respawn_invulnerability_secs) = match arena.battle_rules {
+    let (round_mode, target_score, lives, respawn_invulnerability_secs) = match arena.battle_rules {
         BattleRules::Deathmatch {
             target_score,
             lives,
             respawn_invulnerability_secs,
-        } => (target_score, lives, respawn_invulnerability_secs),
-        BattleRules::BaseBattle { .. } => {
-            panic!("BaseBattle arenas are data-valid but not playable yet")
-        }
+        } => (
+            GameMode::VersusDeathmatch,
+            target_score,
+            lives,
+            respawn_invulnerability_secs,
+        ),
+        BattleRules::BaseBattle {
+            lives,
+            respawn_invulnerability_secs,
+            ..
+        } => (
+            GameMode::VersusBaseBattle,
+            0,
+            lives,
+            respawn_invulnerability_secs,
+        ),
     };
 
     for entity in game_entities {
         commands.entity(entity).despawn();
     }
 
-    spawn_screen_frame(commands, assets, GameMode::VersusDeathmatch);
+    spawn_screen_frame(commands, assets, round_mode);
     spawn_arena(commands, assets, &arena, &new_tile_grid, lives);
     play_sound(commands, sounds, SoundKind::StageStart);
 
-    *game_mode = GameMode::VersusDeathmatch;
+    *game_mode = round_mode;
     *tile_grid = new_tile_grid;
     *director = EnemyDirector::inactive();
     *score_board = ScoreBoard::versus(lives, target_score, respawn_invulnerability_secs);
@@ -1842,7 +1878,8 @@ fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets, mode: Game
 
     match mode {
         GameMode::Campaign => spawn_campaign_status_panel(commands, assets),
-        GameMode::VersusDeathmatch => spawn_versus_status_panel(commands, assets),
+        GameMode::VersusDeathmatch => spawn_versus_status_panel(commands, assets, true),
+        GameMode::VersusBaseBattle => spawn_versus_status_panel(commands, assets, false),
     }
 }
 
@@ -1905,7 +1942,7 @@ fn spawn_enemy_marker(commands: &mut Commands, assets: &SpriteAssets, index: usi
     ));
 }
 
-fn spawn_versus_status_panel(commands: &mut Commands, assets: &SpriteAssets) {
+fn spawn_versus_status_panel(commands: &mut Commands, assets: &SpriteAssets, show_target: bool) {
     spawn_pixel_text(commands, assets, "P1", Vec2::new(214.0, 26.0), 0.3);
     spawn_pixel_text(commands, assets, "SCORE", Vec2::new(214.0, 38.0), 0.3);
     spawn_status_digits(
@@ -1946,15 +1983,19 @@ fn spawn_versus_status_panel(commands: &mut Commands, assets: &SpriteAssets) {
         0.3,
     );
 
-    spawn_pixel_text(commands, assets, "TARGET", Vec2::new(214.0, 174.0), 0.3);
-    spawn_status_digits(
-        commands,
-        assets,
-        StatusValue::Target,
-        2,
-        Vec2::new(226.0, 185.0),
-        0.3,
-    );
+    if show_target {
+        spawn_pixel_text(commands, assets, "TARGET", Vec2::new(214.0, 174.0), 0.3);
+        spawn_status_digits(
+            commands,
+            assets,
+            StatusValue::Target,
+            2,
+            Vec2::new(226.0, 185.0),
+            0.3,
+        );
+    } else {
+        spawn_pixel_text(commands, assets, "BASE", Vec2::new(220.0, 180.0), 0.3);
+    }
 }
 
 fn spawn_status_digits(
@@ -2086,18 +2127,7 @@ fn spawn_level(
 ) {
     spawn_terrain(commands, assets, tile_grid);
 
-    commands.spawn((
-        Sprite::from_image(assets.base_intact.clone()),
-        Transform::from_translation(board_object_center(
-            level.base_position.x as f32 * TILE_SIZE,
-            level.base_position.y as f32 * TILE_SIZE,
-            Vec2::splat(TANK_SIZE),
-            4.0,
-        ))
-        .with_scale(Vec3::splat(WINDOW_SCALE)),
-        BaseSprite,
-        GameEntity,
-    ));
+    spawn_base_sprite(commands, assets, &level.base_position, None);
 
     spawn_player_tank(
         commands,
@@ -2116,6 +2146,13 @@ fn spawn_arena(
     player_lives: i32,
 ) {
     spawn_terrain(commands, assets, tile_grid);
+    if let BattleRules::BaseBattle {
+        p1_base, p2_base, ..
+    } = arena.battle_rules
+    {
+        spawn_base_sprite(commands, assets, &p1_base, Some(PlayerId::One));
+        spawn_base_sprite(commands, assets, &p2_base, Some(PlayerId::Two));
+    }
     spawn_player_tank(
         commands,
         assets,
@@ -2130,6 +2167,27 @@ fn spawn_arena(
         PlayerId::Two,
         player_lives,
     );
+}
+
+fn spawn_base_sprite(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    point: &GridPoint,
+    owner: Option<PlayerId>,
+) {
+    let top_left = grid_point_top_left(point);
+    commands.spawn((
+        Sprite::from_image(assets.base_intact.clone()),
+        Transform::from_translation(board_object_center(
+            top_left.x,
+            top_left.y,
+            Vec2::splat(TANK_SIZE),
+            4.0,
+        ))
+        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        BaseSprite { owner, top_left },
+        GameEntity,
+    ));
 }
 
 fn spawn_terrain(commands: &mut Commands, assets: &SpriteAssets, tile_grid: &TileGrid) {
@@ -2288,6 +2346,20 @@ fn base_top_left_from_grid(tile_grid: &TileGrid) -> Option<Vec2> {
         min_x as f32 * TILE_SIZE,
         min_y as f32 * TILE_SIZE,
     ))
+}
+
+fn base_contains_tile(base_top_left: Vec2, tile_x: usize, tile_y: usize) -> bool {
+    let tile_top_left = Vec2::new(tile_x as f32 * TILE_SIZE, tile_y as f32 * TILE_SIZE);
+    rects_overlap(
+        base_top_left,
+        Vec2::splat(TANK_SIZE),
+        tile_top_left,
+        Vec2::splat(TILE_SIZE),
+    )
+}
+
+fn grid_point_top_left(point: &GridPoint) -> Vec2 {
+    Vec2::new(point.x as f32 * TILE_SIZE, point.y as f32 * TILE_SIZE)
 }
 
 fn spawn_point_top_left(spawn: &SpawnPoint) -> Vec2 {
@@ -2773,7 +2845,7 @@ fn move_bullets(
     tile_sprites: Query<(Entity, &GridTile)>,
     active_powerups: Query<Entity, With<PowerUp>>,
     active_sparkles: Query<Entity, With<PowerUpSparkle>>,
-    mut base_sprites: Query<&mut Sprite, (With<BaseSprite>, Without<Player>)>,
+    mut base_sprites: Query<(&BaseSprite, &mut Sprite), (Without<Player>, Without<Bullet>)>,
     mut enemy_tanks: Query<
         (
             Entity,
@@ -2867,7 +2939,7 @@ fn move_bullets(
             }
         }
 
-        if *game_mode == GameMode::VersusDeathmatch
+        if game_mode.is_versus()
             && let Some(shooter) = bullet.owner.player_id()
         {
             let mut hit_player = false;
@@ -2914,7 +2986,7 @@ fn move_bullets(
                         &mut player_sprite,
                         player.id,
                         Some(shooter),
-                        GameMode::VersusDeathmatch,
+                        *game_mode,
                     );
                 } else {
                     play_sound(&mut commands, &sounds, SoundKind::SteelHit);
@@ -3012,20 +3084,40 @@ fn move_bullets(
                 }
             }
 
-            if *game_mode == GameMode::Campaign
-                && tile == TileKind::Base
-                && game_status.is_playing()
-            {
-                game_status.phase = GamePhase::GameOver;
-                let base_top_left = base_top_left_from_grid(&grid).unwrap_or(Vec2::new(
-                    tile_x as f32 * TILE_SIZE,
-                    tile_y as f32 * TILE_SIZE,
-                ));
-                spawn_base_destruction_effect(&mut commands, &assets, base_top_left);
-                play_sound(&mut commands, &sounds, SoundKind::BaseDestroyed);
-                for mut sprite in &mut base_sprites {
-                    sprite.image = assets.base_destroyed.clone();
+            if tile == TileKind::Base && game_status.is_playing() {
+                let mut hit_base = None;
+                for (base, mut sprite) in &mut base_sprites {
+                    if base_contains_tile(base.top_left, tile_x, tile_y) {
+                        sprite.image = assets.base_destroyed.clone();
+                        hit_base = Some((base.owner, base.top_left));
+                        break;
+                    }
                 }
+
+                let (base_owner, base_top_left) = hit_base.unwrap_or((
+                    None,
+                    base_top_left_from_grid(&grid).unwrap_or(Vec2::new(
+                        tile_x as f32 * TILE_SIZE,
+                        tile_y as f32 * TILE_SIZE,
+                    )),
+                ));
+
+                match *game_mode {
+                    GameMode::Campaign => {
+                        game_status.phase = GamePhase::GameOver;
+                        play_sound(&mut commands, &sounds, SoundKind::BaseDestroyed);
+                    }
+                    GameMode::VersusBaseBattle => {
+                        if let Some(owner) = base_owner {
+                            game_status.phase = GamePhase::RoundOver;
+                            game_status.winner = Some(base_battle_winner_for_base(owner));
+                            play_sound(&mut commands, &sounds, SoundKind::BaseDestroyed);
+                        }
+                    }
+                    GameMode::VersusDeathmatch => {}
+                }
+
+                spawn_base_destruction_effect(&mut commands, &assets, base_top_left);
             } else if tile == TileKind::Steel && !bullet.breaks_steel {
                 play_sound(&mut commands, &sounds, SoundKind::SteelHit);
             }
@@ -3090,6 +3182,18 @@ fn resolve_player_destroyed(
                 }
             }
         }
+        GameMode::VersusBaseBattle => {
+            score_board.set_player_lives(target, lives.current);
+            if let Some(shooter) = shooter {
+                score_board.add_player_score(shooter);
+                if lives.current <= 0 {
+                    game_status.phase = GamePhase::RoundOver;
+                    game_status.winner = Some(shooter);
+                    play_sound(commands, sounds, SoundKind::LevelClear);
+                    return;
+                }
+            }
+        }
     }
 
     reset_player_upgrade(upgrade, sprite);
@@ -3128,6 +3232,10 @@ fn deathmatch_winner_after_hit(
     }
 }
 
+fn base_battle_winner_for_base(base_owner: PlayerId) -> PlayerId {
+    base_owner.opponent()
+}
+
 fn cancel_colliding_bullets(mut commands: Commands, bullets: Query<(Entity, &Bullet)>) {
     let bullets: Vec<(Entity, Vec2)> = bullets
         .iter()
@@ -3153,7 +3261,7 @@ fn spawn_versus_powerups(
     mut director: ResMut<VersusPowerUpDirector>,
     active_powerups: Query<Entity, With<PowerUp>>,
 ) {
-    if *game_mode != GameMode::VersusDeathmatch
+    if !game_mode.is_versus()
         || !game_status.is_playing()
         || !active_powerups.is_empty()
         || director.spawn_points.is_empty()
@@ -3253,7 +3361,7 @@ fn pickup_powerups(
                         GameMode::Campaign => {
                             score_board.lives = lives.current;
                         }
-                        GameMode::VersusDeathmatch => {
+                        GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
                             score_board.set_player_lives(player.id, lives.current);
                         }
                     }
@@ -3615,11 +3723,15 @@ fn update_status_panel(
         let text = match glyph.kind {
             StatusValue::Score => match *game_mode {
                 GameMode::Campaign => format!("{:06}", score_board.score.min(999_999)),
-                GameMode::VersusDeathmatch => format!("{:02}", score_board.p1_score.min(99)),
+                GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
+                    format!("{:02}", score_board.p1_score.min(99))
+                }
             },
             StatusValue::Lives => match *game_mode {
                 GameMode::Campaign => format!("{}", score_board.lives.clamp(0, 9)),
-                GameMode::VersusDeathmatch => format!("{}", score_board.p1_lives.clamp(0, 9)),
+                GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
+                    format!("{}", score_board.p1_lives.clamp(0, 9))
+                }
             },
             StatusValue::Stage => format!("{:02}", game_status.stage.min(99)),
             StatusValue::P2Score => format!("{:02}", score_board.p2_score.min(99)),
@@ -3722,7 +3834,9 @@ fn phase_banner_text(
     if status.phase == GamePhase::StageIntro {
         return Some(match mode {
             GameMode::Campaign => stage_intro_banner_text(status.stage),
-            GameMode::VersusDeathmatch => arena_intro_banner_text(status.arena),
+            GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
+                arena_intro_banner_text(status.arena)
+            }
         });
     }
     if status.phase == GamePhase::LevelClear {
@@ -3770,7 +3884,7 @@ fn visual_effects_can_advance(phase: GamePhase) -> bool {
 fn other_mode(mode: GameMode) -> GameMode {
     match mode {
         GameMode::Campaign => GameMode::VersusDeathmatch,
-        GameMode::VersusDeathmatch => GameMode::Campaign,
+        GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => GameMode::Campaign,
     }
 }
 
@@ -3793,7 +3907,7 @@ fn previous_arena(current: usize) -> usize {
 fn mode_select_option_top_left(mode: GameMode) -> Vec2 {
     match mode {
         GameMode::Campaign => Vec2::new(82.0, 105.0),
-        GameMode::VersusDeathmatch => Vec2::new(88.0, 125.0),
+        GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => Vec2::new(88.0, 125.0),
     }
 }
 
@@ -5531,6 +5645,7 @@ mod tests {
     const ARENA_2: &str = include_str!("../assets/arenas/arena_02.ron");
     const ARENA_3: &str = include_str!("../assets/arenas/arena_03.ron");
     const ARENA_4: &str = include_str!("../assets/arenas/arena_04.ron");
+    const ARENA_5: &str = include_str!("../assets/arenas/arena_05.ron");
 
     fn authored_levels() -> [(usize, &'static str); LEVEL_COUNT] {
         [
@@ -5573,7 +5688,13 @@ mod tests {
     }
 
     fn authored_arenas() -> [(usize, &'static str); ARENA_COUNT] {
-        [(1, ARENA_1), (2, ARENA_2), (3, ARENA_3), (4, ARENA_4)]
+        [
+            (1, ARENA_1),
+            (2, ARENA_2),
+            (3, ARENA_3),
+            (4, ARENA_4),
+            (5, ARENA_5),
+        ]
     }
 
     fn base_battle_arena_text() -> String {
@@ -5840,7 +5961,7 @@ mod tests {
     }
 
     #[test]
-    fn authored_arena_file_matches_deathmatch_shape() {
+    fn authored_arena_files_match_supported_battle_shapes() {
         for (index, contents) in authored_arenas() {
             let arena = parse_arena(contents).expect("arena should parse");
             assert_eq!(arena.name, format!("Arena {index}"));
@@ -5853,17 +5974,30 @@ mod tests {
             );
             assert!(!arena.powerup_spawns.is_empty());
 
-            let BattleRules::Deathmatch {
-                target_score,
-                lives,
-                respawn_invulnerability_secs,
-            } = arena.battle_rules
-            else {
-                panic!("authored arena {index} should be deathmatch");
-            };
-            assert_eq!(target_score, 5);
-            assert_eq!(lives, 3);
-            assert_eq!(respawn_invulnerability_secs, 2.0);
+            match arena.battle_rules {
+                BattleRules::Deathmatch {
+                    target_score,
+                    lives,
+                    respawn_invulnerability_secs,
+                } => {
+                    assert!(index < ARENA_COUNT);
+                    assert_eq!(target_score, 5);
+                    assert_eq!(lives, 3);
+                    assert_eq!(respawn_invulnerability_secs, 2.0);
+                }
+                BattleRules::BaseBattle {
+                    p1_base,
+                    p2_base,
+                    lives,
+                    respawn_invulnerability_secs,
+                } => {
+                    assert_eq!(index, ARENA_COUNT);
+                    assert_eq!(p1_base, GridPoint { x: 0, y: 24 });
+                    assert_eq!(p2_base, GridPoint { x: 24, y: 0 });
+                    assert_eq!(lives, 3);
+                    assert_eq!(respawn_invulnerability_secs, 2.0);
+                }
+            }
 
             let grid = TileGrid::from_arena(&arena).expect("grid should build");
             assert!(grid.can_tank_occupy(Vec2::new(
@@ -6597,6 +6731,14 @@ mod tests {
             ),
             (
                 GameStatus {
+                    phase: GamePhase::StageIntro,
+                    arena: 5,
+                    ..GameStatus::default()
+                },
+                GameMode::VersusBaseBattle,
+            ),
+            (
+                GameStatus {
                     phase: GamePhase::Paused,
                     ..GameStatus::default()
                 },
@@ -6667,6 +6809,11 @@ mod tests {
     fn mode_select_toggles_between_campaign_and_battle() {
         assert_eq!(other_mode(GameMode::Campaign), GameMode::VersusDeathmatch);
         assert_eq!(other_mode(GameMode::VersusDeathmatch), GameMode::Campaign);
+        assert_eq!(other_mode(GameMode::VersusBaseBattle), GameMode::Campaign);
+        assert_eq!(
+            GameMode::VersusBaseBattle.mode_select_option(),
+            GameMode::VersusDeathmatch
+        );
     }
 
     #[test]
@@ -6675,11 +6822,13 @@ mod tests {
         assert_eq!(next_arena(1), 2);
         assert_eq!(next_arena(2), 3);
         assert_eq!(next_arena(3), 4);
-        assert_eq!(next_arena(4), 1);
-        assert_eq!(previous_arena(1), 4);
+        assert_eq!(next_arena(4), 5);
+        assert_eq!(next_arena(5), 1);
+        assert_eq!(previous_arena(1), 5);
         assert_eq!(previous_arena(2), 1);
         assert_eq!(previous_arena(3), 2);
         assert_eq!(previous_arena(4), 3);
+        assert_eq!(previous_arena(5), 4);
     }
 
     #[test]
@@ -7091,6 +7240,23 @@ mod tests {
         let level = parse_level(LEVEL_1).expect("level should parse");
         let grid = TileGrid::from_level(&level).expect("grid should build");
         assert_eq!(base_top_left_from_grid(&grid), Some(Vec2::new(96.0, 192.0)));
+    }
+
+    #[test]
+    fn base_hit_detection_covers_the_whole_two_by_two_base() {
+        let top_left = Vec2::new(96.0, 192.0);
+        assert!(base_contains_tile(top_left, 12, 24));
+        assert!(base_contains_tile(top_left, 13, 24));
+        assert!(base_contains_tile(top_left, 12, 25));
+        assert!(base_contains_tile(top_left, 13, 25));
+        assert!(!base_contains_tile(top_left, 11, 24));
+        assert!(!base_contains_tile(top_left, 14, 25));
+    }
+
+    #[test]
+    fn base_battle_winner_is_the_destroyed_base_opponent() {
+        assert_eq!(base_battle_winner_for_base(PlayerId::One), PlayerId::Two);
+        assert_eq!(base_battle_winner_for_base(PlayerId::Two), PlayerId::One);
     }
 
     #[test]

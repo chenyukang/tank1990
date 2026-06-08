@@ -42,6 +42,7 @@ const SHOVEL_SECONDS: f32 = 10.0;
 const ENEMY_ALIGNMENT_FIRE_FRACTION: f32 = 0.45;
 const ENEMY_SPAWN_PROTECTION_SECONDS: f32 = 0.35;
 const PLAYER_RESPAWN_DELAY_SECONDS: f32 = 0.35;
+const VERSUS_POWERUP_INTERVAL_SECONDS: f32 = 8.0;
 const SOUND_SAMPLE_RATE: u32 = 22_050;
 
 fn main() {
@@ -53,6 +54,7 @@ fn main() {
         .insert_resource(GameStatus::default())
         .insert_resource(EnemyFreeze::default())
         .insert_resource(BaseReinforcement::default())
+        .insert_resource(VersusPowerUpDirector::inactive())
         .add_plugins(
             DefaultPlugins
                 .set(ImagePlugin::default_nearest())
@@ -73,6 +75,12 @@ fn main() {
         )
         .add_audio_source::<RetroSound>()
         .add_systems(Startup, setup)
+        .add_systems(
+            FixedUpdate,
+            spawn_versus_powerups
+                .after(cancel_colliding_bullets)
+                .before(pickup_powerups),
+        )
         .add_systems(
             FixedUpdate,
             (
@@ -441,6 +449,55 @@ impl EnemyDirector {
             spawn_cursor: 0,
             spawned_count: 0,
         }
+    }
+}
+
+#[derive(Resource)]
+struct VersusPowerUpDirector {
+    spawn_points: Vec<Vec2>,
+    spawn_timer: Timer,
+    spawn_cursor: usize,
+    kind_cursor: usize,
+    spawn_immediately: bool,
+}
+
+impl VersusPowerUpDirector {
+    fn from_arena(arena: &ArenaDefinition) -> Self {
+        Self {
+            spawn_points: arena
+                .powerup_spawns
+                .iter()
+                .map(|point| Vec2::new(point.x as f32 * TILE_SIZE, point.y as f32 * TILE_SIZE))
+                .collect(),
+            spawn_timer: Timer::from_seconds(VERSUS_POWERUP_INTERVAL_SECONDS, TimerMode::Repeating),
+            spawn_cursor: 0,
+            kind_cursor: 0,
+            spawn_immediately: true,
+        }
+    }
+
+    fn inactive() -> Self {
+        Self {
+            spawn_points: Vec::new(),
+            spawn_timer: Timer::from_seconds(VERSUS_POWERUP_INTERVAL_SECONDS, TimerMode::Repeating),
+            spawn_cursor: 0,
+            kind_cursor: 0,
+            spawn_immediately: false,
+        }
+    }
+
+    fn next_spawn(&mut self) -> Option<(Vec2, PowerUpKind)> {
+        if self.spawn_points.is_empty() {
+            return None;
+        }
+
+        let top_left = self.spawn_points[self.spawn_cursor];
+        self.spawn_cursor = (self.spawn_cursor + 1) % self.spawn_points.len();
+        let kind = powerup_for_cycle(self.kind_cursor);
+        self.kind_cursor += 1;
+        self.spawn_immediately = false;
+        self.spawn_timer.reset();
+        Some((top_left, kind))
     }
 }
 
@@ -888,6 +945,7 @@ fn handle_shared_controls(
     mut director: ResMut<EnemyDirector>,
     mut score_board: ResMut<ScoreBoard>,
     mut stage_rules: ResMut<StageRules>,
+    mut versus_powerups: ResMut<VersusPowerUpDirector>,
     mut enemy_freeze: ResMut<EnemyFreeze>,
     mut base_reinforcement: ResMut<BaseReinforcement>,
     game_entities: Query<Entity, With<GameEntity>>,
@@ -908,6 +966,7 @@ fn handle_shared_controls(
                 &mut director,
                 &mut score_board,
                 &mut stage_rules,
+                &mut versus_powerups,
                 &mut enemy_freeze,
                 &mut base_reinforcement,
                 &game_entities,
@@ -924,6 +983,7 @@ fn handle_shared_controls(
                     &mut director,
                     &mut score_board,
                     &mut stage_rules,
+                    &mut versus_powerups,
                     &mut enemy_freeze,
                     &mut base_reinforcement,
                     &game_entities,
@@ -944,6 +1004,7 @@ fn handle_shared_controls(
                 &mut director,
                 &mut score_board,
                 &mut stage_rules,
+                &mut versus_powerups,
                 &mut enemy_freeze,
                 &mut base_reinforcement,
                 &game_entities,
@@ -958,6 +1019,7 @@ fn handle_shared_controls(
                 &mut director,
                 &mut score_board,
                 &mut stage_rules,
+                &mut versus_powerups,
                 &mut enemy_freeze,
                 &mut base_reinforcement,
                 &game_entities,
@@ -975,6 +1037,7 @@ fn restart_level(
     director: &mut EnemyDirector,
     score_board: &mut ScoreBoard,
     stage_rules: &mut StageRules,
+    versus_powerups: &mut VersusPowerUpDirector,
     enemy_freeze: &mut EnemyFreeze,
     base_reinforcement: &mut BaseReinforcement,
     game_entities: &Query<Entity, With<GameEntity>>,
@@ -994,6 +1057,7 @@ fn restart_level(
     *director = EnemyDirector::from_level(&level);
     *score_board = ScoreBoard::campaign(level.enemies.len());
     *stage_rules = StageRules::from_level(&level);
+    *versus_powerups = VersusPowerUpDirector::inactive();
     enemy_freeze.reset();
     base_reinforcement.reset();
     game_status.phase = GamePhase::Playing;
@@ -1011,6 +1075,7 @@ fn start_versus_round(
     director: &mut EnemyDirector,
     score_board: &mut ScoreBoard,
     stage_rules: &mut StageRules,
+    versus_powerups: &mut VersusPowerUpDirector,
     enemy_freeze: &mut EnemyFreeze,
     base_reinforcement: &mut BaseReinforcement,
     game_entities: &Query<Entity, With<GameEntity>>,
@@ -1037,6 +1102,7 @@ fn start_versus_round(
     *director = EnemyDirector::inactive();
     *score_board = ScoreBoard::versus(lives, target_score, respawn_invulnerability_secs);
     *stage_rules = StageRules::default();
+    *versus_powerups = VersusPowerUpDirector::from_arena(&arena);
     enemy_freeze.reset();
     base_reinforcement.reset();
     game_status.phase = GamePhase::Playing;
@@ -2349,6 +2415,34 @@ fn cancel_colliding_bullets(mut commands: Commands, bullets: Query<(Entity, &Bul
     }
 }
 
+fn spawn_versus_powerups(
+    mut commands: Commands,
+    time: Res<Time>,
+    assets: Res<SpriteAssets>,
+    game_mode: Res<GameMode>,
+    game_status: Res<GameStatus>,
+    mut director: ResMut<VersusPowerUpDirector>,
+    active_powerups: Query<Entity, With<PowerUp>>,
+) {
+    if *game_mode != GameMode::VersusDeathmatch
+        || !game_status.is_playing()
+        || !active_powerups.is_empty()
+        || director.spawn_points.is_empty()
+    {
+        return;
+    }
+
+    let should_spawn =
+        director.spawn_immediately || director.spawn_timer.tick(time.delta()).just_finished();
+    if !should_spawn {
+        return;
+    }
+
+    if let Some((top_left, kind)) = director.next_spawn() {
+        spawn_powerup_entity(&mut commands, &assets, kind, top_left);
+    }
+}
+
 fn pickup_powerups(
     mut commands: Commands,
     game_status: Res<GameStatus>,
@@ -2966,6 +3060,15 @@ fn spawn_powerup(
         commands.entity(active_powerup).despawn();
     }
 
+    spawn_powerup_entity(commands, assets, kind, top_left);
+}
+
+fn spawn_powerup_entity(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    kind: PowerUpKind,
+    top_left: Vec2,
+) {
     commands.spawn((
         Sprite::from_atlas_image(
             assets.powerup_image.clone(),
@@ -3224,7 +3327,11 @@ fn should_drop_powerup(enemies_destroyed: usize) -> bool {
 }
 
 fn powerup_for_drop(enemies_destroyed: usize) -> PowerUpKind {
-    match (enemies_destroyed.saturating_sub(1) / POWERUP_DROP_INTERVAL) % 6 {
+    powerup_for_cycle(enemies_destroyed.saturating_sub(1) / POWERUP_DROP_INTERVAL)
+}
+
+fn powerup_for_cycle(index: usize) -> PowerUpKind {
+    match index % 6 {
         0 => PowerUpKind::Star,
         1 => PowerUpKind::Helmet,
         2 => PowerUpKind::Clock,
@@ -4440,6 +4547,23 @@ mod tests {
         assert_eq!(powerup_for_drop(20), PowerUpKind::Grenade);
         assert_eq!(powerup_for_drop(25), PowerUpKind::Shovel);
         assert_eq!(powerup_for_drop(30), PowerUpKind::Tank);
+    }
+
+    #[test]
+    fn versus_powerup_director_uses_arena_spawns_and_rotates_rewards() {
+        let arena = parse_arena(ARENA_2).expect("arena should parse");
+        let mut director = VersusPowerUpDirector::from_arena(&arena);
+        assert!(director.spawn_immediately);
+
+        let first = director.next_spawn();
+        assert_eq!(first, Some((Vec2::new(96.0, 96.0), PowerUpKind::Star)));
+        assert!(!director.spawn_immediately);
+
+        let second = director.next_spawn();
+        assert_eq!(second, Some((Vec2::new(104.0, 104.0), PowerUpKind::Helmet)));
+
+        let third = director.next_spawn();
+        assert_eq!(third, Some((Vec2::new(96.0, 96.0), PowerUpKind::Clock)));
     }
 
     #[test]

@@ -2738,7 +2738,7 @@ fn move_bullets(
     tile_sprites: Query<(Entity, &GridTile)>,
     active_powerups: Query<Entity, With<PowerUp>>,
     active_sparkles: Query<Entity, With<PowerUpSparkle>>,
-    mut base_sprites: Query<&mut Sprite, With<BaseSprite>>,
+    mut base_sprites: Query<&mut Sprite, (With<BaseSprite>, Without<Player>)>,
     mut enemy_tanks: Query<
         (
             Entity,
@@ -2757,10 +2757,17 @@ fn move_bullets(
             &RespawnPoint,
             &mut PlayerLives,
             &mut Health,
+            &mut PlayerUpgrade,
+            &mut Sprite,
             Option<&Shield>,
             &Player,
         ),
-        (With<Player>, Without<EnemyTank>, Without<Bullet>),
+        (
+            With<Player>,
+            Without<BaseSprite>,
+            Without<EnemyTank>,
+            Without<Bullet>,
+        ),
     >,
 ) {
     if !game_status.is_playing() {
@@ -2836,6 +2843,8 @@ fn move_bullets(
                 respawn,
                 mut lives,
                 mut player_health,
+                mut upgrade,
+                mut player_sprite,
                 shield,
                 player,
             ) in &mut player_tanks
@@ -2866,6 +2875,8 @@ fn move_bullets(
                         respawn,
                         &mut lives,
                         &mut player_health,
+                        &mut upgrade,
+                        &mut player_sprite,
                         player.id,
                         Some(shooter),
                         GameMode::VersusDeathmatch,
@@ -2889,6 +2900,8 @@ fn move_bullets(
                 respawn,
                 mut lives,
                 mut player_health,
+                mut upgrade,
+                mut player_sprite,
                 shield,
                 player,
             ) in &mut player_tanks
@@ -2922,6 +2935,8 @@ fn move_bullets(
                     respawn,
                     &mut lives,
                     &mut player_health,
+                    &mut upgrade,
+                    &mut player_sprite,
                     player.id,
                     None,
                     GameMode::Campaign,
@@ -3002,6 +3017,8 @@ fn resolve_player_destroyed(
     respawn: &RespawnPoint,
     lives: &mut PlayerLives,
     health: &mut Health,
+    upgrade: &mut PlayerUpgrade,
+    sprite: &mut Sprite,
     target: PlayerId,
     shooter: Option<PlayerId>,
     mode: GameMode,
@@ -3037,6 +3054,7 @@ fn resolve_player_destroyed(
         }
     }
 
+    reset_player_upgrade(upgrade, sprite);
     tank.top_left = respawn.top_left;
     tank.facing = respawn.facing;
     transform.translation = board_object_center(
@@ -3052,6 +3070,11 @@ fn resolve_player_destroyed(
         .entity(player_entity)
         .insert(PlayerRespawnDelay::new());
     spawn_spawn_effect(commands, assets, respawn.top_left);
+}
+
+fn reset_player_upgrade(upgrade: &mut PlayerUpgrade, sprite: &mut Sprite) {
+    upgrade.level = 0;
+    sprite.color = player_upgrade_visual_color(upgrade.level);
 }
 
 fn deathmatch_winner_after_hit(
@@ -6688,6 +6711,20 @@ mod tests {
     fn helmet_flicker_returns_to_upgrade_visual_between_flashes() {
         assert_eq!(player_shield_visual_rgb(0.05, 2), [160, 220, 255]);
         assert_eq!(player_shield_visual_rgb(0.15, 2), [255, 232, 104]);
+    }
+
+    #[test]
+    fn player_respawn_resets_star_upgrade_visuals() {
+        let mut upgrade = PlayerUpgrade { level: 3 };
+        let mut sprite = Sprite {
+            color: player_upgrade_visual_color(upgrade.level),
+            ..default()
+        };
+
+        reset_player_upgrade(&mut upgrade, &mut sprite);
+
+        assert_eq!(upgrade.level, 0);
+        assert_eq!(sprite.color, player_upgrade_visual_color(0));
     }
 
     #[test]

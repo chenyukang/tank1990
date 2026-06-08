@@ -441,6 +441,18 @@ Example:
 )
 ```
 
+For `BaseBattle`, the same arena schema is used, but `battle_rules` declares two
+2x2 base positions that must cover `E` tiles in the map:
+
+```ron
+battle_rules: BaseBattle(
+  p1_base: (x: 24, y: 24),
+  p2_base: (x: 0, y: 0),
+  lives: 3,
+  respawn_invulnerability_secs: 2.0,
+)
+```
+
 ### 9.3 Tile Symbols
 
 - `.` = Empty

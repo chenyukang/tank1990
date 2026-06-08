@@ -904,6 +904,12 @@ enum BattleRules {
         lives: i32,
         respawn_invulnerability_secs: f32,
     },
+    BaseBattle {
+        p1_base: GridPoint,
+        p2_base: GridPoint,
+        lives: i32,
+        respawn_invulnerability_secs: f32,
+    },
 }
 
 #[derive(Clone, Deserialize)]
@@ -913,7 +919,7 @@ struct SpawnPoint {
     facing: Direction,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 struct GridPoint {
     x: usize,
     y: usize,
@@ -1437,11 +1443,16 @@ fn start_versus_round(
     });
     info!("Loaded {}", arena.name);
     let new_tile_grid = TileGrid::from_arena(&arena).expect("arena map should be valid");
-    let BattleRules::Deathmatch {
-        target_score,
-        lives,
-        respawn_invulnerability_secs,
-    } = arena.battle_rules;
+    let (target_score, lives, respawn_invulnerability_secs) = match arena.battle_rules {
+        BattleRules::Deathmatch {
+            target_score,
+            lives,
+            respawn_invulnerability_secs,
+        } => (target_score, lives, respawn_invulnerability_secs),
+        BattleRules::BaseBattle { .. } => {
+            panic!("BaseBattle arenas are data-valid but not playable yet")
+        }
+    };
 
     for entity in game_entities {
         commands.entity(entity).despawn();
@@ -1650,27 +1661,51 @@ fn parse_arena(contents: &str) -> Result<ArenaDefinition, String> {
         ron::from_str(contents).map_err(|err| format!("failed to parse arena: {err}"))?;
 
     let grid = TileGrid::from_arena(&arena)?;
-    let BattleRules::Deathmatch {
-        target_score,
-        lives,
-        respawn_invulnerability_secs,
-    } = arena.battle_rules;
-    if target_score == 0 {
-        return Err("deathmatch target_score must be greater than zero".to_string());
-    }
-    if lives <= 0 {
-        return Err("deathmatch lives must be greater than zero".to_string());
-    }
-    if respawn_invulnerability_secs <= 0.0 {
-        return Err("deathmatch respawn_invulnerability_secs must be positive".to_string());
-    }
     validate_tank_spawn(&grid, "p1 spawn", &arena.p1_spawn)?;
     validate_tank_spawn(&grid, "p2 spawn", &arena.p2_spawn)?;
+    validate_battle_rules(&grid, arena.battle_rules)?;
     for (index, point) in arena.powerup_spawns.iter().enumerate() {
         validate_powerup_spawn(&grid, index + 1, point)?;
     }
 
     Ok(arena)
+}
+
+fn validate_battle_rules(grid: &TileGrid, rules: BattleRules) -> Result<(), String> {
+    match rules {
+        BattleRules::Deathmatch {
+            target_score,
+            lives,
+            respawn_invulnerability_secs,
+        } => {
+            if target_score == 0 {
+                return Err("deathmatch target_score must be greater than zero".to_string());
+            }
+            if lives <= 0 {
+                return Err("deathmatch lives must be greater than zero".to_string());
+            }
+            if respawn_invulnerability_secs <= 0.0 {
+                return Err("deathmatch respawn_invulnerability_secs must be positive".to_string());
+            }
+        }
+        BattleRules::BaseBattle {
+            p1_base,
+            p2_base,
+            lives,
+            respawn_invulnerability_secs,
+        } => {
+            if lives <= 0 {
+                return Err("base battle lives must be greater than zero".to_string());
+            }
+            if respawn_invulnerability_secs <= 0.0 {
+                return Err("base battle respawn_invulnerability_secs must be positive".to_string());
+            }
+            validate_base_position(grid, "p1 base position", &p1_base)?;
+            validate_base_position(grid, "p2 base position", &p2_base)?;
+        }
+    }
+
+    Ok(())
 }
 
 fn spawn_mode_select_screen(
@@ -4388,7 +4423,7 @@ fn validate_level_positions(level: &LevelDefinition, grid: &TileGrid) -> Result<
         validate_tank_spawn(grid, &label, spawn)?;
     }
 
-    validate_base_position(grid, &level.base_position)
+    validate_base_position(grid, "base position", &level.base_position)
 }
 
 fn validate_tank_spawn(grid: &TileGrid, label: &str, spawn: &SpawnPoint) -> Result<(), String> {
@@ -4403,10 +4438,10 @@ fn validate_tank_spawn(grid: &TileGrid, label: &str, spawn: &SpawnPoint) -> Resu
     }
 }
 
-fn validate_base_position(grid: &TileGrid, point: &GridPoint) -> Result<(), String> {
+fn validate_base_position(grid: &TileGrid, label: &str, point: &GridPoint) -> Result<(), String> {
     if point.x >= BOARD_TILES - 1 || point.y >= BOARD_TILES - 1 {
         return Err(format!(
-            "base position ({}, {}) must fit a 2x2 base inside the battlefield",
+            "{label} ({}, {}) must fit a 2x2 base inside the battlefield",
             point.x, point.y
         ));
     }
@@ -4415,7 +4450,7 @@ fn validate_base_position(grid: &TileGrid, point: &GridPoint) -> Result<(), Stri
         for x in point.x..=(point.x + 1) {
             if grid.get(x as i32, y as i32) != Some(TileKind::Base) {
                 return Err(format!(
-                    "base position ({}, {}) must cover a 2x2 base tile area",
+                    "{label} ({}, {}) must cover a 2x2 base tile area",
                     point.x, point.y
                 ));
             }
@@ -5541,6 +5576,39 @@ mod tests {
         [(1, ARENA_1), (2, ARENA_2), (3, ARENA_3), (4, ARENA_4)]
     }
 
+    fn base_battle_arena_text() -> String {
+        let mut rows = vec![".........................."; BOARD_TILES];
+        rows[0] = "EE........................";
+        rows[1] = "EE........................";
+        rows[24] = "........................EE";
+        rows[25] = "........................EE";
+        let map_rows = rows
+            .iter()
+            .map(|row| format!("    \"{row}\","))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        format!(
+            r#"(
+  name: "Base Arena",
+  map: [
+{map_rows}
+  ],
+  p1_spawn: (x: 4, y: 24, facing: Up),
+  p2_spawn: (x: 20, y: 0, facing: Down),
+  battle_rules: BaseBattle(
+    p1_base: (x: 24, y: 24),
+    p2_base: (x: 0, y: 0),
+    lives: 3,
+    respawn_invulnerability_secs: 2.0,
+  ),
+  powerup_spawns: [
+    (x: 12, y: 12),
+  ],
+)"#
+        )
+    }
+
     #[test]
     fn stage_paths_use_three_digit_level_numbers() {
         assert_eq!(stage_path(1), "assets/levels/001.level.ron");
@@ -5789,7 +5857,10 @@ mod tests {
                 target_score,
                 lives,
                 respawn_invulnerability_secs,
-            } = arena.battle_rules;
+            } = arena.battle_rules
+            else {
+                panic!("authored arena {index} should be deathmatch");
+            };
             assert_eq!(target_score, 5);
             assert_eq!(lives, 3);
             assert_eq!(respawn_invulnerability_secs, 2.0);
@@ -5810,6 +5881,49 @@ mod tests {
                 )));
             }
         }
+    }
+
+    #[test]
+    fn arena_parses_base_battle_rules_and_validates_bases() {
+        let arena = parse_arena(&base_battle_arena_text()).expect("base battle arena should parse");
+
+        let BattleRules::BaseBattle {
+            p1_base,
+            p2_base,
+            lives,
+            respawn_invulnerability_secs,
+        } = arena.battle_rules
+        else {
+            panic!("base battle arena should keep base battle rules");
+        };
+
+        assert_eq!(p1_base, GridPoint { x: 24, y: 24 });
+        assert_eq!(p2_base, GridPoint { x: 0, y: 0 });
+        assert_eq!(lives, 3);
+        assert_eq!(respawn_invulnerability_secs, 2.0);
+    }
+
+    #[test]
+    fn arena_rejects_base_battle_rules_with_invalid_values() {
+        let no_lives = base_battle_arena_text().replacen("lives: 3", "lives: 0", 1);
+        assert!(
+            parse_arena(&no_lives)
+                .err()
+                .expect("zero lives should fail")
+                .contains("base battle lives must be greater than zero")
+        );
+
+        let shifted_base = base_battle_arena_text().replacen(
+            "p1_base: (x: 24, y: 24)",
+            "p1_base: (x: 23, y: 24)",
+            1,
+        );
+        assert!(
+            parse_arena(&shifted_base)
+                .err()
+                .expect("shifted p1 base should fail")
+                .contains("p1 base position (23, 24) must cover a 2x2 base tile area")
+        );
     }
 
     #[test]

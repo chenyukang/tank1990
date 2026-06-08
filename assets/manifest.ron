@@ -37,6 +37,7 @@
   effects: (
     explosion: (first: 0, last: 3),
     spawn_shimmer: (first: 4, last: 7),
+    base_destruction: (first: 8, last: 11),
   ),
   powerups: (
     star: 0,

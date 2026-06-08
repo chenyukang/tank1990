@@ -20,7 +20,7 @@ const DEFAULT_VERSUS_ARENA: usize = 1;
 const TANK_ATLAS_TILES: usize = 48;
 const TANK_ANIMATION_FRAMES: usize = 2;
 const TERRAIN_ATLAS_TILES: usize = 5;
-const EFFECT_ATLAS_TILES: usize = 8;
+const EFFECT_ATLAS_TILES: usize = 12;
 const POWERUP_ATLAS_TILES: usize = 6;
 
 const VIRTUAL_WIDTH: f32 = 256.0;
@@ -179,6 +179,10 @@ impl AssetManifest {
     fn spawn_shimmer_frames(&self) -> SpriteFrameRange {
         self.effects.spawn_shimmer
     }
+
+    fn base_destruction_frames(&self) -> SpriteFrameRange {
+        self.effects.base_destruction
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -241,6 +245,7 @@ struct TerrainSpriteManifest {
 struct EffectSpriteManifest {
     explosion: SpriteFrameRange,
     spawn_shimmer: SpriteFrameRange,
+    base_destruction: SpriteFrameRange,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
@@ -1483,6 +1488,10 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
     for (name, frames) in [
         ("effects.explosion", manifest.effects.explosion),
         ("effects.spawn_shimmer", manifest.effects.spawn_shimmer),
+        (
+            "effects.base_destruction",
+            manifest.effects.base_destruction,
+        ),
     ] {
         validate_frame_range(name, frames, EFFECT_ATLAS_TILES)?;
     }
@@ -2129,6 +2138,27 @@ fn base_center_from_grid(tile_grid: &TileGrid) -> Option<Vec2> {
     Some(Vec2::new(
         (min_x + max_x + 1) as f32 * TILE_SIZE / 2.0,
         (min_y + max_y + 1) as f32 * TILE_SIZE / 2.0,
+    ))
+}
+
+fn base_top_left_from_grid(tile_grid: &TileGrid) -> Option<Vec2> {
+    let mut min_x = BOARD_TILES;
+    let mut min_y = BOARD_TILES;
+    let mut found_base = false;
+
+    for y in 0..BOARD_TILES {
+        for x in 0..BOARD_TILES {
+            if tile_grid.tiles[y * BOARD_TILES + x] == TileKind::Base {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                found_base = true;
+            }
+        }
+    }
+
+    found_base.then_some(Vec2::new(
+        min_x as f32 * TILE_SIZE,
+        min_y as f32 * TILE_SIZE,
     ))
 }
 
@@ -2830,11 +2860,11 @@ fn move_bullets(
                 && game_status.is_playing()
             {
                 game_status.phase = GamePhase::GameOver;
-                spawn_explosion(
-                    &mut commands,
-                    &assets,
-                    Vec2::new(tile_x as f32 * TILE_SIZE, tile_y as f32 * TILE_SIZE),
-                );
+                let base_top_left = base_top_left_from_grid(&grid).unwrap_or(Vec2::new(
+                    tile_x as f32 * TILE_SIZE,
+                    tile_y as f32 * TILE_SIZE,
+                ));
+                spawn_base_destruction_effect(&mut commands, &assets, base_top_left);
                 play_sound(&mut commands, &sounds, SoundKind::BaseDestroyed);
                 for mut sprite in &mut base_sprites {
                     sprite.image = assets.base_destroyed.clone();
@@ -3645,6 +3675,33 @@ fn spawn_spawn_effect(commands: &mut Commands, assets: &SpriteAssets, top_left: 
             first: frames.first,
             last: frames.last,
             timer: Timer::from_seconds(0.08, TimerMode::Repeating),
+            despawn_on_finish: true,
+        },
+        GameEntity,
+    ));
+}
+
+fn spawn_base_destruction_effect(commands: &mut Commands, assets: &SpriteAssets, top_left: Vec2) {
+    let frames = assets.manifest.base_destruction_frames();
+    commands.spawn((
+        Sprite::from_atlas_image(
+            assets.effect_image.clone(),
+            TextureAtlas {
+                layout: assets.effect_layout.clone(),
+                index: frames.first,
+            },
+        ),
+        Transform::from_translation(board_object_center(
+            top_left.x,
+            top_left.y,
+            Vec2::splat(TANK_SIZE),
+            8.0,
+        ))
+        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        SpriteAnimation {
+            first: frames.first,
+            last: frames.last,
+            timer: Timer::from_seconds(0.09, TimerMode::Repeating),
             despawn_on_finish: true,
         },
         GameEntity,
@@ -4552,14 +4609,18 @@ fn create_bullet_atlas() -> Image {
 }
 
 fn create_effect_atlas() -> Image {
-    let mut pixels = vec![0; 16 * 8 * 16 * 4];
+    let width = 16 * EFFECT_ATLAS_TILES;
+    let mut pixels = vec![0; width * 16 * 4];
     for frame in 0..4 {
-        draw_explosion_frame(&mut pixels, 128, frame * 16, frame);
+        draw_explosion_frame(&mut pixels, width, frame * 16, frame);
     }
     for frame in 0..4 {
-        draw_spawn_frame(&mut pixels, 128, 64 + frame * 16, frame);
+        draw_spawn_frame(&mut pixels, width, 64 + frame * 16, frame);
     }
-    image_from_pixels(128, 16, pixels)
+    for frame in 0..4 {
+        draw_base_destruction_frame(&mut pixels, width, 128 + frame * 16, frame);
+    }
+    image_from_pixels(width, 16, pixels)
 }
 
 fn draw_explosion_frame(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
@@ -4621,6 +4682,33 @@ fn draw_spawn_frame(pixels: &mut [u8], width: usize, x_offset: usize, frame: usi
         16 - inset * 2,
         color,
     );
+}
+
+fn draw_base_destruction_frame(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
+    match frame {
+        0 => {
+            fill_rect(pixels, width, x_offset + 4, 5, 8, 7, [224, 160, 72, 255]);
+            fill_rect(pixels, width, x_offset + 6, 3, 4, 6, [248, 232, 128, 255]);
+            fill_rect(pixels, width, x_offset + 3, 12, 10, 2, [80, 56, 40, 255]);
+        }
+        1 => {
+            fill_rect(pixels, width, x_offset + 2, 6, 12, 6, [232, 96, 40, 255]);
+            fill_rect(pixels, width, x_offset + 5, 2, 6, 9, [248, 200, 72, 255]);
+            fill_rect(pixels, width, x_offset + 1, 12, 14, 3, [72, 56, 48, 255]);
+        }
+        2 => {
+            fill_rect(pixels, width, x_offset + 3, 4, 10, 8, [104, 88, 80, 220]);
+            fill_rect(pixels, width, x_offset + 5, 7, 7, 5, [184, 72, 40, 240]);
+            fill_rect(pixels, width, x_offset + 2, 12, 12, 3, [48, 40, 32, 255]);
+        }
+        _ => {
+            fill_rect(pixels, width, x_offset + 2, 11, 12, 4, [48, 40, 32, 255]);
+            fill_rect(pixels, width, x_offset + 4, 8, 4, 4, [104, 80, 56, 230]);
+            fill_rect(pixels, width, x_offset + 9, 7, 3, 5, [88, 72, 64, 210]);
+            set_pixel(pixels, width, x_offset + 7, 5, [184, 72, 40, 180]);
+            set_pixel(pixels, width, x_offset + 10, 4, [104, 88, 80, 160]);
+        }
+    }
 }
 
 fn create_powerup_atlas() -> Image {
@@ -4974,6 +5062,10 @@ mod tests {
             manifest.spawn_shimmer_frames(),
             SpriteFrameRange { first: 4, last: 7 }
         );
+        assert_eq!(
+            manifest.base_destruction_frames(),
+            SpriteFrameRange { first: 8, last: 11 }
+        );
 
         assert_eq!(manifest.powerup_index(PowerUpKind::Star), 0);
         assert_eq!(manifest.powerup_index(PowerUpKind::Helmet), 1);
@@ -5016,8 +5108,8 @@ mod tests {
         );
 
         let invalid = MANIFEST.replacen(
-            "spawn_shimmer: (first: 4, last: 7)",
-            "spawn_shimmer: (first: 4, last: 8)",
+            "base_destruction: (first: 8, last: 11)",
+            "base_destruction: (first: 8, last: 12)",
             1,
         );
         assert!(
@@ -5536,6 +5628,13 @@ mod tests {
         let level = parse_level(LEVEL_1).expect("level should parse");
         let grid = TileGrid::from_level(&level).expect("grid should build");
         assert_eq!(base_center_from_grid(&grid), Some(Vec2::new(104.0, 200.0)));
+    }
+
+    #[test]
+    fn base_top_left_tracks_whole_campaign_base() {
+        let level = parse_level(LEVEL_1).expect("level should parse");
+        let grid = TileGrid::from_level(&level).expect("grid should build");
+        assert_eq!(base_top_left_from_grid(&grid), Some(Vec2::new(96.0, 192.0)));
     }
 
     #[test]

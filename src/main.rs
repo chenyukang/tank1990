@@ -45,6 +45,7 @@ const ENEMY_BULLET_LIMIT_PER_TANK: usize = 1;
 const ENEMY_MARKER_COUNT: usize = 20;
 const ENEMY_MARKER_COLUMNS: usize = 4;
 const ENEMY_MARKER_SIZE: f32 = 8.0;
+const SCORE_ICON_SIZE: f32 = 8.0;
 const PLAYER_LIFE_ICON_SIZE: f32 = 8.0;
 const STAGE_ICON_SIZE: f32 = 8.0;
 const ENEMY_MARKER_LEFT: f32 = 216.0;
@@ -177,6 +178,7 @@ struct SpriteAssets {
     glyph_layout: Handle<TextureAtlasLayout>,
     base_intact: Handle<Image>,
     base_destroyed: Handle<Image>,
+    score_badge_icon: Handle<Image>,
     stage_flag_icon: Handle<Image>,
 }
 
@@ -2111,6 +2113,7 @@ fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets, mode: Game
 fn spawn_campaign_status_panel(commands: &mut Commands, assets: &SpriteAssets) {
     spawn_pixel_text(commands, assets, "P1", Vec2::new(214.0, 26.0), 0.3);
     spawn_pixel_text(commands, assets, "SCORE", Vec2::new(214.0, 38.0), 0.3);
+    spawn_score_badge_icon(commands, assets);
     spawn_status_digits(
         commands,
         assets,
@@ -2196,6 +2199,19 @@ fn spawn_stage_flag_icon(commands: &mut Commands, assets: &SpriteAssets) {
         Transform::from_translation(virtual_center_scaled(
             stage_flag_icon_top_left(),
             Vec2::splat(STAGE_ICON_SIZE),
+            0.3,
+        ))
+        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        GameEntity,
+    ));
+}
+
+fn spawn_score_badge_icon(commands: &mut Commands, assets: &SpriteAssets) {
+    commands.spawn((
+        Sprite::from_image(assets.score_badge_icon.clone()),
+        Transform::from_translation(virtual_center_scaled(
+            score_badge_icon_top_left(),
+            Vec2::splat(SCORE_ICON_SIZE),
             0.3,
         ))
         .with_scale(Vec3::splat(WINDOW_SCALE)),
@@ -4279,6 +4295,10 @@ fn player_life_icon_tank_index(manifest: &AssetManifest) -> usize {
     animated_tank_sprite_index(manifest, TankSpriteSet::Player1, Direction::Up, 0)
 }
 
+fn score_badge_icon_top_left() -> Vec2 {
+    Vec2::new(244.0, 38.0)
+}
+
 fn stage_flag_icon_top_left() -> Vec2 {
     Vec2::new(216.0, 87.0)
 }
@@ -5494,6 +5514,7 @@ fn create_sprite_assets(
 
     let base_intact = images.add(create_base_image(false));
     let base_destroyed = images.add(create_base_image(true));
+    let score_badge_icon = images.add(create_score_badge_icon());
     let stage_flag_icon = images.add(create_stage_flag_icon());
 
     SpriteAssets {
@@ -5512,6 +5533,7 @@ fn create_sprite_assets(
         glyph_layout,
         base_intact,
         base_destroyed,
+        score_badge_icon,
         stage_flag_icon,
     }
 }
@@ -6282,6 +6304,19 @@ fn create_base_image(destroyed: bool) -> Image {
         fill_rect(&mut pixels, 16, 3, 13, 10, 1, [72, 56, 32, 255]);
     }
     image_from_pixels(16, 16, pixels)
+}
+
+fn create_score_badge_icon() -> Image {
+    let mut pixels = vec![0; 8 * 8 * 4];
+    fill_rect(&mut pixels, 8, 2, 1, 4, 1, [248, 232, 128, 255]);
+    fill_rect(&mut pixels, 8, 1, 2, 6, 4, [216, 160, 56, 255]);
+    fill_rect(&mut pixels, 8, 2, 6, 4, 1, [136, 88, 40, 255]);
+    fill_rect(&mut pixels, 8, 3, 3, 2, 2, [255, 248, 184, 255]);
+    set_pixel(&mut pixels, 8, 1, 2, [248, 216, 96, 255]);
+    set_pixel(&mut pixels, 8, 6, 2, [248, 216, 96, 255]);
+    set_pixel(&mut pixels, 8, 1, 5, [136, 88, 40, 255]);
+    set_pixel(&mut pixels, 8, 6, 5, [136, 88, 40, 255]);
+    image_from_pixels(8, 8, pixels)
 }
 
 fn create_stage_flag_icon() -> Image {
@@ -7311,6 +7346,26 @@ mod tests {
             player_life_icon_tank_index(&manifest),
             manifest.tank_index(TankSpriteSet::Player1, Direction::Up, 0)
         );
+    }
+
+    #[test]
+    fn campaign_score_icon_fits_next_to_score_label() {
+        let icon = score_badge_icon_top_left();
+        let score_label_right = 214.0 + phase_text_width("SCORE");
+        assert_eq!(icon, Vec2::new(244.0, 38.0));
+        assert!(icon.x > score_label_right);
+        assert!(icon.x + SCORE_ICON_SIZE <= VIRTUAL_WIDTH - 4.0);
+        assert!(icon.y + SCORE_ICON_SIZE < 49.0);
+    }
+
+    #[test]
+    fn score_badge_icon_uses_transparent_pixel_art() {
+        let image = create_score_badge_icon();
+        assert_eq!(image.texture_descriptor.size.width, 8);
+        assert_eq!(image.texture_descriptor.size.height, 8);
+        let pixels = image.data.as_ref().expect("score icon should have pixels");
+        assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] == 0));
+        assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] == 255));
     }
 
     #[test]

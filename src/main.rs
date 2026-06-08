@@ -1643,13 +1643,8 @@ fn parse_arena(contents: &str) -> Result<ArenaDefinition, String> {
     }
     validate_tank_spawn(&grid, "p1 spawn", &arena.p1_spawn)?;
     validate_tank_spawn(&grid, "p2 spawn", &arena.p2_spawn)?;
-    for point in &arena.powerup_spawns {
-        if point.x >= BOARD_TILES || point.y >= BOARD_TILES {
-            return Err(format!(
-                "powerup spawn ({}, {}) is outside the battlefield",
-                point.x, point.y
-            ));
-        }
+    for (index, point) in arena.powerup_spawns.iter().enumerate() {
+        validate_powerup_spawn(&grid, index + 1, point)?;
     }
 
     Ok(arena)
@@ -4110,6 +4105,18 @@ fn validate_base_position(grid: &TileGrid, point: &GridPoint) -> Result<(), Stri
     Ok(())
 }
 
+fn validate_powerup_spawn(grid: &TileGrid, index: usize, point: &GridPoint) -> Result<(), String> {
+    let top_left = Vec2::new(point.x as f32 * TILE_SIZE, point.y as f32 * TILE_SIZE);
+    if grid.can_tank_occupy(top_left) {
+        Ok(())
+    } else {
+        Err(format!(
+            "power-up spawn {index} ({}, {}) must fit a 16x16 reward on passable tiles",
+            point.x, point.y
+        ))
+    }
+}
+
 fn validate_powerup_carriers(level: &LevelDefinition) -> Result<(), String> {
     let mut seen = HashSet::new();
     for carrier in &level.powerup_carriers {
@@ -5419,6 +5426,12 @@ mod tests {
                 arena.p2_spawn.x as f32 * TILE_SIZE,
                 arena.p2_spawn.y as f32 * TILE_SIZE
             )));
+            for point in &arena.powerup_spawns {
+                assert!(grid.can_tank_occupy(Vec2::new(
+                    point.x as f32 * TILE_SIZE,
+                    point.y as f32 * TILE_SIZE
+                )));
+            }
         }
     }
 
@@ -5472,6 +5485,17 @@ mod tests {
                 .err()
                 .expect("blocked p1 spawn should fail")
                 .contains("p1 spawn (4, 24) must fit a tank on passable tiles")
+        );
+    }
+
+    #[test]
+    fn arena_rejects_powerup_spawns_that_are_not_collectible() {
+        let blocked_powerup = ARENA_1.replacen("(x: 12, y: 12)", "(x: 4, y: 24)", 1);
+        assert!(
+            parse_arena(&blocked_powerup)
+                .err()
+                .expect("blocked power-up spawn should fail")
+                .contains("power-up spawn 1 (4, 24) must fit a 16x16 reward on passable tiles")
         );
     }
 
@@ -5881,7 +5905,7 @@ mod tests {
         assert!(!director.spawn_immediately);
 
         let second = director.next_spawn();
-        assert_eq!(second, Some((Vec2::new(104.0, 104.0), PowerUpKind::Helmet)));
+        assert_eq!(second, Some((Vec2::new(104.0, 96.0), PowerUpKind::Helmet)));
 
         let third = director.next_spawn();
         assert_eq!(third, Some((Vec2::new(96.0, 96.0), PowerUpKind::Clock)));

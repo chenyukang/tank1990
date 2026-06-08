@@ -44,6 +44,7 @@ const ENEMY_SPAWN_PROTECTION_SECONDS: f32 = 0.35;
 const PLAYER_RESPAWN_DELAY_SECONDS: f32 = 0.35;
 const VERSUS_POWERUP_INTERVAL_SECONDS: f32 = 8.0;
 const SOUND_SAMPLE_RATE: u32 = 22_050;
+const ICE_SPEED_MULTIPLIER: f32 = 1.18;
 
 fn main() {
     App::new()
@@ -615,6 +616,23 @@ impl TileGrid {
         }
 
         true
+    }
+
+    fn tank_overlaps_tile(&self, top_left: Vec2, tile: TileKind) -> bool {
+        let left = (top_left.x / TILE_SIZE).floor() as i32;
+        let right = ((top_left.x + TANK_SIZE - 0.1) / TILE_SIZE).floor() as i32;
+        let top = (top_left.y / TILE_SIZE).floor() as i32;
+        let bottom = ((top_left.y + TANK_SIZE - 0.1) / TILE_SIZE).floor() as i32;
+
+        for y in top..=bottom {
+            for x in left..=right {
+                if self.get(x, y) == Some(tile) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 
@@ -1952,7 +1970,9 @@ fn move_player_tank(
 
         let mut next = tank.top_left;
         snap_to_lane(&mut next, direction);
-        next += direction.movement() * tank.speed * time.delta_secs();
+        next += direction.movement()
+            * tank_move_speed(tank.speed, &grid, tank.top_left)
+            * time.delta_secs();
         next = round_vec2(next);
 
         let mut moved = false;
@@ -2105,7 +2125,9 @@ fn move_enemy_tanks(
 
         let mut next = tank.top_left;
         snap_to_lane(&mut next, tank.facing);
-        next += tank.facing.movement() * tank.speed * time.delta_secs();
+        next += tank.facing.movement()
+            * tank_move_speed(tank.speed, &grid, tank.top_left)
+            * time.delta_secs();
         next = round_vec2(next);
 
         let mut moved = false;
@@ -3505,6 +3527,14 @@ fn next_direction(direction: Direction) -> Direction {
     }
 }
 
+fn tank_move_speed(base_speed: f32, grid: &TileGrid, top_left: Vec2) -> f32 {
+    if grid.tank_overlaps_tile(top_left, TileKind::Ice) {
+        base_speed * ICE_SPEED_MULTIPLIER
+    } else {
+        base_speed
+    }
+}
+
 fn enemy_speed(kind: EnemyKind) -> f32 {
     match kind {
         EnemyKind::Fast => 72.0,
@@ -4668,6 +4698,32 @@ mod tests {
         assert!(!TileKind::Water.tank_passable());
         assert!(TileKind::Forest.tank_passable());
         assert!(grid.can_tank_occupy(Vec2::new(8.0 * TILE_SIZE, 24.0 * TILE_SIZE)));
+    }
+
+    #[test]
+    fn ice_tiles_modify_tank_movement_speed() {
+        let mut grid = TileGrid::empty();
+        for y in 4..=5 {
+            for x in 4..=5 {
+                grid.set(x, y, TileKind::Ice);
+            }
+        }
+
+        assert_eq!(
+            tank_move_speed(PLAYER_SPEED, &grid, Vec2::new(0.0, 0.0)),
+            PLAYER_SPEED
+        );
+        assert_eq!(
+            tank_move_speed(
+                PLAYER_SPEED,
+                &grid,
+                Vec2::new(4.0 * TILE_SIZE, 4.0 * TILE_SIZE)
+            ),
+            PLAYER_SPEED * ICE_SPEED_MULTIPLIER
+        );
+        assert!(
+            grid.tank_overlaps_tile(Vec2::new(3.0 * TILE_SIZE, 4.0 * TILE_SIZE), TileKind::Ice)
+        );
     }
 
     #[test]

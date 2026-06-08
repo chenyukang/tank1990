@@ -251,7 +251,7 @@ Tiles:
 - `Steel`: blocks tanks and bullets; indestructible by default.
 - `Water`: blocks tanks; bullets pass through.
 - `Forest`: tanks and bullets pass through; visually hides tanks underneath.
-- `Ice`: passable; modifies tank handling in later milestones.
+- `Ice`: passable; lightly modifies tank handling with a low-friction speed boost.
 - `Base`: blocks tanks; destroyed by bullet impact.
 
 ### 7.5 Destructible Bricks

@@ -48,6 +48,7 @@ static LEVEL_CLEAR_BANNER_LINES: [&str; 1] = ["LEVEL CLEAR"];
 static P1_WIN_BANNER_LINES: [&str; 2] = ["P1 WIN", "PRESS R OR M"];
 static P2_WIN_BANNER_LINES: [&str; 2] = ["P2 WIN", "PRESS R OR M"];
 static VICTORY_BANNER_LINES: [&str; 3] = ["VICTORY", "ALL STAGES CLEAR", "PRESS R OR M"];
+static MODE_SELECT_HINT_LINES: [&str; 3] = ["WS SELECT", "AD ARENA", "SPACE START"];
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
@@ -1693,7 +1694,21 @@ fn spawn_mode_select_screen(
     );
     spawn_pixel_text(commands, assets, "ARENA", Vec2::new(77.0, 145.0), 0.3);
     spawn_mode_select_arena_digits(commands, assets, arena, Vec2::new(113.0, 145.0), 0.3);
+    spawn_mode_select_hints(commands, assets);
     spawn_mode_select_cursor(commands, assets, selected);
+}
+
+fn spawn_mode_select_hints(commands: &mut Commands, assets: &SpriteAssets) {
+    for (index, line) in MODE_SELECT_HINT_LINES.iter().enumerate() {
+        let text_width = phase_text_width(line);
+        spawn_pixel_text(
+            commands,
+            assets,
+            line,
+            Vec2::new((208.0 - text_width) / 2.0, 169.0 + index as f32 * 12.0),
+            0.3,
+        );
+    }
 }
 
 fn spawn_mode_select_arena_digits(
@@ -6101,6 +6116,22 @@ mod tests {
         let battle = mode_select_cursor_translation(GameMode::VersusDeathmatch);
         assert_eq!(campaign.x, battle.x);
         assert!(campaign.y > battle.y);
+    }
+
+    #[test]
+    fn mode_select_hints_fit_and_use_available_pixel_glyphs() {
+        for line in MODE_SELECT_HINT_LINES {
+            assert!(
+                phase_text_width(line) <= 208.0,
+                "mode select hint should fit in the playfield"
+            );
+            for ch in line.chars().filter(|ch| *ch != ' ') {
+                assert!(
+                    glyph_pattern(ch).iter().any(|row| row.contains('#')),
+                    "glyph {ch} should render"
+                );
+            }
+        }
     }
 
     #[test]

@@ -1174,6 +1174,11 @@ struct ModeSelectArenaGlyph {
 }
 
 #[derive(Component)]
+struct ModeSelectBattleKindGlyph {
+    digit: usize,
+}
+
+#[derive(Component)]
 struct SpriteAnimation {
     first: usize,
     last: usize,
@@ -1243,6 +1248,7 @@ fn handle_shared_controls(
         Query<Entity, With<GameEntity>>,
         Query<&mut Transform, With<ModeSelectCursor>>,
         Query<(&ModeSelectArenaGlyph, &mut Sprite)>,
+        Query<(&ModeSelectBattleKindGlyph, &mut Sprite)>,
     )>,
 ) {
     if game_status.phase == GamePhase::ModeSelect {
@@ -1260,6 +1266,7 @@ fn handle_shared_controls(
         {
             mode_select.arena = previous_arena(mode_select.arena);
             update_mode_select_arena_digits(&mut menu_queries.p2(), mode_select.arena);
+            update_mode_select_battle_kind(&mut menu_queries.p3(), mode_select.arena);
         }
 
         if mode_select.selected.is_versus()
@@ -1267,6 +1274,7 @@ fn handle_shared_controls(
         {
             mode_select.arena = next_arena(mode_select.arena);
             update_mode_select_arena_digits(&mut menu_queries.p2(), mode_select.arena);
+            update_mode_select_battle_kind(&mut menu_queries.p3(), mode_select.arena);
         }
 
         if keys.just_pressed(KeyCode::Space)
@@ -1540,6 +1548,19 @@ fn load_arena(path: &str) -> Result<ArenaDefinition, String> {
     parse_arena(&contents).map_err(|err| format!("failed to load arena {path}: {err}"))
 }
 
+fn battle_kind_label(rules: BattleRules) -> &'static str {
+    match rules {
+        BattleRules::Deathmatch { .. } => "DUEL",
+        BattleRules::BaseBattle { .. } => "BASE",
+    }
+}
+
+fn battle_kind_label_for_arena(arena: usize) -> &'static str {
+    load_arena_definition(arena)
+        .map(|arena| battle_kind_label(arena.battle_rules))
+        .unwrap_or("DUEL")
+}
+
 fn load_asset_manifest(path: &str) -> Result<AssetManifest, String> {
     let contents =
         fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
@@ -1781,6 +1802,7 @@ fn spawn_mode_select_screen(
     );
     spawn_pixel_text(commands, assets, "ARENA", Vec2::new(77.0, 145.0), 0.3);
     spawn_mode_select_arena_digits(commands, assets, arena, Vec2::new(113.0, 145.0), 0.3);
+    spawn_mode_select_battle_kind(commands, assets, arena, Vec2::new(133.0, 145.0), 0.3);
     spawn_mode_select_hints(commands, assets);
     spawn_mode_select_cursor(commands, assets, selected);
 }
@@ -1823,6 +1845,36 @@ fn spawn_mode_select_arena_digits(
             ))
             .with_scale(Vec3::splat(WINDOW_SCALE)),
             ModeSelectArenaGlyph { digit },
+            GameEntity,
+        ));
+    }
+}
+
+fn spawn_mode_select_battle_kind(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    arena: usize,
+    top_left: Vec2,
+    z: f32,
+) {
+    let text = battle_kind_label_for_arena(arena);
+    for digit in 0..4 {
+        let ch = text.chars().nth(digit).unwrap_or(' ');
+        commands.spawn((
+            Sprite::from_atlas_image(
+                assets.glyph_image.clone(),
+                TextureAtlas {
+                    layout: assets.glyph_layout.clone(),
+                    index: glyph_index(ch),
+                },
+            ),
+            Transform::from_translation(virtual_center_scaled(
+                Vec2::new(top_left.x + digit as f32 * 6.0, top_left.y),
+                Vec2::new(5.0, 7.0),
+                z,
+            ))
+            .with_scale(Vec3::splat(WINDOW_SCALE)),
+            ModeSelectBattleKindGlyph { digit },
             GameEntity,
         ));
     }
@@ -3871,8 +3923,20 @@ fn level_clear_banner_text(stage: usize, lives: i32) -> Vec<String> {
     ]
 }
 
-fn arena_intro_banner_text(arena: usize) -> Vec<String> {
-    vec![format!("ARENA {:02}", arena.min(99)), "READY".to_string()]
+fn arena_intro_banner_text(arena: usize, mode: GameMode) -> Vec<String> {
+    vec![
+        format!("ARENA {:02}", arena.min(99)),
+        arena_intro_kind_label(mode).to_string(),
+        "READY".to_string(),
+    ]
+}
+
+fn arena_intro_kind_label(mode: GameMode) -> &'static str {
+    match mode {
+        GameMode::VersusDeathmatch => "DUEL",
+        GameMode::VersusBaseBattle => "BASE BATTLE",
+        GameMode::Campaign => "READY",
+    }
 }
 
 fn phase_banner_text(
@@ -3884,7 +3948,7 @@ fn phase_banner_text(
         return Some(match mode {
             GameMode::Campaign => stage_intro_banner_text(status.stage),
             GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
-                arena_intro_banner_text(status.arena)
+                arena_intro_banner_text(status.arena, mode)
             }
         });
     }
@@ -3989,6 +4053,19 @@ fn update_mode_select_arena_digits(
         if let Some(ch) = text.chars().nth(glyph.digit)
             && let Some(atlas) = &mut sprite.texture_atlas
         {
+            atlas.index = glyph_index(ch);
+        }
+    }
+}
+
+fn update_mode_select_battle_kind(
+    glyphs: &mut Query<(&ModeSelectBattleKindGlyph, &mut Sprite)>,
+    arena: usize,
+) {
+    let text = battle_kind_label_for_arena(arena);
+    for (glyph, mut sprite) in glyphs {
+        let ch = text.chars().nth(glyph.digit).unwrap_or(' ');
+        if let Some(atlas) = &mut sprite.texture_atlas {
             atlas.index = glyph_index(ch);
         }
     }
@@ -6748,11 +6825,33 @@ mod tests {
                 &ScoreBoard::versus(3, 5, 2.0)
             )
             .expect("arena intro should show a banner"),
-            ["ARENA 04".to_string(), "READY".to_string()]
+            [
+                "ARENA 04".to_string(),
+                "DUEL".to_string(),
+                "READY".to_string()
+            ]
         );
         assert_eq!(
-            arena_intro_banner_text(135),
-            ["ARENA 99".to_string(), "READY".to_string()]
+            arena_intro_banner_text(135, GameMode::VersusBaseBattle),
+            [
+                "ARENA 99".to_string(),
+                "BASE BATTLE".to_string(),
+                "READY".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn arena_labels_distinguish_deathmatch_and_base_battle() {
+        let duel = parse_arena(ARENA_1).expect("arena should parse");
+        let base = parse_arena(ARENA_5).expect("arena should parse");
+
+        assert_eq!(battle_kind_label(duel.battle_rules), "DUEL");
+        assert_eq!(battle_kind_label(base.battle_rules), "BASE");
+        assert_eq!(arena_intro_kind_label(GameMode::VersusDeathmatch), "DUEL");
+        assert_eq!(
+            arena_intro_kind_label(GameMode::VersusBaseBattle),
+            "BASE BATTLE"
         );
     }
 

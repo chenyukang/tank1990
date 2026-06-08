@@ -41,6 +41,7 @@ const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
 const ENEMY_ALIGNMENT_FIRE_FRACTION: f32 = 0.45;
 const ENEMY_SPAWN_PROTECTION_SECONDS: f32 = 0.35;
+const PLAYER_RESPAWN_DELAY_SECONDS: f32 = 0.35;
 const SOUND_SAMPLE_RATE: u32 = 22_050;
 
 fn main() {
@@ -88,6 +89,7 @@ fn main() {
                 tick_powerup_effects,
                 animate_sprites,
                 tick_spawn_protections,
+                tick_player_respawns,
                 tick_shields,
                 update_enemy_visual_feedback,
                 check_game_phase,
@@ -671,6 +673,24 @@ impl SpawnProtection {
     fn enemy() -> Self {
         Self {
             timer: Timer::from_seconds(ENEMY_SPAWN_PROTECTION_SECONDS, TimerMode::Once),
+        }
+    }
+
+    fn tick(&mut self, delta: Duration) -> bool {
+        self.timer.tick(delta);
+        self.timer.is_finished()
+    }
+}
+
+#[derive(Component)]
+struct PlayerRespawnDelay {
+    timer: Timer,
+}
+
+impl PlayerRespawnDelay {
+    fn new() -> Self {
+        Self {
+            timer: Timer::from_seconds(PLAYER_RESPAWN_DELAY_SECONDS, TimerMode::Once),
         }
     }
 
@@ -1614,7 +1634,7 @@ fn move_player_tank(
                 &mut TankSpriteState,
                 &Player,
             ),
-            With<Player>,
+            (With<Player>, Without<PlayerRespawnDelay>),
         >,
     )>,
 ) {
@@ -1922,7 +1942,7 @@ fn fire_player_bullet(
     sounds: Res<SoundAssets>,
     game_status: Res<GameStatus>,
     stage_rules: Res<StageRules>,
-    players: Query<(&Tank, &PlayerUpgrade, &Player), With<Player>>,
+    players: Query<(&Tank, &PlayerUpgrade, &Player), (With<Player>, Without<PlayerRespawnDelay>)>,
     bullets: Query<&Bullet>,
 ) {
     if !game_status.is_playing() {
@@ -2101,6 +2121,7 @@ fn move_bullets(
                     play_sound(&mut commands, &sounds, SoundKind::TankExplosion);
                     resolve_player_destroyed(
                         &mut commands,
+                        &assets,
                         &sounds,
                         &mut game_status,
                         &mut score_board,
@@ -2156,6 +2177,7 @@ fn move_bullets(
                 play_sound(&mut commands, &sounds, SoundKind::TankExplosion);
                 resolve_player_destroyed(
                     &mut commands,
+                    &assets,
                     &sounds,
                     &mut game_status,
                     &mut score_board,
@@ -2235,6 +2257,7 @@ fn move_bullets(
 
 fn resolve_player_destroyed(
     commands: &mut Commands,
+    assets: &SpriteAssets,
     sounds: &SoundAssets,
     game_status: &mut GameStatus,
     score_board: &mut ScoreBoard,
@@ -2290,6 +2313,10 @@ fn resolve_player_destroyed(
     commands.entity(player_entity).insert(Shield {
         timer: Timer::from_seconds(score_board.respawn_invulnerability_secs, TimerMode::Once),
     });
+    commands
+        .entity(player_entity)
+        .insert(PlayerRespawnDelay::new());
+    spawn_spawn_effect(commands, assets, respawn.top_left);
 }
 
 fn deathmatch_winner_after_hit(
@@ -2541,10 +2568,30 @@ fn tick_spawn_protections(
     }
 }
 
+fn tick_player_respawns(
+    mut commands: Commands,
+    time: Res<Time>,
+    game_status: Res<GameStatus>,
+    mut respawning_players: Query<(Entity, &mut PlayerRespawnDelay)>,
+) {
+    if !game_status.is_playing() {
+        return;
+    }
+
+    for (entity, mut respawn_delay) in &mut respawning_players {
+        if respawn_delay.tick(time.delta()) {
+            commands.entity(entity).remove::<PlayerRespawnDelay>();
+        }
+    }
+}
+
 fn tick_shields(
     mut commands: Commands,
     time: Res<Time>,
-    mut shielded: Query<(Entity, &mut Shield, &mut Sprite), With<Player>>,
+    mut shielded: Query<
+        (Entity, &mut Shield, &mut Sprite),
+        (With<Player>, Without<PlayerRespawnDelay>),
+    >,
 ) {
     for (entity, mut shield, mut sprite) in &mut shielded {
         shield.timer.tick(time.delta());
@@ -4292,6 +4339,13 @@ mod tests {
             ENEMY_SPAWN_PROTECTION_SECONDS - 0.01
         )));
         assert!(protection.tick(Duration::from_secs_f32(0.02)));
+    }
+
+    #[test]
+    fn player_respawn_delay_expires_after_spawn_shimmer() {
+        let mut delay = PlayerRespawnDelay::new();
+        assert!(!delay.tick(Duration::from_secs_f32(PLAYER_RESPAWN_DELAY_SECONDS - 0.01)));
+        assert!(delay.tick(Duration::from_secs_f32(0.02)));
     }
 
     #[test]

@@ -1107,6 +1107,24 @@ impl PlayerRespawnDelay {
 }
 
 #[derive(Component)]
+struct PlayerRespawnPending {
+    timer: Timer,
+}
+
+impl PlayerRespawnPending {
+    fn for_explosion(frames: SpriteFrameRange) -> Self {
+        Self {
+            timer: Timer::from_seconds(explosion_duration_secs(frames), TimerMode::Once),
+        }
+    }
+
+    fn tick(&mut self, delta: Duration) -> bool {
+        self.timer.tick(delta);
+        self.timer.is_finished()
+    }
+}
+
+#[derive(Component)]
 struct Tank {
     top_left: Vec2,
     facing: Direction,
@@ -3356,7 +3374,7 @@ fn resolve_player_destroyed(
     player_entity: Entity,
     tank: &mut Tank,
     transform: &mut Transform,
-    respawn: &RespawnPoint,
+    _respawn: &RespawnPoint,
     lives: &mut PlayerLives,
     health: &mut Health,
     upgrade: &mut PlayerUpgrade,
@@ -3409,21 +3427,21 @@ fn resolve_player_destroyed(
     }
 
     reset_player_upgrade(upgrade, sprite);
-    tank.top_left = respawn.top_left;
-    tank.facing = respawn.facing;
+    let parked_top_left = Vec2::new(-TANK_SIZE * 4.0, -TANK_SIZE * 4.0);
+    tank.top_left = parked_top_left;
     transform.translation = board_object_center(
-        respawn.top_left.x,
-        respawn.top_left.y,
+        parked_top_left.x,
+        parked_top_left.y,
         Vec2::splat(TANK_SIZE),
         6.0,
     );
-    commands.entity(player_entity).insert(Shield {
-        timer: Timer::from_seconds(score_board.respawn_invulnerability_secs, TimerMode::Once),
-    });
     commands
         .entity(player_entity)
-        .insert(PlayerRespawnDelay::new());
-    spawn_spawn_effect(commands, assets, respawn.top_left);
+        .remove::<(Tank, Health, Shield)>()
+        .insert((
+            PlayerRespawnPending::for_explosion(assets.manifest.explosion_frames()),
+            Visibility::Hidden,
+        ));
 }
 
 fn reset_player_upgrade(upgrade: &mut PlayerUpgrade, sprite: &mut Sprite) {
@@ -3804,11 +3822,69 @@ fn tick_spawn_protections(
 fn tick_player_respawns(
     mut commands: Commands,
     time: Res<Time>,
+    assets: Res<SpriteAssets>,
     game_status: Res<GameStatus>,
+    score_board: Res<ScoreBoard>,
+    mut pending_players: Query<(
+        Entity,
+        &mut PlayerRespawnPending,
+        &RespawnPoint,
+        &PlayerUpgrade,
+        &mut Transform,
+        &mut Sprite,
+        &mut TankSpriteState,
+    )>,
     mut respawning_players: Query<(Entity, &mut PlayerRespawnDelay)>,
 ) {
     if !game_status.is_playing() {
         return;
+    }
+
+    for (
+        entity,
+        mut pending_respawn,
+        respawn,
+        upgrade,
+        mut transform,
+        mut sprite,
+        mut tank_sprite,
+    ) in &mut pending_players
+    {
+        if !pending_respawn.tick(time.delta()) {
+            continue;
+        }
+
+        tank_sprite.frame = 0;
+        tank_sprite.timer.reset();
+        sprite.color = player_upgrade_visual_color(upgrade.level);
+        set_tank_sprite_direction(&mut sprite, &tank_sprite, respawn.facing, &assets.manifest);
+        transform.translation = board_object_center(
+            respawn.top_left.x,
+            respawn.top_left.y,
+            Vec2::splat(TANK_SIZE),
+            6.0,
+        );
+
+        commands
+            .entity(entity)
+            .remove::<PlayerRespawnPending>()
+            .insert((
+                Tank {
+                    top_left: respawn.top_left,
+                    facing: respawn.facing,
+                    speed: PLAYER_SPEED,
+                },
+                Health { current: 1 },
+                Shield {
+                    timer: Timer::from_seconds(
+                        score_board.respawn_invulnerability_secs,
+                        TimerMode::Once,
+                    ),
+                },
+                PlayerRespawnDelay::new(),
+                Visibility::Visible,
+            ));
+        spawn_spawn_effect(&mut commands, &assets, respawn.top_left);
     }
 
     for (entity, mut respawn_delay) in &mut respawning_players {
@@ -7459,6 +7535,17 @@ mod tests {
             explosion_duration_secs(frames) - 0.01
         )));
         assert!(destroyed_tank.tick(Duration::from_secs_f32(0.02)));
+    }
+
+    #[test]
+    fn pending_player_respawn_waits_for_explosion() {
+        let frames = SpriteFrameRange { first: 0, last: 3 };
+        let mut pending_respawn = PlayerRespawnPending::for_explosion(frames);
+
+        assert!(!pending_respawn.tick(Duration::from_secs_f32(
+            explosion_duration_secs(frames) - 0.01
+        )));
+        assert!(pending_respawn.tick(Duration::from_secs_f32(0.02)));
     }
 
     #[test]

@@ -2254,6 +2254,10 @@ fn base_top_left_from_grid(tile_grid: &TileGrid) -> Option<Vec2> {
     ))
 }
 
+fn spawn_point_top_left(spawn: &SpawnPoint) -> Vec2 {
+    Vec2::new(spawn.x as f32 * TILE_SIZE, spawn.y as f32 * TILE_SIZE)
+}
+
 fn spawn_player_tank(
     commands: &mut Commands,
     assets: &SpriteAssets,
@@ -2261,7 +2265,7 @@ fn spawn_player_tank(
     player_id: PlayerId,
     player_lives: i32,
 ) {
-    let player_top_left = Vec2::new(spawn.x as f32 * TILE_SIZE, spawn.y as f32 * TILE_SIZE);
+    let player_top_left = spawn_point_top_left(spawn);
 
     commands.spawn((
         Sprite::from_atlas_image(
@@ -2301,6 +2305,7 @@ fn spawn_player_tank(
         Player { id: player_id },
         GameEntity,
     ));
+    spawn_spawn_effect(commands, assets, player_top_left);
 }
 
 fn update_player_control(keys: Res<ButtonInput<KeyCode>>, mut control: ResMut<PlayerControl>) {
@@ -6890,6 +6895,16 @@ mod tests {
         let level = parse_level(LEVEL_1).expect("level should parse");
         let grid = TileGrid::from_level(&level).expect("grid should build");
         assert_eq!(base_top_left_from_grid(&grid), Some(Vec2::new(96.0, 192.0)));
+    }
+
+    #[test]
+    fn spawn_point_top_left_uses_small_tile_coordinates() {
+        let spawn = SpawnPoint {
+            x: 8,
+            y: 24,
+            facing: Direction::Up,
+        };
+        assert_eq!(spawn_point_top_left(&spawn), Vec2::new(64.0, 192.0));
     }
 
     #[test]

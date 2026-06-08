@@ -3290,7 +3290,7 @@ fn round_vec2(value: Vec2) -> Vec2 {
 
 fn terrain_z(tile: TileKind) -> f32 {
     match tile {
-        TileKind::Forest => 5.0,
+        TileKind::Forest => 7.5,
         TileKind::Water => 1.0,
         _ => 2.0,
     }
@@ -4161,6 +4161,15 @@ mod tests {
         assert!(!TileKind::Water.tank_passable());
         assert!(TileKind::Forest.tank_passable());
         assert!(grid.can_tank_occupy(Vec2::new(8.0 * TILE_SIZE, 24.0 * TILE_SIZE)));
+    }
+
+    #[test]
+    fn forest_renders_as_overlay_above_tanks_and_bullets() {
+        assert!(TileKind::Forest.tank_passable());
+        assert!(terrain_z(TileKind::Forest) > 7.0);
+        assert!(terrain_z(TileKind::Forest) < 8.0);
+        assert!(terrain_z(TileKind::Brick) < terrain_z(TileKind::Forest));
+        assert!(terrain_z(TileKind::Water) < terrain_z(TileKind::Forest));
     }
 
     #[test]

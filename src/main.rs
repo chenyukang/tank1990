@@ -15,6 +15,7 @@ use std::time::Duration;
 const ASSET_MANIFEST_PATH: &str = "assets/manifest.ron";
 const LEVEL_COUNT: usize = 35;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
+const STAGE_INTRO_SECONDS: f32 = 1.2;
 const ARENA_COUNT: usize = 4;
 const DEFAULT_VERSUS_ARENA: usize = 1;
 const TANK_ATLAS_TILES: usize = 48;
@@ -49,6 +50,7 @@ static P1_WIN_BANNER_LINES: [&str; 2] = ["P1 WIN", "PRESS R OR M"];
 static P2_WIN_BANNER_LINES: [&str; 2] = ["P2 WIN", "PRESS R OR M"];
 static VICTORY_BANNER_LINES: [&str; 3] = ["VICTORY", "ALL STAGES CLEAR", "PRESS R OR M"];
 static MODE_SELECT_HINT_LINES: [&str; 3] = ["WS SELECT", "AD ARENA", "SPACE START"];
+static STAGE_INTRO_BANNER_LINES: [&str; 2] = ["STAGE", "READY"];
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
@@ -95,6 +97,12 @@ fn main() {
             spawn_versus_powerups
                 .after(cancel_colliding_bullets)
                 .before(pickup_powerups),
+        )
+        .add_systems(
+            FixedUpdate,
+            advance_after_stage_intro
+                .after(update_player_control)
+                .before(spawn_enemies),
         )
         .add_systems(
             FixedUpdate,
@@ -445,6 +453,7 @@ impl GameStatus {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum GamePhase {
     ModeSelect,
+    StageIntro,
     Playing,
     Paused,
     GameOver,
@@ -1395,9 +1404,9 @@ fn restart_level(
     *versus_powerups = VersusPowerUpDirector::inactive();
     enemy_freeze.reset();
     base_reinforcement.reset();
-    game_status.phase = GamePhase::Playing;
+    game_status.phase = GamePhase::StageIntro;
     game_status.winner = None;
-    game_status.transition_timer.reset();
+    game_status.transition_timer = Timer::from_seconds(STAGE_INTRO_SECONDS, TimerMode::Once);
 }
 
 fn start_versus_round(
@@ -3386,12 +3395,26 @@ fn check_game_phase(
     );
     if next_phase != GamePhase::Playing {
         game_status.phase = next_phase;
-        game_status.transition_timer.reset();
+        game_status.transition_timer =
+            Timer::from_seconds(LEVEL_CLEAR_DELAY_SECONDS, TimerMode::Once);
         match next_phase {
             GamePhase::LevelClear => play_sound(&mut commands, &sounds, SoundKind::LevelClear),
             GamePhase::GameOver => play_sound(&mut commands, &sounds, SoundKind::GameOver),
             _ => {}
         }
+    }
+}
+
+fn advance_after_stage_intro(time: Res<Time>, mut game_status: ResMut<GameStatus>) {
+    if game_status.phase != GamePhase::StageIntro {
+        return;
+    }
+
+    game_status.transition_timer.tick(time.delta());
+    if game_status.transition_timer.just_finished() {
+        game_status.phase = GamePhase::Playing;
+        game_status.transition_timer =
+            Timer::from_seconds(LEVEL_CLEAR_DELAY_SECONDS, TimerMode::Once);
     }
 }
 
@@ -3455,8 +3478,8 @@ fn advance_after_level_clear(
     enemy_freeze.reset();
     base_reinforcement.reset();
     game_status.stage = next_stage;
-    game_status.phase = GamePhase::Playing;
-    game_status.transition_timer.reset();
+    game_status.phase = GamePhase::StageIntro;
+    game_status.transition_timer = Timer::from_seconds(STAGE_INTRO_SECONDS, TimerMode::Once);
 }
 
 fn update_status_panel(
@@ -3530,6 +3553,7 @@ fn phase_banner_lines(
 ) -> Option<&'static [&'static str]> {
     match phase {
         GamePhase::ModeSelect | GamePhase::Playing => None,
+        GamePhase::StageIntro => Some(&STAGE_INTRO_BANNER_LINES),
         GamePhase::Paused => Some(&PAUSED_BANNER_LINES),
         GamePhase::GameOver => Some(&GAME_OVER_BANNER_LINES),
         GamePhase::LevelClear => Some(&LEVEL_CLEAR_BANNER_LINES),
@@ -6016,6 +6040,10 @@ mod tests {
             toggle_pause_phase(GamePhase::ModeSelect),
             GamePhase::ModeSelect
         );
+        assert_eq!(
+            toggle_pause_phase(GamePhase::StageIntro),
+            GamePhase::StageIntro
+        );
         assert_eq!(toggle_pause_phase(GamePhase::Playing), GamePhase::Paused);
         assert_eq!(toggle_pause_phase(GamePhase::Paused), GamePhase::Playing);
         assert_eq!(toggle_pause_phase(GamePhase::GameOver), GamePhase::GameOver);
@@ -6035,6 +6063,21 @@ mod tests {
         assert_eq!(
             phase_banner_lines(GamePhase::Victory, None).expect("victory should show a banner"),
             VICTORY_BANNER_LINES.as_slice()
+        );
+    }
+
+    #[test]
+    fn stage_intro_blocks_gameplay_and_shows_ready_banner() {
+        let status = GameStatus {
+            phase: GamePhase::StageIntro,
+            ..GameStatus::default()
+        };
+
+        assert!(!status.is_playing());
+        assert_eq!(
+            phase_banner_lines(GamePhase::StageIntro, None)
+                .expect("stage intro should show a banner"),
+            STAGE_INTRO_BANNER_LINES.as_slice()
         );
     }
 
@@ -6064,6 +6107,8 @@ mod tests {
     #[test]
     fn phase_banner_text_uses_available_pixel_glyphs() {
         let banners = [
+            phase_banner_lines(GamePhase::StageIntro, None)
+                .expect("stage intro should show a banner"),
             phase_banner_lines(GamePhase::Paused, None).expect("paused should show a banner"),
             phase_banner_lines(GamePhase::GameOver, None).expect("game over should show a banner"),
             phase_banner_lines(GamePhase::LevelClear, None)

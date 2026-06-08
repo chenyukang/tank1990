@@ -41,6 +41,12 @@
     Basic, Armor, Fast, Basic, Power,
     Armor, Basic, Fast, Armor, Power,
   ],
+  powerup_carriers: [
+    (enemy: 5, kind: Star),
+    (enemy: 10, kind: Shovel),
+    (enemy: 15, kind: Helmet),
+    (enemy: 20, kind: Tank),
+  ],
   spawn_interval_secs: 2.6,
   max_enemies_on_screen: 4,
 )

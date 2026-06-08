@@ -7,7 +7,7 @@ use bevy::reflect::TypePath;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::window::PresentMode;
 use serde::Deserialize;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,7 +35,6 @@ const ENEMY_BULLET_LIMIT: usize = 4;
 const ENEMY_BULLET_LIMIT_PER_TANK: usize = 1;
 const SNAP_DISTANCE: f32 = 2.0;
 const GLYPHS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-const POWERUP_DROP_INTERVAL: usize = 5;
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
@@ -420,7 +419,7 @@ impl BaseReinforcement {
 
 #[derive(Resource)]
 struct EnemyDirector {
-    roster: VecDeque<EnemyKind>,
+    roster: VecDeque<EnemyRosterEntry>,
     spawns: Vec<SpawnPoint>,
     spawn_timer: Timer,
     max_active: usize,
@@ -431,7 +430,15 @@ struct EnemyDirector {
 impl EnemyDirector {
     fn from_level(level: &LevelDefinition) -> Self {
         Self {
-            roster: level.enemies.iter().copied().collect(),
+            roster: level
+                .enemies
+                .iter()
+                .enumerate()
+                .map(|(index, kind)| EnemyRosterEntry {
+                    kind: *kind,
+                    carried_powerup: carrier_powerup_for_spawn(index + 1, &level.powerup_carriers),
+                })
+                .collect(),
             spawns: level.enemy_spawns.clone(),
             spawn_timer: Timer::from_seconds(level.spawn_interval_secs, TimerMode::Repeating),
             max_active: level.max_enemies_on_screen,
@@ -450,6 +457,12 @@ impl EnemyDirector {
             spawned_count: 0,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct EnemyRosterEntry {
+    kind: EnemyKind,
+    carried_powerup: Option<PowerUpKind>,
 }
 
 #[derive(Resource)]
@@ -656,6 +669,7 @@ struct LevelDefinition {
     base_position: GridPoint,
     enemy_spawns: Vec<SpawnPoint>,
     enemies: Vec<EnemyKind>,
+    powerup_carriers: Vec<PowerUpCarrier>,
     spawn_interval_secs: f32,
     max_enemies_on_screen: usize,
     #[serde(default)]
@@ -692,6 +706,12 @@ struct SpawnPoint {
 struct GridPoint {
     x: usize,
     y: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+struct PowerUpCarrier {
+    enemy: usize,
+    kind: PowerUpKind,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -889,7 +909,7 @@ struct PowerUp {
     kind: PowerUpKind,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 enum PowerUpKind {
     Star,
     Helmet,
@@ -1162,6 +1182,7 @@ fn parse_level(contents: &str) -> Result<LevelDefinition, String> {
     if level.spawn_interval_secs <= 0.0 {
         return Err("spawn_interval_secs must be positive".to_string());
     }
+    validate_powerup_carriers(&level)?;
 
     Ok(level)
 }
@@ -1768,7 +1789,7 @@ fn spawn_enemies(
         return;
     }
 
-    let first_spawn = director.roster.len() == 20;
+    let first_spawn = director.spawned_count == 0;
     if !first_spawn && !director.spawn_timer.tick(time.delta()).just_finished() {
         return;
     }
@@ -1786,13 +1807,13 @@ fn spawn_enemies(
             continue;
         }
 
-        let kind = director
+        let enemy = director
             .roster
             .pop_front()
             .expect("checked non-empty roster above");
         director.spawned_count += 1;
-        let carried_powerup = should_drop_powerup(director.spawned_count)
-            .then_some(powerup_for_drop(director.spawned_count));
+        let kind = enemy.kind;
+        let carried_powerup = enemy.carried_powerup;
 
         commands.spawn((
             Sprite::from_atlas_image(
@@ -3322,12 +3343,35 @@ fn bullet_destroys_tile(tile: TileKind, breaks_steel: bool) -> bool {
     matches!(tile, TileKind::Brick) || (breaks_steel && tile == TileKind::Steel)
 }
 
-fn should_drop_powerup(enemies_destroyed: usize) -> bool {
-    enemies_destroyed > 0 && enemies_destroyed.is_multiple_of(POWERUP_DROP_INTERVAL)
+fn validate_powerup_carriers(level: &LevelDefinition) -> Result<(), String> {
+    let mut seen = HashSet::new();
+    for carrier in &level.powerup_carriers {
+        if carrier.enemy == 0 || carrier.enemy > level.enemies.len() {
+            return Err(format!(
+                "powerup carrier enemy {} is outside the 1..={} roster",
+                carrier.enemy,
+                level.enemies.len()
+            ));
+        }
+        if !seen.insert(carrier.enemy) {
+            return Err(format!(
+                "powerup carrier enemy {} is configured more than once",
+                carrier.enemy
+            ));
+        }
+    }
+
+    Ok(())
 }
 
-fn powerup_for_drop(enemies_destroyed: usize) -> PowerUpKind {
-    powerup_for_cycle(enemies_destroyed.saturating_sub(1) / POWERUP_DROP_INTERVAL)
+fn carrier_powerup_for_spawn(
+    spawn_number: usize,
+    carriers: &[PowerUpCarrier],
+) -> Option<PowerUpKind> {
+    carriers
+        .iter()
+        .find(|carrier| carrier.enemy == spawn_number)
+        .map(|carrier| carrier.kind)
 }
 
 fn powerup_for_cycle(index: usize) -> PowerUpKind {
@@ -4290,6 +4334,7 @@ mod tests {
             );
             assert_eq!(level.enemies.len(), 20);
             assert_eq!(level.enemy_spawns.len(), 3);
+            assert!(!level.powerup_carriers.is_empty());
         }
     }
 
@@ -4550,17 +4595,60 @@ mod tests {
     }
 
     #[test]
-    fn powerups_drop_on_classic_carrier_cadence() {
-        assert!(!should_drop_powerup(0));
-        assert!(!should_drop_powerup(4));
-        assert!(should_drop_powerup(5));
-        assert_eq!(powerup_for_drop(0), PowerUpKind::Star);
-        assert_eq!(powerup_for_drop(5), PowerUpKind::Star);
-        assert_eq!(powerup_for_drop(10), PowerUpKind::Helmet);
-        assert_eq!(powerup_for_drop(15), PowerUpKind::Clock);
-        assert_eq!(powerup_for_drop(20), PowerUpKind::Grenade);
-        assert_eq!(powerup_for_drop(25), PowerUpKind::Shovel);
-        assert_eq!(powerup_for_drop(30), PowerUpKind::Tank);
+    fn enemy_director_uses_level_powerup_carrier_markers() {
+        let level = parse_level(LEVEL_5).expect("level should parse");
+        let director = EnemyDirector::from_level(&level);
+        let carriers: Vec<_> = director
+            .roster
+            .iter()
+            .enumerate()
+            .filter_map(|(index, enemy)| enemy.carried_powerup.map(|kind| (index + 1, kind)))
+            .collect();
+
+        assert_eq!(
+            carriers,
+            [
+                (3, PowerUpKind::Star),
+                (8, PowerUpKind::Helmet),
+                (13, PowerUpKind::Shovel),
+                (18, PowerUpKind::Tank),
+            ]
+        );
+    }
+
+    #[test]
+    fn level_rejects_invalid_powerup_carrier_markers() {
+        let duplicate =
+            LEVEL_1.replacen("(enemy: 10, kind: Helmet)", "(enemy: 5, kind: Helmet)", 1);
+        assert!(
+            parse_level(&duplicate)
+                .err()
+                .expect("duplicate carrier should fail")
+                .contains("configured more than once")
+        );
+
+        let out_of_range = LEVEL_1.replacen(
+            "(enemy: 20, kind: Grenade)",
+            "(enemy: 21, kind: Grenade)",
+            1,
+        );
+        assert!(
+            parse_level(&out_of_range)
+                .err()
+                .expect("out-of-range carrier should fail")
+                .contains("outside the 1..=20 roster")
+        );
+    }
+
+    #[test]
+    fn powerup_cycle_covers_classic_powerups() {
+        assert_eq!(powerup_for_cycle(0), PowerUpKind::Star);
+        assert_eq!(powerup_for_cycle(1), PowerUpKind::Helmet);
+        assert_eq!(powerup_for_cycle(2), PowerUpKind::Clock);
+        assert_eq!(powerup_for_cycle(3), PowerUpKind::Grenade);
+        assert_eq!(powerup_for_cycle(4), PowerUpKind::Shovel);
+        assert_eq!(powerup_for_cycle(5), PowerUpKind::Tank);
+        assert_eq!(powerup_for_cycle(6), PowerUpKind::Star);
     }
 
     #[test]

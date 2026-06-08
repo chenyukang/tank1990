@@ -381,6 +381,12 @@ Example:
     Basic, Basic, Power, Armor, Fast,
     Basic, Basic, Basic, Armor, Power,
   ],
+  powerup_carriers: [
+    (enemy: 5, kind: Star),
+    (enemy: 10, kind: Helmet),
+    (enemy: 15, kind: Clock),
+    (enemy: 20, kind: Grenade),
+  ],
   spawn_interval_secs: 3.0,
   max_enemies_on_screen: 4,
 )
@@ -683,6 +689,7 @@ MVP can include only `Star` and `Helmet`; the rest can be added once core gamepl
 Power-up spawn rule:
 
 - Some enemies in the roster are marked as power-up carriers.
+- Campaign level files mark carriers with 1-based enemy roster indexes.
 - Destroying a carrier enemy spawns one power-up at a valid battlefield position.
 - Only one power-up may be active at a time in campaign mode unless a stage explicitly overrides this.
 

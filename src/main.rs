@@ -3215,7 +3215,15 @@ fn tick_powerup_effects(
     }
 }
 
-fn update_powerup_visuals(time: Res<Time>, mut powerups: Query<&mut Sprite, With<PowerUp>>) {
+fn update_powerup_visuals(
+    time: Res<Time>,
+    game_status: Res<GameStatus>,
+    mut powerups: Query<&mut Sprite, With<PowerUp>>,
+) {
+    if !visual_effects_can_advance(game_status.phase) {
+        return;
+    }
+
     let [r, g, b] = powerup_visual_rgb(time.elapsed_secs());
     for mut sprite in &mut powerups {
         sprite.color = Color::srgb_u8(r, g, b);
@@ -3289,8 +3297,13 @@ fn restore_base_walls(
 fn animate_sprites(
     mut commands: Commands,
     time: Res<Time>,
+    game_status: Res<GameStatus>,
     mut animations: Query<(Entity, &mut Sprite, &mut SpriteAnimation)>,
 ) {
+    if !visual_effects_can_advance(game_status.phase) {
+        return;
+    }
+
     for (entity, mut sprite, mut animation) in &mut animations {
         animation.timer.tick(time.delta());
         if !animation.timer.just_finished() {
@@ -3350,11 +3363,16 @@ fn tick_player_respawns(
 fn tick_shields(
     mut commands: Commands,
     time: Res<Time>,
+    game_status: Res<GameStatus>,
     mut shielded: Query<
         (Entity, &mut Shield, &mut Sprite),
         (With<Player>, Without<PlayerRespawnDelay>),
     >,
 ) {
+    if !game_status.is_playing() {
+        return;
+    }
+
     for (entity, mut shield, mut sprite) in &mut shielded {
         shield.timer.tick(time.delta());
         sprite.color = if shield.timer.elapsed_secs() % 0.25 < 0.125 {
@@ -3372,8 +3390,13 @@ fn tick_shields(
 
 fn update_enemy_visual_feedback(
     time: Res<Time>,
+    game_status: Res<GameStatus>,
     mut enemies: Query<(&EnemyTank, &Health, Option<&SpawnProtection>, &mut Sprite)>,
 ) {
+    if !visual_effects_can_advance(game_status.phase) {
+        return;
+    }
+
     for (enemy, health, spawn_protection, mut sprite) in &mut enemies {
         sprite.color = enemy_visual_color(
             enemy.kind,
@@ -3635,6 +3658,10 @@ fn toggle_pause_phase(phase: GamePhase) -> GamePhase {
         GamePhase::Paused => GamePhase::Playing,
         phase => phase,
     }
+}
+
+fn visual_effects_can_advance(phase: GamePhase) -> bool {
+    phase != GamePhase::Paused
 }
 
 fn other_mode(mode: GameMode) -> GameMode {
@@ -6124,6 +6151,17 @@ mod tests {
             GamePhase::RoundOver
         );
         assert_eq!(toggle_pause_phase(GamePhase::Victory), GamePhase::Victory);
+    }
+
+    #[test]
+    fn paused_phase_freezes_visual_effect_timers_only() {
+        assert!(!visual_effects_can_advance(GamePhase::Paused));
+        assert!(visual_effects_can_advance(GamePhase::StageIntro));
+        assert!(visual_effects_can_advance(GamePhase::Playing));
+        assert!(visual_effects_can_advance(GamePhase::LevelClear));
+        assert!(visual_effects_can_advance(GamePhase::GameOver));
+        assert!(visual_effects_can_advance(GamePhase::RoundOver));
+        assert!(visual_effects_can_advance(GamePhase::Victory));
     }
 
     #[test]

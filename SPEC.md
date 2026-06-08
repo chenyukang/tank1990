@@ -146,6 +146,7 @@ Initial implementation target:
 
 - Implement `Deathmatch` first.
 - Add `BaseBattle` after campaign base logic is stable.
+- Mode select should allow choosing among authored deathmatch arenas before starting a battle.
 
 ### 5.3 Optional Co-op
 

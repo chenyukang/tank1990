@@ -14,7 +14,8 @@ use std::time::Duration;
 
 const LEVEL_COUNT: usize = 5;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
-const VERSUS_ARENA: usize = 1;
+const ARENA_COUNT: usize = 2;
+const DEFAULT_VERSUS_ARENA: usize = 1;
 
 const VIRTUAL_WIDTH: f32 = 256.0;
 const VIRTUAL_HEIGHT: f32 = 240.0;
@@ -233,12 +234,14 @@ enum GameMode {
 #[derive(Resource)]
 struct ModeSelect {
     selected: GameMode,
+    arena: usize,
 }
 
 impl Default for ModeSelect {
     fn default() -> Self {
         Self {
             selected: GameMode::Campaign,
+            arena: DEFAULT_VERSUS_ARENA,
         }
     }
 }
@@ -272,7 +275,7 @@ impl Default for GameStatus {
         Self {
             phase: GamePhase::ModeSelect,
             stage: 1,
-            arena: VERSUS_ARENA,
+            arena: DEFAULT_VERSUS_ARENA,
             winner: None,
             transition_timer: Timer::from_seconds(LEVEL_CLEAR_DELAY_SECONDS, TimerMode::Once),
         }
@@ -921,6 +924,11 @@ struct PhaseBanner;
 struct ModeSelectCursor;
 
 #[derive(Component)]
+struct ModeSelectArenaGlyph {
+    digit: usize,
+}
+
+#[derive(Component)]
 struct SpriteAnimation {
     first: usize,
     last: usize,
@@ -953,7 +961,12 @@ fn setup(
 
     let sprite_assets = create_sprite_assets(&mut images, &mut atlas_layouts);
     let sound_assets = create_sound_assets(&mut retro_sounds);
-    spawn_mode_select_screen(&mut commands, &sprite_assets, GameMode::Campaign);
+    spawn_mode_select_screen(
+        &mut commands,
+        &sprite_assets,
+        GameMode::Campaign,
+        DEFAULT_VERSUS_ARENA,
+    );
 
     commands.insert_resource(sprite_assets);
     commands.insert_resource(sound_assets);
@@ -978,8 +991,11 @@ fn handle_shared_controls(
     mut mode_select: ResMut<ModeSelect>,
     mut enemy_freeze: ResMut<EnemyFreeze>,
     mut base_reinforcement: ResMut<BaseReinforcement>,
-    game_entities: Query<Entity, With<GameEntity>>,
-    mut mode_select_cursors: Query<&mut Transform, With<ModeSelectCursor>>,
+    mut menu_queries: ParamSet<(
+        Query<Entity, With<GameEntity>>,
+        Query<&mut Transform, With<ModeSelectCursor>>,
+        Query<(&ModeSelectArenaGlyph, &mut Sprite)>,
+    )>,
 ) {
     if game_status.phase == GamePhase::ModeSelect {
         if keys.just_pressed(KeyCode::KeyW)
@@ -988,7 +1004,21 @@ fn handle_shared_controls(
             || keys.just_pressed(KeyCode::ArrowDown)
         {
             mode_select.selected = other_mode(mode_select.selected);
-            update_mode_select_cursor(&mut mode_select_cursors, mode_select.selected);
+            update_mode_select_cursor(&mut menu_queries.p1(), mode_select.selected);
+        }
+
+        if mode_select.selected == GameMode::VersusDeathmatch
+            && (keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft))
+        {
+            mode_select.arena = previous_arena(mode_select.arena);
+            update_mode_select_arena_digits(&mut menu_queries.p2(), mode_select.arena);
+        }
+
+        if mode_select.selected == GameMode::VersusDeathmatch
+            && (keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight))
+        {
+            mode_select.arena = next_arena(mode_select.arena);
+            update_mode_select_arena_digits(&mut menu_queries.p2(), mode_select.arena);
         }
 
         if keys.just_pressed(KeyCode::Space)
@@ -1011,24 +1041,27 @@ fn handle_shared_controls(
                         &mut versus_powerups,
                         &mut enemy_freeze,
                         &mut base_reinforcement,
-                        &game_entities,
+                        &menu_queries.p0(),
                     );
                 }
-                GameMode::VersusDeathmatch => start_versus_round(
-                    &mut commands,
-                    &assets,
-                    &sounds,
-                    &mut game_mode,
-                    &mut game_status,
-                    &mut tile_grid,
-                    &mut director,
-                    &mut score_board,
-                    &mut stage_rules,
-                    &mut versus_powerups,
-                    &mut enemy_freeze,
-                    &mut base_reinforcement,
-                    &game_entities,
-                ),
+                GameMode::VersusDeathmatch => {
+                    game_status.arena = mode_select.arena;
+                    start_versus_round(
+                        &mut commands,
+                        &assets,
+                        &sounds,
+                        &mut game_mode,
+                        &mut game_status,
+                        &mut tile_grid,
+                        &mut director,
+                        &mut score_board,
+                        &mut stage_rules,
+                        &mut versus_powerups,
+                        &mut enemy_freeze,
+                        &mut base_reinforcement,
+                        &menu_queries.p0(),
+                    );
+                }
             }
         }
         return;
@@ -1052,7 +1085,7 @@ fn handle_shared_controls(
             &mut enemy_freeze,
             &mut base_reinforcement,
             *game_mode,
-            &game_entities,
+            &menu_queries.p0(),
         );
         return;
     }
@@ -1071,7 +1104,7 @@ fn handle_shared_controls(
                 &mut versus_powerups,
                 &mut enemy_freeze,
                 &mut base_reinforcement,
-                &game_entities,
+                &menu_queries.p0(),
             ),
             GameMode::VersusDeathmatch => start_versus_round(
                 &mut commands,
@@ -1086,7 +1119,7 @@ fn handle_shared_controls(
                 &mut versus_powerups,
                 &mut enemy_freeze,
                 &mut base_reinforcement,
-                &game_entities,
+                &menu_queries.p0(),
             ),
         }
     }
@@ -1112,7 +1145,8 @@ fn enter_mode_select(
     }
 
     mode_select.selected = selected_mode;
-    spawn_mode_select_screen(commands, assets, mode_select.selected);
+    mode_select.arena = game_status.arena.clamp(1, ARENA_COUNT);
+    spawn_mode_select_screen(commands, assets, mode_select.selected, mode_select.arena);
 
     *tile_grid = TileGrid::empty();
     *director = EnemyDirector::inactive();
@@ -1179,7 +1213,10 @@ fn start_versus_round(
     base_reinforcement: &mut BaseReinforcement,
     game_entities: &Query<Entity, With<GameEntity>>,
 ) {
-    let arena = load_arena_definition(VERSUS_ARENA).expect("arena should load");
+    let arena_index = game_status.arena.clamp(1, ARENA_COUNT);
+    let arena = load_arena_definition(arena_index).unwrap_or_else(|err| {
+        panic!("failed to load versus arena {arena_index}: {err}");
+    });
     info!("Loaded {}", arena.name);
     let new_tile_grid = TileGrid::from_arena(&arena).expect("arena map should be valid");
     let BattleRules::Deathmatch {
@@ -1205,7 +1242,7 @@ fn start_versus_round(
     enemy_freeze.reset();
     base_reinforcement.reset();
     game_status.phase = GamePhase::Playing;
-    game_status.arena = VERSUS_ARENA;
+    game_status.arena = arena_index;
     game_status.winner = None;
     game_status.transition_timer.reset();
 }
@@ -1297,7 +1334,12 @@ fn parse_arena(contents: &str) -> Result<ArenaDefinition, String> {
     Ok(arena)
 }
 
-fn spawn_mode_select_screen(commands: &mut Commands, assets: &SpriteAssets, selected: GameMode) {
+fn spawn_mode_select_screen(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    selected: GameMode,
+    arena: usize,
+) {
     commands.spawn((
         Sprite::from_color(
             Color::srgb_u8(16, 16, 14),
@@ -1327,7 +1369,39 @@ fn spawn_mode_select_screen(commands: &mut Commands, assets: &SpriteAssets, sele
         mode_select_option_top_left(GameMode::VersusDeathmatch),
         0.3,
     );
+    spawn_pixel_text(commands, assets, "ARENA", Vec2::new(77.0, 145.0), 0.3);
+    spawn_mode_select_arena_digits(commands, assets, arena, Vec2::new(113.0, 145.0), 0.3);
     spawn_mode_select_cursor(commands, assets, selected);
+}
+
+fn spawn_mode_select_arena_digits(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    arena: usize,
+    top_left: Vec2,
+    z: f32,
+) {
+    let text = format!("{:02}", arena.min(99));
+    for digit in 0..2 {
+        let ch = text.chars().nth(digit).unwrap_or('0');
+        commands.spawn((
+            Sprite::from_atlas_image(
+                assets.glyph_image.clone(),
+                TextureAtlas {
+                    layout: assets.glyph_layout.clone(),
+                    index: glyph_index(ch),
+                },
+            ),
+            Transform::from_translation(virtual_center_scaled(
+                Vec2::new(top_left.x + digit as f32 * 6.0, top_left.y),
+                Vec2::new(5.0, 7.0),
+                z,
+            ))
+            .with_scale(Vec3::splat(WINDOW_SCALE)),
+            ModeSelectArenaGlyph { digit },
+            GameEntity,
+        ));
+    }
 }
 
 fn spawn_mode_select_cursor(commands: &mut Commands, assets: &SpriteAssets, selected: GameMode) {
@@ -3080,6 +3154,22 @@ fn other_mode(mode: GameMode) -> GameMode {
     }
 }
 
+fn next_arena(current: usize) -> usize {
+    if current >= ARENA_COUNT {
+        1
+    } else {
+        current + 1
+    }
+}
+
+fn previous_arena(current: usize) -> usize {
+    if current <= 1 {
+        ARENA_COUNT
+    } else {
+        current - 1
+    }
+}
+
 fn mode_select_option_top_left(mode: GameMode) -> Vec2 {
     match mode {
         GameMode::Campaign => Vec2::new(82.0, 105.0),
@@ -3104,6 +3194,20 @@ fn update_mode_select_cursor(
     let translation = mode_select_cursor_translation(selected);
     for mut transform in cursors {
         transform.translation = translation;
+    }
+}
+
+fn update_mode_select_arena_digits(
+    glyphs: &mut Query<(&ModeSelectArenaGlyph, &mut Sprite)>,
+    arena: usize,
+) {
+    let text = format!("{:02}", arena.min(99));
+    for (glyph, mut sprite) in glyphs {
+        if let Some(ch) = text.chars().nth(glyph.digit)
+            && let Some(atlas) = &mut sprite.texture_atlas
+        {
+            atlas.index = glyph_index(ch);
+        }
     }
 }
 
@@ -4472,6 +4576,10 @@ mod tests {
         ]
     }
 
+    fn authored_arenas() -> [(usize, &'static str); ARENA_COUNT] {
+        [(1, ARENA_1), (2, ARENA_2)]
+    }
+
     #[test]
     fn stage_paths_use_three_digit_level_numbers() {
         assert_eq!(stage_path(1), "assets/levels/001.level.ron");
@@ -4519,7 +4627,7 @@ mod tests {
 
     #[test]
     fn authored_arena_file_matches_deathmatch_shape() {
-        for (index, contents) in [(1, ARENA_1), (2, ARENA_2)] {
+        for (index, contents) in authored_arenas() {
             let arena = parse_arena(contents).expect("arena should parse");
             assert_eq!(arena.name, format!("Arena {index}"));
             assert_eq!(arena.map.len(), BOARD_TILES);
@@ -4611,12 +4719,22 @@ mod tests {
     #[test]
     fn game_starts_at_mode_select() {
         assert_eq!(GameStatus::default().phase, GamePhase::ModeSelect);
+        assert_eq!(GameStatus::default().arena, DEFAULT_VERSUS_ARENA);
     }
 
     #[test]
     fn mode_select_toggles_between_campaign_and_battle() {
         assert_eq!(other_mode(GameMode::Campaign), GameMode::VersusDeathmatch);
         assert_eq!(other_mode(GameMode::VersusDeathmatch), GameMode::Campaign);
+    }
+
+    #[test]
+    fn mode_select_arena_selection_wraps_authored_arenas() {
+        assert_eq!(ModeSelect::default().arena, DEFAULT_VERSUS_ARENA);
+        assert_eq!(next_arena(1), 2);
+        assert_eq!(next_arena(2), 1);
+        assert_eq!(previous_arena(1), 2);
+        assert_eq!(previous_arena(2), 1);
     }
 
     #[test]

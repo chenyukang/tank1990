@@ -33,6 +33,8 @@ const SNAP_DISTANCE: f32 = 2.0;
 const GLYPHS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const POWERUP_DROP_INTERVAL: usize = 5;
 const HELMET_SECONDS: f32 = 6.0;
+const CLOCK_SECONDS: f32 = 6.0;
+const SHOVEL_SECONDS: f32 = 10.0;
 const SOUND_SAMPLE_RATE: u32 = 22_050;
 
 fn main() {
@@ -42,6 +44,8 @@ fn main() {
         .insert_resource(PlayerControl::default())
         .insert_resource(GameMode::Campaign)
         .insert_resource(GameStatus::default())
+        .insert_resource(EnemyFreeze::default())
+        .insert_resource(BaseReinforcement::default())
         .add_plugins(
             DefaultPlugins
                 .set(ImagePlugin::default_nearest())
@@ -75,6 +79,7 @@ fn main() {
                 move_bullets,
                 cancel_colliding_bullets,
                 pickup_powerups,
+                tick_powerup_effects,
                 animate_sprites,
                 tick_shields,
                 update_enemy_visual_feedback,
@@ -323,6 +328,62 @@ impl ScoreBoard {
             PlayerId::One => self.p1_lives = lives,
             PlayerId::Two => self.p2_lives = lives,
         }
+    }
+}
+
+#[derive(Resource, Default)]
+struct EnemyFreeze {
+    timer: Option<Timer>,
+}
+
+impl EnemyFreeze {
+    fn start(&mut self) {
+        self.timer = Some(Timer::from_seconds(CLOCK_SECONDS, TimerMode::Once));
+    }
+
+    fn reset(&mut self) {
+        self.timer = None;
+    }
+
+    fn is_active(&self) -> bool {
+        self.timer
+            .as_ref()
+            .is_some_and(|timer| !timer.is_finished())
+    }
+
+    fn tick(&mut self, delta: Duration) {
+        let Some(timer) = &mut self.timer else {
+            return;
+        };
+        timer.tick(delta);
+        if timer.is_finished() {
+            self.timer = None;
+        }
+    }
+}
+
+#[derive(Resource, Default)]
+struct BaseReinforcement {
+    timer: Option<Timer>,
+    saved_tiles: Vec<(usize, usize, TileKind)>,
+}
+
+impl BaseReinforcement {
+    fn start(&mut self) {
+        self.timer = Some(Timer::from_seconds(SHOVEL_SECONDS, TimerMode::Once));
+    }
+
+    fn reset(&mut self) {
+        self.timer = None;
+        self.saved_tiles.clear();
+    }
+
+    fn tick(&mut self, delta: Duration) -> bool {
+        let Some(timer) = &mut self.timer else {
+            return false;
+        };
+        timer.tick(delta);
+        timer.is_finished()
     }
 }
 
@@ -707,6 +768,10 @@ struct PowerUp {
 enum PowerUpKind {
     Star,
     Helmet,
+    Clock,
+    Grenade,
+    Shovel,
+    Tank,
 }
 
 fn setup(
@@ -752,6 +817,8 @@ fn handle_shared_controls(
     mut tile_grid: ResMut<TileGrid>,
     mut director: ResMut<EnemyDirector>,
     mut score_board: ResMut<ScoreBoard>,
+    mut enemy_freeze: ResMut<EnemyFreeze>,
+    mut base_reinforcement: ResMut<BaseReinforcement>,
     game_entities: Query<Entity, With<GameEntity>>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
@@ -769,6 +836,8 @@ fn handle_shared_controls(
                 &mut tile_grid,
                 &mut director,
                 &mut score_board,
+                &mut enemy_freeze,
+                &mut base_reinforcement,
                 &game_entities,
             ),
             GameMode::VersusDeathmatch => {
@@ -782,6 +851,8 @@ fn handle_shared_controls(
                     &mut tile_grid,
                     &mut director,
                     &mut score_board,
+                    &mut enemy_freeze,
+                    &mut base_reinforcement,
                     &game_entities,
                 );
             }
@@ -799,6 +870,8 @@ fn handle_shared_controls(
                 &mut tile_grid,
                 &mut director,
                 &mut score_board,
+                &mut enemy_freeze,
+                &mut base_reinforcement,
                 &game_entities,
             ),
             GameMode::VersusDeathmatch => start_versus_round(
@@ -810,6 +883,8 @@ fn handle_shared_controls(
                 &mut tile_grid,
                 &mut director,
                 &mut score_board,
+                &mut enemy_freeze,
+                &mut base_reinforcement,
                 &game_entities,
             ),
         }
@@ -824,6 +899,8 @@ fn restart_level(
     tile_grid: &mut TileGrid,
     director: &mut EnemyDirector,
     score_board: &mut ScoreBoard,
+    enemy_freeze: &mut EnemyFreeze,
+    base_reinforcement: &mut BaseReinforcement,
     game_entities: &Query<Entity, With<GameEntity>>,
 ) {
     let level = load_stage_definition(game_status.stage).expect("level should load");
@@ -840,6 +917,8 @@ fn restart_level(
     *tile_grid = new_tile_grid;
     *director = EnemyDirector::from_level(&level);
     *score_board = ScoreBoard::campaign(level.enemies.len());
+    enemy_freeze.reset();
+    base_reinforcement.reset();
     game_status.phase = GamePhase::Playing;
     game_status.winner = None;
     game_status.transition_timer.reset();
@@ -854,6 +933,8 @@ fn start_versus_round(
     tile_grid: &mut TileGrid,
     director: &mut EnemyDirector,
     score_board: &mut ScoreBoard,
+    enemy_freeze: &mut EnemyFreeze,
+    base_reinforcement: &mut BaseReinforcement,
     game_entities: &Query<Entity, With<GameEntity>>,
 ) {
     let arena = load_arena_definition(VERSUS_ARENA).expect("arena should load");
@@ -877,6 +958,8 @@ fn start_versus_round(
     *tile_grid = new_tile_grid;
     *director = EnemyDirector::inactive();
     *score_board = ScoreBoard::versus(lives, target_score, respawn_invulnerability_secs);
+    enemy_freeze.reset();
+    base_reinforcement.reset();
     game_status.phase = GamePhase::Playing;
     game_status.arena = VERSUS_ARENA;
     game_status.winner = None;
@@ -1282,6 +1365,84 @@ fn spawn_terrain(commands: &mut Commands, assets: &SpriteAssets, tile_grid: &Til
     }
 }
 
+fn sync_tile_sprite(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    tile_grid: &mut TileGrid,
+    tile_sprites: &Query<(Entity, &GridTile)>,
+    x: usize,
+    y: usize,
+    tile: TileKind,
+) {
+    if tile_grid.tiles[y * BOARD_TILES + x] == tile {
+        return;
+    }
+
+    tile_grid.set(x, y, tile);
+    for (tile_entity, grid_tile) in tile_sprites {
+        if grid_tile.x == x && grid_tile.y == y {
+            commands.entity(tile_entity).despawn();
+            break;
+        }
+    }
+
+    if let Some(index) = terrain_sprite_index(tile) {
+        commands.spawn((
+            Sprite::from_atlas_image(
+                assets.terrain_image.clone(),
+                TextureAtlas {
+                    layout: assets.terrain_layout.clone(),
+                    index,
+                },
+            ),
+            Transform::from_translation(board_tile_center(x, y, terrain_z(tile)))
+                .with_scale(Vec3::splat(WINDOW_SCALE)),
+            GridTile { x, y },
+            GameEntity,
+        ));
+    }
+}
+
+fn base_wall_positions(tile_grid: &TileGrid) -> Vec<(usize, usize)> {
+    let mut min_x = BOARD_TILES;
+    let mut min_y = BOARD_TILES;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    let mut found_base = false;
+
+    for y in 0..BOARD_TILES {
+        for x in 0..BOARD_TILES {
+            if tile_grid.tiles[y * BOARD_TILES + x] == TileKind::Base {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+                found_base = true;
+            }
+        }
+    }
+
+    if !found_base {
+        return Vec::new();
+    }
+
+    let left = min_x.saturating_sub(2);
+    let right = (max_x + 2).min(BOARD_TILES - 1);
+    let top = min_y.saturating_sub(2);
+    let bottom = max_y.min(BOARD_TILES - 1);
+    let mut positions = Vec::new();
+
+    for y in top..=bottom {
+        for x in left..=right {
+            if tile_grid.tiles[y * BOARD_TILES + x] != TileKind::Base {
+                positions.push((x, y));
+            }
+        }
+    }
+
+    positions
+}
+
 fn spawn_player_tank(
     commands: &mut Commands,
     assets: &SpriteAssets,
@@ -1420,11 +1581,13 @@ fn spawn_enemies(
     assets: Res<SpriteAssets>,
     grid: Res<TileGrid>,
     game_status: Res<GameStatus>,
+    enemy_freeze: Res<EnemyFreeze>,
     mut director: ResMut<EnemyDirector>,
     active_enemies: Query<&EnemyTank>,
     tanks: Query<&Tank>,
 ) {
     if !game_status.is_playing()
+        || enemy_freeze.is_active()
         || director.roster.is_empty()
         || active_enemies.iter().count() >= director.max_active
     {
@@ -1500,6 +1663,7 @@ fn move_enemy_tanks(
     time: Res<Time>,
     grid: Res<TileGrid>,
     game_status: Res<GameStatus>,
+    enemy_freeze: Res<EnemyFreeze>,
     mut tank_queries: ParamSet<(
         Query<(&Tank, Option<&Player>)>,
         Query<
@@ -1514,7 +1678,7 @@ fn move_enemy_tanks(
         >,
     )>,
 ) {
-    if !game_status.is_playing() {
+    if !game_status.is_playing() || enemy_freeze.is_active() {
         return;
     }
 
@@ -1567,10 +1731,12 @@ fn fire_enemy_bullets(
     assets: Res<SpriteAssets>,
     sounds: Res<SoundAssets>,
     game_status: Res<GameStatus>,
+    enemy_freeze: Res<EnemyFreeze>,
     enemy_bullets: Query<&Bullet>,
     mut enemies: Query<(&Tank, &EnemyTank, &mut EnemyAi)>,
 ) {
     if !game_status.is_playing()
+        || enemy_freeze.is_active()
         || enemy_bullets
             .iter()
             .filter(|bullet| bullet.owner == Team::Enemy)
@@ -1682,6 +1848,7 @@ fn move_bullets(
     mut score_board: ResMut<ScoreBoard>,
     mut bullets: Query<(Entity, &mut Bullet, &mut Transform)>,
     tile_sprites: Query<(Entity, &GridTile)>,
+    active_powerups: Query<Entity, With<PowerUp>>,
     mut base_sprites: Query<&mut Sprite, With<BaseSprite>>,
     mut enemy_tanks: Query<
         (Entity, &Tank, &EnemyTank, &mut Health),
@@ -1738,6 +1905,7 @@ fn move_bullets(
                                 &assets,
                                 powerup_kind,
                                 enemy_tank.top_left,
+                                &active_powerups,
                             );
                         }
                         commands.entity(enemy_entity).despawn();
@@ -1998,9 +2166,20 @@ fn cancel_colliding_bullets(mut commands: Commands, bullets: Query<(Entity, &Bul
 fn pickup_powerups(
     mut commands: Commands,
     game_status: Res<GameStatus>,
+    game_mode: Res<GameMode>,
+    assets: Res<SpriteAssets>,
     sounds: Res<SoundAssets>,
+    mut tile_grid: ResMut<TileGrid>,
+    mut enemy_freeze: ResMut<EnemyFreeze>,
+    mut base_reinforcement: ResMut<BaseReinforcement>,
     powerups: Query<(Entity, &PowerUp, &Transform)>,
-    mut players: Query<(Entity, &Tank, &mut PlayerUpgrade), With<Player>>,
+    tile_sprites: Query<(Entity, &GridTile)>,
+    mut players: Query<
+        (Entity, &Tank, &Player, &mut PlayerUpgrade, &mut PlayerLives),
+        With<Player>,
+    >,
+    enemy_tanks: Query<(Entity, &Tank, &EnemyTank), With<EnemyTank>>,
+    mut score_board: ResMut<ScoreBoard>,
 ) {
     if !game_status.is_playing() {
         return;
@@ -2008,7 +2187,7 @@ fn pickup_powerups(
 
     for (powerup_entity, powerup, transform) in &powerups {
         let powerup_top_left = board_top_left_from_translation(transform.translation, TANK_SIZE);
-        for (player_entity, tank, mut upgrade) in &mut players {
+        for (player_entity, tank, player, mut upgrade, mut lives) in &mut players {
             if !rects_overlap(
                 tank.top_left,
                 Vec2::splat(TANK_SIZE),
@@ -2027,12 +2206,137 @@ fn pickup_powerups(
                         timer: Timer::from_seconds(HELMET_SECONDS, TimerMode::Once),
                     });
                 }
+                PowerUpKind::Clock => {
+                    enemy_freeze.start();
+                }
+                PowerUpKind::Grenade => {
+                    destroy_visible_enemies(
+                        &mut commands,
+                        &assets,
+                        &sounds,
+                        &mut score_board,
+                        &enemy_tanks,
+                    );
+                }
+                PowerUpKind::Shovel => {
+                    if *game_mode == GameMode::Campaign {
+                        reinforce_base_walls(
+                            &mut commands,
+                            &assets,
+                            &mut tile_grid,
+                            &tile_sprites,
+                            &mut base_reinforcement,
+                        );
+                    }
+                }
+                PowerUpKind::Tank => {
+                    lives.current += 1;
+                    match *game_mode {
+                        GameMode::Campaign => {
+                            score_board.lives = lives.current;
+                        }
+                        GameMode::VersusDeathmatch => {
+                            score_board.set_player_lives(player.id, lives.current);
+                        }
+                    }
+                }
             }
             commands.entity(powerup_entity).despawn();
             play_sound(&mut commands, &sounds, SoundKind::PowerupPickup);
             break;
         }
     }
+}
+
+fn tick_powerup_effects(
+    mut commands: Commands,
+    time: Res<Time>,
+    game_status: Res<GameStatus>,
+    assets: Res<SpriteAssets>,
+    mut tile_grid: ResMut<TileGrid>,
+    mut enemy_freeze: ResMut<EnemyFreeze>,
+    mut base_reinforcement: ResMut<BaseReinforcement>,
+    tile_sprites: Query<(Entity, &GridTile)>,
+) {
+    if !game_status.is_playing() {
+        return;
+    }
+
+    enemy_freeze.tick(time.delta());
+
+    if base_reinforcement.tick(time.delta()) {
+        restore_base_walls(
+            &mut commands,
+            &assets,
+            &mut tile_grid,
+            &tile_sprites,
+            &mut base_reinforcement,
+        );
+    }
+}
+
+fn destroy_visible_enemies(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    sounds: &SoundAssets,
+    score_board: &mut ScoreBoard,
+    enemy_tanks: &Query<(Entity, &Tank, &EnemyTank), With<EnemyTank>>,
+) {
+    let mut destroyed_any = false;
+    for (enemy_entity, enemy_tank, enemy) in enemy_tanks {
+        score_board.score += enemy_score(enemy.kind);
+        score_board.enemies_destroyed += 1;
+        spawn_explosion(commands, assets, enemy_tank.top_left);
+        commands.entity(enemy_entity).despawn();
+        destroyed_any = true;
+    }
+
+    if destroyed_any {
+        play_sound(commands, sounds, SoundKind::TankExplosion);
+    }
+}
+
+fn reinforce_base_walls(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    tile_grid: &mut TileGrid,
+    tile_sprites: &Query<(Entity, &GridTile)>,
+    base_reinforcement: &mut BaseReinforcement,
+) {
+    let positions = base_wall_positions(tile_grid);
+    if base_reinforcement.saved_tiles.is_empty() {
+        base_reinforcement.saved_tiles = positions
+            .iter()
+            .map(|(x, y)| (*x, *y, tile_grid.tiles[y * BOARD_TILES + x]))
+            .collect();
+    }
+
+    for (x, y) in positions {
+        sync_tile_sprite(
+            commands,
+            assets,
+            tile_grid,
+            tile_sprites,
+            x,
+            y,
+            TileKind::Steel,
+        );
+    }
+    base_reinforcement.start();
+}
+
+fn restore_base_walls(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    tile_grid: &mut TileGrid,
+    tile_sprites: &Query<(Entity, &GridTile)>,
+    base_reinforcement: &mut BaseReinforcement,
+) {
+    let saved_tiles = std::mem::take(&mut base_reinforcement.saved_tiles);
+    for (x, y, tile) in saved_tiles {
+        sync_tile_sprite(commands, assets, tile_grid, tile_sprites, x, y, tile);
+    }
+    base_reinforcement.reset();
 }
 
 fn animate_sprites(
@@ -2136,6 +2440,8 @@ fn advance_after_level_clear(
     mut tile_grid: ResMut<TileGrid>,
     mut director: ResMut<EnemyDirector>,
     mut score_board: ResMut<ScoreBoard>,
+    mut enemy_freeze: ResMut<EnemyFreeze>,
+    mut base_reinforcement: ResMut<BaseReinforcement>,
     game_entities: Query<Entity, With<GameEntity>>,
     banners: Query<Entity, With<PhaseBanner>>,
 ) {
@@ -2179,6 +2485,8 @@ fn advance_after_level_clear(
     *director = EnemyDirector::from_level(&level);
     score_board.enemies_destroyed = 0;
     score_board.total_enemies = level.enemies.len();
+    enemy_freeze.reset();
+    base_reinforcement.reset();
     game_status.stage = next_stage;
     game_status.phase = GamePhase::Playing;
     game_status.transition_timer.reset();
@@ -2419,7 +2727,12 @@ fn spawn_powerup(
     assets: &SpriteAssets,
     kind: PowerUpKind,
     top_left: Vec2,
+    active_powerups: &Query<Entity, With<PowerUp>>,
 ) {
+    for active_powerup in active_powerups {
+        commands.entity(active_powerup).despawn();
+    }
+
     commands.spawn((
         Sprite::from_atlas_image(
             assets.powerup_image.clone(),
@@ -2546,10 +2859,13 @@ fn should_drop_powerup(enemies_destroyed: usize) -> bool {
 }
 
 fn powerup_for_drop(enemies_destroyed: usize) -> PowerUpKind {
-    if (enemies_destroyed / POWERUP_DROP_INTERVAL).is_multiple_of(2) {
-        PowerUpKind::Helmet
-    } else {
-        PowerUpKind::Star
+    match (enemies_destroyed.saturating_sub(1) / POWERUP_DROP_INTERVAL) % 6 {
+        0 => PowerUpKind::Star,
+        1 => PowerUpKind::Helmet,
+        2 => PowerUpKind::Clock,
+        3 => PowerUpKind::Grenade,
+        4 => PowerUpKind::Shovel,
+        _ => PowerUpKind::Tank,
     }
 }
 
@@ -2557,6 +2873,10 @@ fn powerup_sprite_index(kind: PowerUpKind) -> usize {
     match kind {
         PowerUpKind::Star => 0,
         PowerUpKind::Helmet => 1,
+        PowerUpKind::Clock => 2,
+        PowerUpKind::Grenade => 3,
+        PowerUpKind::Shovel => 4,
+        PowerUpKind::Tank => 5,
     }
 }
 
@@ -2715,7 +3035,7 @@ fn create_sprite_assets(
     let powerup_image = images.add(create_powerup_atlas());
     let powerup_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::splat(16),
-        2,
+        6,
         1,
         None,
         None,
@@ -3177,10 +3497,14 @@ fn draw_spawn_frame(pixels: &mut [u8], width: usize, x_offset: usize, frame: usi
 }
 
 fn create_powerup_atlas() -> Image {
-    let mut pixels = vec![0; 16 * 2 * 16 * 4];
-    draw_star_powerup(&mut pixels, 32, 0);
-    draw_helmet_powerup(&mut pixels, 32, 16);
-    image_from_pixels(32, 16, pixels)
+    let mut pixels = vec![0; 16 * 6 * 16 * 4];
+    draw_star_powerup(&mut pixels, 96, 0);
+    draw_helmet_powerup(&mut pixels, 96, 16);
+    draw_clock_powerup(&mut pixels, 96, 32);
+    draw_grenade_powerup(&mut pixels, 96, 48);
+    draw_shovel_powerup(&mut pixels, 96, 64);
+    draw_tank_powerup(&mut pixels, 96, 80);
+    image_from_pixels(96, 16, pixels)
 }
 
 fn draw_star_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
@@ -3218,6 +3542,38 @@ fn draw_helmet_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
     fill_rect(pixels, width, x_offset + 5, 3, 6, 3, [144, 232, 248, 255]);
     fill_rect(pixels, width, x_offset + 3, 10, 10, 2, [40, 96, 144, 255]);
     fill_rect(pixels, width, x_offset + 6, 6, 4, 2, [216, 248, 248, 255]);
+}
+
+fn draw_clock_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
+    fill_rect(pixels, width, x_offset + 4, 3, 8, 1, [216, 232, 248, 255]);
+    fill_rect(pixels, width, x_offset + 3, 4, 1, 8, [216, 232, 248, 255]);
+    fill_rect(pixels, width, x_offset + 12, 4, 1, 8, [72, 120, 184, 255]);
+    fill_rect(pixels, width, x_offset + 4, 12, 8, 1, [72, 120, 184, 255]);
+    fill_rect(pixels, width, x_offset + 7, 5, 2, 5, [248, 248, 208, 255]);
+    fill_rect(pixels, width, x_offset + 8, 9, 4, 2, [248, 248, 208, 255]);
+}
+
+fn draw_grenade_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
+    fill_rect(pixels, width, x_offset + 5, 6, 8, 7, [80, 128, 48, 255]);
+    fill_rect(pixels, width, x_offset + 6, 4, 5, 3, [120, 176, 64, 255]);
+    fill_rect(pixels, width, x_offset + 10, 2, 2, 3, [200, 184, 80, 255]);
+    fill_rect(pixels, width, x_offset + 12, 1, 3, 1, [248, 232, 128, 255]);
+    fill_rect(pixels, width, x_offset + 4, 11, 9, 2, [40, 72, 32, 255]);
+}
+
+fn draw_shovel_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
+    fill_rect(pixels, width, x_offset + 8, 2, 2, 9, [176, 112, 56, 255]);
+    fill_rect(pixels, width, x_offset + 6, 10, 6, 2, [176, 112, 56, 255]);
+    fill_rect(pixels, width, x_offset + 4, 11, 10, 3, [160, 168, 176, 255]);
+    fill_rect(pixels, width, x_offset + 5, 12, 8, 1, [232, 240, 240, 255]);
+}
+
+fn draw_tank_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
+    fill_rect(pixels, width, x_offset + 3, 5, 4, 8, [88, 88, 88, 255]);
+    fill_rect(pixels, width, x_offset + 9, 5, 4, 8, [88, 88, 88, 255]);
+    fill_rect(pixels, width, x_offset + 5, 6, 6, 6, [224, 88, 72, 255]);
+    fill_rect(pixels, width, x_offset + 7, 3, 2, 6, [248, 176, 96, 255]);
+    fill_rect(pixels, width, x_offset + 6, 8, 4, 3, [248, 176, 96, 255]);
 }
 
 fn create_glyph_atlas() -> Image {
@@ -3594,8 +3950,47 @@ mod tests {
         assert!(!should_drop_powerup(0));
         assert!(!should_drop_powerup(4));
         assert!(should_drop_powerup(5));
+        assert_eq!(powerup_for_drop(0), PowerUpKind::Star);
         assert_eq!(powerup_for_drop(5), PowerUpKind::Star);
         assert_eq!(powerup_for_drop(10), PowerUpKind::Helmet);
+        assert_eq!(powerup_for_drop(15), PowerUpKind::Clock);
+        assert_eq!(powerup_for_drop(20), PowerUpKind::Grenade);
+        assert_eq!(powerup_for_drop(25), PowerUpKind::Shovel);
+        assert_eq!(powerup_for_drop(30), PowerUpKind::Tank);
+    }
+
+    #[test]
+    fn powerup_sprite_indices_cover_classic_powerups() {
+        assert_eq!(powerup_sprite_index(PowerUpKind::Star), 0);
+        assert_eq!(powerup_sprite_index(PowerUpKind::Helmet), 1);
+        assert_eq!(powerup_sprite_index(PowerUpKind::Clock), 2);
+        assert_eq!(powerup_sprite_index(PowerUpKind::Grenade), 3);
+        assert_eq!(powerup_sprite_index(PowerUpKind::Shovel), 4);
+        assert_eq!(powerup_sprite_index(PowerUpKind::Tank), 5);
+    }
+
+    #[test]
+    fn enemy_freeze_expires_after_clock_duration() {
+        let mut freeze = EnemyFreeze::default();
+        freeze.start();
+        assert!(freeze.is_active());
+        freeze.tick(Duration::from_secs_f32(CLOCK_SECONDS + 0.1));
+        assert!(!freeze.is_active());
+    }
+
+    #[test]
+    fn base_wall_positions_wrap_campaign_base_without_base_tiles() {
+        let level = parse_level(LEVEL_1).expect("level should parse");
+        let grid = TileGrid::from_level(&level).expect("grid should build");
+        let positions = base_wall_positions(&grid);
+        assert!(positions.contains(&(10, 24)));
+        assert!(positions.contains(&(15, 25)));
+        assert!(!positions.contains(&(12, 24)));
+        assert!(
+            positions
+                .iter()
+                .all(|(x, y)| grid.tiles[y * BOARD_TILES + x] != TileKind::Base)
+        );
     }
 
     #[test]

@@ -2881,6 +2881,8 @@ fn move_bullets(
                         Some(shooter),
                         GameMode::VersusDeathmatch,
                     );
+                } else {
+                    play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                 }
                 commands.entity(entity).despawn();
                 hit_player = true;
@@ -2917,6 +2919,7 @@ fn move_bullets(
 
                 if shield.is_some() {
                     commands.entity(entity).despawn();
+                    play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                     hit_player = true;
                     break;
                 }

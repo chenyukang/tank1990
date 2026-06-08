@@ -3621,7 +3621,7 @@ fn update_status_panel(
         return;
     }
 
-    let Some(lines) = phase_banner_text(&game_status, *game_mode) else {
+    let Some(lines) = phase_banner_text(&game_status, *game_mode, &score_board) else {
         return;
     };
     spawn_phase_text(&mut commands, &assets, &lines, 114.5, 9.0);
@@ -3667,10 +3667,11 @@ fn stage_intro_banner_text(stage: usize) -> Vec<String> {
     vec![format!("STAGE {:02}", stage.min(99)), "READY".to_string()]
 }
 
-fn level_clear_banner_text(stage: usize) -> Vec<String> {
+fn level_clear_banner_text(stage: usize, lives: i32) -> Vec<String> {
     vec![
         format!("STAGE {:02}", stage.min(99)),
         "LEVEL CLEAR".to_string(),
+        format!("BONUS {}", stage_clear_bonus(lives)),
     ]
 }
 
@@ -3678,7 +3679,11 @@ fn arena_intro_banner_text(arena: usize) -> Vec<String> {
     vec![format!("ARENA {:02}", arena.min(99)), "READY".to_string()]
 }
 
-fn phase_banner_text(status: &GameStatus, mode: GameMode) -> Option<Vec<String>> {
+fn phase_banner_text(
+    status: &GameStatus,
+    mode: GameMode,
+    score_board: &ScoreBoard,
+) -> Option<Vec<String>> {
     if status.phase == GamePhase::StageIntro {
         return Some(match mode {
             GameMode::Campaign => stage_intro_banner_text(status.stage),
@@ -3686,7 +3691,7 @@ fn phase_banner_text(status: &GameStatus, mode: GameMode) -> Option<Vec<String>>
         });
     }
     if status.phase == GamePhase::LevelClear {
-        return Some(level_clear_banner_text(status.stage));
+        return Some(level_clear_banner_text(status.stage, score_board.lives));
     }
 
     phase_banner_lines(status.phase, status.winner)
@@ -5331,6 +5336,9 @@ fn glyph_pattern(ch: char) -> [&'static str; 7] {
         'A' => [
             ".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#",
         ],
+        'B' => [
+            "####.", "#...#", "#...#", "####.", "#...#", "#...#", "####.",
+        ],
         'C' => [
             "#####", "#....", "#....", "#....", "#....", "#....", "#####",
         ],
@@ -6360,7 +6368,7 @@ mod tests {
 
         assert!(!status.is_playing());
         assert_eq!(
-            phase_banner_text(&status, GameMode::Campaign)
+            phase_banner_text(&status, GameMode::Campaign, &ScoreBoard::campaign(3))
                 .expect("stage intro should show a banner"),
             ["STAGE 07".to_string(), "READY".to_string()]
         );
@@ -6385,15 +6393,25 @@ mod tests {
             stage: 12,
             ..GameStatus::default()
         };
+        let mut score_board = ScoreBoard::campaign(20);
+        score_board.lives = 2;
 
         assert_eq!(
-            phase_banner_text(&status, GameMode::Campaign)
+            phase_banner_text(&status, GameMode::Campaign, &score_board)
                 .expect("level clear should show a banner"),
-            ["STAGE 12".to_string(), "LEVEL CLEAR".to_string()]
+            [
+                "STAGE 12".to_string(),
+                "LEVEL CLEAR".to_string(),
+                "BONUS 2000".to_string()
+            ]
         );
         assert_eq!(
-            level_clear_banner_text(135),
-            ["STAGE 99".to_string(), "LEVEL CLEAR".to_string()]
+            level_clear_banner_text(135, 3),
+            [
+                "STAGE 99".to_string(),
+                "LEVEL CLEAR".to_string(),
+                "BONUS 3000".to_string()
+            ]
         );
     }
 
@@ -6407,8 +6425,12 @@ mod tests {
 
         assert!(!status.is_playing());
         assert_eq!(
-            phase_banner_text(&status, GameMode::VersusDeathmatch)
-                .expect("arena intro should show a banner"),
+            phase_banner_text(
+                &status,
+                GameMode::VersusDeathmatch,
+                &ScoreBoard::versus(3, 5, 2.0)
+            )
+            .expect("arena intro should show a banner"),
             ["ARENA 04".to_string(), "READY".to_string()]
         );
         assert_eq!(
@@ -6506,7 +6528,9 @@ mod tests {
         ];
 
         for (status, mode) in statuses {
-            let lines = phase_banner_text(&status, mode).expect("phase should show a banner");
+            let score_board = ScoreBoard::campaign(3);
+            let lines =
+                phase_banner_text(&status, mode, &score_board).expect("phase should show a banner");
             for line in lines {
                 assert!(phase_text_width(&line) > 0.0);
                 for ch in line.chars().filter(|ch| *ch != ' ') {

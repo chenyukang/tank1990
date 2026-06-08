@@ -42,6 +42,12 @@ const ENEMY_BULLET_LIMIT: usize = 4;
 const ENEMY_BULLET_LIMIT_PER_TANK: usize = 1;
 const SNAP_DISTANCE: f32 = 2.0;
 const GLYPHS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+static PAUSED_BANNER_LINES: [&str; 1] = ["PAUSED"];
+static GAME_OVER_BANNER_LINES: [&str; 1] = ["GAME OVER"];
+static LEVEL_CLEAR_BANNER_LINES: [&str; 1] = ["LEVEL CLEAR"];
+static P1_WIN_BANNER_LINES: [&str; 1] = ["P1 WIN"];
+static P2_WIN_BANNER_LINES: [&str; 1] = ["P2 WIN"];
+static VICTORY_BANNER_LINES: [&str; 3] = ["VICTORY", "ALL STAGES CLEAR", "ENEMY DOWN"];
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
@@ -1921,24 +1927,47 @@ fn spawn_pixel_text(
 fn spawn_phase_text(
     commands: &mut Commands,
     assets: &SpriteAssets,
-    text: &str,
-    top_left: Vec2,
+    lines: &[&str],
+    center_y: f32,
     z: f32,
 ) {
+    let line_gap = 3.0;
+    let line_height = 7.0;
+    let text_step = line_height + line_gap;
+    let text_block_height =
+        lines.len() as f32 * line_height + lines.len().saturating_sub(1) as f32 * line_gap;
+    let background_height = text_block_height + 10.0;
+    let background_top = center_y - background_height / 2.0;
+    let first_line_top = center_y - text_block_height / 2.0;
+
     commands.spawn((
         Sprite::from_color(
             Color::srgb_u8(48, 48, 40),
-            Vec2::new(132.0 * WINDOW_SCALE, 17.0 * WINDOW_SCALE),
+            Vec2::new(132.0 * WINDOW_SCALE, background_height * WINDOW_SCALE),
         ),
         Transform::from_translation(virtual_center_scaled(
-            Vec2::new(36.0, top_left.y - 5.0),
-            Vec2::new(132.0, 17.0),
+            Vec2::new(36.0, background_top),
+            Vec2::new(132.0, background_height),
             z - 0.1,
         )),
         PhaseBanner,
         GameEntity,
     ));
-    spawn_pixel_text_inner(commands, assets, text, top_left, z, true);
+
+    for (index, line) in lines.iter().enumerate() {
+        let text_width = phase_text_width(line);
+        spawn_pixel_text_inner(
+            commands,
+            assets,
+            line,
+            Vec2::new(
+                (208.0 - text_width) / 2.0,
+                first_line_top + index as f32 * text_step,
+            ),
+            z,
+            true,
+        );
+    }
 }
 
 fn spawn_pixel_text_inner(
@@ -3470,27 +3499,32 @@ fn update_status_panel(
         return;
     }
 
-    let message = match game_status.phase {
-        GamePhase::ModeSelect => return,
-        GamePhase::Playing => return,
-        GamePhase::Paused => "PAUSED",
-        GamePhase::GameOver => "GAME OVER",
-        GamePhase::LevelClear => "LEVEL CLEAR",
-        GamePhase::RoundOver => match game_status.winner {
-            Some(PlayerId::One) => "P1 WIN",
-            Some(PlayerId::Two) => "P2 WIN",
-            None => "GAME OVER",
-        },
-        GamePhase::Victory => "VICTORY",
+    let Some(lines) = phase_banner_lines(game_status.phase, game_status.winner) else {
+        return;
     };
-    let text_width = message.chars().count() as f32 * 6.0 - 1.0;
-    spawn_phase_text(
-        &mut commands,
-        &assets,
-        message,
-        Vec2::new((208.0 - text_width) / 2.0, 111.0),
-        9.0,
-    );
+    spawn_phase_text(&mut commands, &assets, lines, 114.5, 9.0);
+}
+
+fn phase_text_width(text: &str) -> f32 {
+    text.chars().count() as f32 * 6.0 - 1.0
+}
+
+fn phase_banner_lines(
+    phase: GamePhase,
+    winner: Option<PlayerId>,
+) -> Option<&'static [&'static str]> {
+    match phase {
+        GamePhase::ModeSelect | GamePhase::Playing => None,
+        GamePhase::Paused => Some(&PAUSED_BANNER_LINES),
+        GamePhase::GameOver => Some(&GAME_OVER_BANNER_LINES),
+        GamePhase::LevelClear => Some(&LEVEL_CLEAR_BANNER_LINES),
+        GamePhase::RoundOver => match winner {
+            Some(PlayerId::One) => Some(&P1_WIN_BANNER_LINES),
+            Some(PlayerId::Two) => Some(&P2_WIN_BANNER_LINES),
+            None => Some(&GAME_OVER_BANNER_LINES),
+        },
+        GamePhase::Victory => Some(&VICTORY_BANNER_LINES),
+    }
 }
 
 fn campaign_phase(
@@ -5978,6 +6012,41 @@ mod tests {
             GamePhase::RoundOver
         );
         assert_eq!(toggle_pause_phase(GamePhase::Victory), GamePhase::Victory);
+    }
+
+    #[test]
+    fn victory_phase_uses_campaign_clear_banner() {
+        assert_eq!(
+            phase_banner_lines(GamePhase::Victory, None).expect("victory should show a banner"),
+            VICTORY_BANNER_LINES.as_slice()
+        );
+    }
+
+    #[test]
+    fn phase_banner_text_uses_available_pixel_glyphs() {
+        let banners = [
+            phase_banner_lines(GamePhase::Paused, None).expect("paused should show a banner"),
+            phase_banner_lines(GamePhase::GameOver, None).expect("game over should show a banner"),
+            phase_banner_lines(GamePhase::LevelClear, None)
+                .expect("level clear should show a banner"),
+            phase_banner_lines(GamePhase::RoundOver, Some(PlayerId::One))
+                .expect("p1 win should show a banner"),
+            phase_banner_lines(GamePhase::RoundOver, Some(PlayerId::Two))
+                .expect("p2 win should show a banner"),
+            phase_banner_lines(GamePhase::Victory, None).expect("victory should show a banner"),
+        ];
+
+        for lines in banners {
+            for line in lines {
+                assert!(phase_text_width(line) > 0.0);
+                for ch in line.chars().filter(|ch| *ch != ' ') {
+                    assert!(
+                        glyph_pattern(ch).iter().any(|row| row.contains('#')),
+                        "glyph {ch} should render"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

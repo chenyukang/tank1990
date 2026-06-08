@@ -15,7 +15,7 @@ use std::time::Duration;
 const ASSET_MANIFEST_PATH: &str = "assets/manifest.ron";
 const LEVEL_COUNT: usize = 35;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
-const ARENA_COUNT: usize = 3;
+const ARENA_COUNT: usize = 4;
 const DEFAULT_VERSUS_ARENA: usize = 1;
 const TANK_ATLAS_TILES: usize = 48;
 const TANK_ANIMATION_FRAMES: usize = 2;
@@ -5221,6 +5221,7 @@ mod tests {
     const ARENA_1: &str = include_str!("../assets/arenas/arena_01.ron");
     const ARENA_2: &str = include_str!("../assets/arenas/arena_02.ron");
     const ARENA_3: &str = include_str!("../assets/arenas/arena_03.ron");
+    const ARENA_4: &str = include_str!("../assets/arenas/arena_04.ron");
 
     fn authored_levels() -> [(usize, &'static str); LEVEL_COUNT] {
         [
@@ -5263,7 +5264,7 @@ mod tests {
     }
 
     fn authored_arenas() -> [(usize, &'static str); ARENA_COUNT] {
-        [(1, ARENA_1), (2, ARENA_2), (3, ARENA_3)]
+        [(1, ARENA_1), (2, ARENA_2), (3, ARENA_3), (4, ARENA_4)]
     }
 
     #[test]
@@ -6104,10 +6105,12 @@ mod tests {
         assert_eq!(ModeSelect::default().arena, DEFAULT_VERSUS_ARENA);
         assert_eq!(next_arena(1), 2);
         assert_eq!(next_arena(2), 3);
-        assert_eq!(next_arena(3), 1);
-        assert_eq!(previous_arena(1), 3);
+        assert_eq!(next_arena(3), 4);
+        assert_eq!(next_arena(4), 1);
+        assert_eq!(previous_arena(1), 4);
         assert_eq!(previous_arena(2), 1);
         assert_eq!(previous_arena(3), 2);
+        assert_eq!(previous_arena(4), 3);
     }
 
     #[test]
@@ -6398,6 +6401,22 @@ mod tests {
         assert_eq!(arena.powerup_spawns.len(), 3);
         assert_eq!(arena.powerup_spawns[0].x, 12);
         assert_eq!(arena.powerup_spawns[0].y, 12);
+    }
+
+    #[test]
+    fn arena_four_authors_water_midline_flank_duel_space() {
+        let arena = parse_arena(ARENA_4).expect("arena should parse");
+        let grid = TileGrid::from_arena(&arena).expect("grid should build");
+
+        assert!(grid.tiles.contains(&TileKind::Water));
+        assert!(grid.tiles.contains(&TileKind::Forest));
+        assert!(grid.tiles.contains(&TileKind::Ice));
+        assert!(grid.tiles.contains(&TileKind::Steel));
+        assert_eq!(arena.powerup_spawns.len(), 3);
+        assert_eq!(arena.p1_spawn.x, 2);
+        assert_eq!(arena.p1_spawn.y, 24);
+        assert_eq!(arena.p2_spawn.x, 24);
+        assert_eq!(arena.p2_spawn.y, 0);
     }
 
     #[test]

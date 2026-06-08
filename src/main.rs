@@ -1597,7 +1597,7 @@ fn parse_level(contents: &str) -> Result<LevelDefinition, String> {
     let level: LevelDefinition =
         ron::from_str(contents).map_err(|err| format!("failed to parse level: {err}"))?;
 
-    TileGrid::from_level(&level)?;
+    let grid = TileGrid::from_level(&level)?;
     if level.enemies.len() != 20 {
         return Err(format!(
             "expected a classic 20-enemy roster, got {}",
@@ -1616,6 +1616,7 @@ fn parse_level(contents: &str) -> Result<LevelDefinition, String> {
     if level.spawn_interval_secs <= 0.0 {
         return Err("spawn_interval_secs must be positive".to_string());
     }
+    validate_level_positions(&level, &grid)?;
     validate_powerup_carriers(&level)?;
 
     Ok(level)
@@ -1625,7 +1626,7 @@ fn parse_arena(contents: &str) -> Result<ArenaDefinition, String> {
     let arena: ArenaDefinition =
         ron::from_str(contents).map_err(|err| format!("failed to parse arena: {err}"))?;
 
-    TileGrid::from_arena(&arena)?;
+    let grid = TileGrid::from_arena(&arena)?;
     let BattleRules::Deathmatch {
         target_score,
         lives,
@@ -1640,6 +1641,8 @@ fn parse_arena(contents: &str) -> Result<ArenaDefinition, String> {
     if respawn_invulnerability_secs <= 0.0 {
         return Err("deathmatch respawn_invulnerability_secs must be positive".to_string());
     }
+    validate_tank_spawn(&grid, "p1 spawn", &arena.p1_spawn)?;
+    validate_tank_spawn(&grid, "p2 spawn", &arena.p2_spawn)?;
     for point in &arena.powerup_spawns {
         if point.x >= BOARD_TILES || point.y >= BOARD_TILES {
             return Err(format!(
@@ -4062,6 +4065,51 @@ fn bullet_destroys_tile(tile: TileKind, breaks_steel: bool) -> bool {
     matches!(tile, TileKind::Brick) || (breaks_steel && tile == TileKind::Steel)
 }
 
+fn validate_level_positions(level: &LevelDefinition, grid: &TileGrid) -> Result<(), String> {
+    validate_tank_spawn(grid, "player spawn", &level.player_spawn)?;
+
+    for (index, spawn) in level.enemy_spawns.iter().enumerate() {
+        let label = format!("enemy spawn {}", index + 1);
+        validate_tank_spawn(grid, &label, spawn)?;
+    }
+
+    validate_base_position(grid, &level.base_position)
+}
+
+fn validate_tank_spawn(grid: &TileGrid, label: &str, spawn: &SpawnPoint) -> Result<(), String> {
+    let top_left = Vec2::new(spawn.x as f32 * TILE_SIZE, spawn.y as f32 * TILE_SIZE);
+    if grid.can_tank_occupy(top_left) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{label} ({}, {}) must fit a tank on passable tiles",
+            spawn.x, spawn.y
+        ))
+    }
+}
+
+fn validate_base_position(grid: &TileGrid, point: &GridPoint) -> Result<(), String> {
+    if point.x >= BOARD_TILES - 1 || point.y >= BOARD_TILES - 1 {
+        return Err(format!(
+            "base position ({}, {}) must fit a 2x2 base inside the battlefield",
+            point.x, point.y
+        ));
+    }
+
+    for y in point.y..=(point.y + 1) {
+        for x in point.x..=(point.x + 1) {
+            if grid.get(x as i32, y as i32) != Some(TileKind::Base) {
+                return Err(format!(
+                    "base position ({}, {}) must cover a 2x2 base tile area",
+                    point.x, point.y
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_powerup_carriers(level: &LevelDefinition) -> Result<(), String> {
     let mut seen = HashSet::new();
     for carrier in &level.powerup_carriers {
@@ -5372,6 +5420,59 @@ mod tests {
                 arena.p2_spawn.y as f32 * TILE_SIZE
             )));
         }
+    }
+
+    #[test]
+    fn level_rejects_spawn_points_that_do_not_fit_tanks() {
+        let blocked_player = LEVEL_1.replacen(
+            "player_spawn: (x: 8, y: 24",
+            "player_spawn: (x: 10, y: 24",
+            1,
+        );
+        assert!(
+            parse_level(&blocked_player)
+                .err()
+                .expect("blocked player spawn should fail")
+                .contains("player spawn (10, 24) must fit a tank on passable tiles")
+        );
+
+        let blocked_enemy = LEVEL_1.replacen(
+            "(x: 12, y: 0, facing: Down)",
+            "(x: 12, y: 24, facing: Down)",
+            1,
+        );
+        assert!(
+            parse_level(&blocked_enemy)
+                .err()
+                .expect("blocked enemy spawn should fail")
+                .contains("enemy spawn 2 (12, 24) must fit a tank on passable tiles")
+        );
+    }
+
+    #[test]
+    fn level_rejects_base_positions_that_do_not_cover_base_tiles() {
+        let shifted_base = LEVEL_1.replacen(
+            "base_position: (x: 12, y: 24)",
+            "base_position: (x: 11, y: 24)",
+            1,
+        );
+        assert!(
+            parse_level(&shifted_base)
+                .err()
+                .expect("shifted base should fail")
+                .contains("base position (11, 24) must cover a 2x2 base tile area")
+        );
+    }
+
+    #[test]
+    fn arena_rejects_spawn_points_that_do_not_fit_tanks() {
+        let blocked_p1 = ARENA_1.replacen("p1_spawn: (x: 0, y: 24", "p1_spawn: (x: 4, y: 24", 1);
+        assert!(
+            parse_arena(&blocked_p1)
+                .err()
+                .expect("blocked p1 spawn should fail")
+                .contains("p1 spawn (4, 24) must fit a tank on passable tiles")
+        );
     }
 
     #[test]

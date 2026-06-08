@@ -1461,13 +1461,13 @@ fn load_arena_definition(arena: usize) -> Result<ArenaDefinition, String> {
 fn load_level(path: &str) -> Result<LevelDefinition, String> {
     let contents =
         fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
-    parse_level(&contents)
+    parse_level(&contents).map_err(|err| format!("failed to load level {path}: {err}"))
 }
 
 fn load_arena(path: &str) -> Result<ArenaDefinition, String> {
     let contents =
         fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
-    parse_arena(&contents)
+    parse_arena(&contents).map_err(|err| format!("failed to load arena {path}: {err}"))
 }
 
 fn load_asset_manifest(path: &str) -> Result<AssetManifest, String> {
@@ -5125,6 +5125,40 @@ mod tests {
     }
 
     #[test]
+    fn load_level_errors_include_file_path_for_authoring_failures() {
+        let path = unique_temp_asset_path("bad-level.ron");
+        let path_text = path.to_string_lossy().into_owned();
+        let invalid = LEVEL_1.replacen("spawn_interval_secs: 3.0", "spawn_interval_secs: -1.0", 1);
+        fs::write(&path, invalid).expect("temp level should be written");
+
+        let err = match load_level(&path_text) {
+            Ok(_) => panic!("invalid level should fail"),
+            Err(err) => err,
+        };
+        fs::remove_file(&path).ok();
+
+        assert!(err.contains(&path_text));
+        assert!(err.contains("spawn_interval_secs must be positive"));
+    }
+
+    #[test]
+    fn load_arena_errors_include_file_path_for_authoring_failures() {
+        let path = unique_temp_asset_path("bad-arena.ron");
+        let path_text = path.to_string_lossy().into_owned();
+        let invalid = ARENA_1.replacen("target_score: 5", "target_score: 0", 1);
+        fs::write(&path, invalid).expect("temp arena should be written");
+
+        let err = match load_arena(&path_text) {
+            Ok(_) => panic!("invalid arena should fail"),
+            Err(err) => err,
+        };
+        fs::remove_file(&path).ok();
+
+        assert!(err.contains(&path_text));
+        assert!(err.contains("deathmatch target_score must be greater than zero"));
+    }
+
+    #[test]
     fn authored_asset_manifest_matches_generated_atlases() {
         let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
         assert_eq!(
@@ -5923,5 +5957,13 @@ mod tests {
             Vec2::new(10.0, 10.0),
             Vec2::new(14.0, 10.0)
         ));
+    }
+
+    fn unique_temp_asset_path(name: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("tank-{nonce}-{name}"))
     }
 }

@@ -3087,12 +3087,9 @@ fn move_bullets(
         (
             Entity,
             &mut Tank,
-            &mut Transform,
-            &RespawnPoint,
             &mut PlayerLives,
             &mut Health,
             &mut PlayerUpgrade,
-            &mut Sprite,
             Option<&Shield>,
             &Player,
         ),
@@ -3176,12 +3173,9 @@ fn move_bullets(
             for (
                 player_entity,
                 mut player_tank,
-                mut player_transform,
-                respawn,
                 mut lives,
                 mut player_health,
                 mut upgrade,
-                mut player_sprite,
                 shield,
                 player,
             ) in &mut player_tanks
@@ -3208,12 +3202,9 @@ fn move_bullets(
                         &mut score_board,
                         player_entity,
                         &mut player_tank,
-                        &mut player_transform,
-                        respawn,
                         &mut lives,
                         &mut player_health,
                         &mut upgrade,
-                        &mut player_sprite,
                         player.id,
                         Some(shooter),
                         *game_mode,
@@ -3235,12 +3226,9 @@ fn move_bullets(
             for (
                 player_entity,
                 mut player_tank,
-                mut player_transform,
-                respawn,
                 mut lives,
                 mut player_health,
                 mut upgrade,
-                mut player_sprite,
                 shield,
                 player,
             ) in &mut player_tanks
@@ -3271,12 +3259,9 @@ fn move_bullets(
                     &mut score_board,
                     player_entity,
                     &mut player_tank,
-                    &mut player_transform,
-                    respawn,
                     &mut lives,
                     &mut player_health,
                     &mut upgrade,
-                    &mut player_sprite,
                     player.id,
                     None,
                     GameMode::Campaign,
@@ -3373,12 +3358,9 @@ fn resolve_player_destroyed(
     score_board: &mut ScoreBoard,
     player_entity: Entity,
     tank: &mut Tank,
-    transform: &mut Transform,
-    _respawn: &RespawnPoint,
     lives: &mut PlayerLives,
     health: &mut Health,
     upgrade: &mut PlayerUpgrade,
-    sprite: &mut Sprite,
     target: PlayerId,
     shooter: Option<PlayerId>,
     mode: GameMode,
@@ -3392,6 +3374,7 @@ fn resolve_player_destroyed(
             if lives.current <= 0 {
                 game_status.phase = GamePhase::GameOver;
                 play_sound(commands, sounds, SoundKind::GameOver);
+                mark_player_tank_destroyed_terminal(commands, assets, player_entity, tank);
                 return;
             }
         }
@@ -3408,6 +3391,7 @@ fn resolve_player_destroyed(
                     game_status.phase = GamePhase::RoundOver;
                     game_status.winner = Some(winner);
                     play_sound(commands, sounds, SoundKind::LevelClear);
+                    mark_player_tank_destroyed_terminal(commands, assets, player_entity, tank);
                     return;
                 }
             }
@@ -3420,28 +3404,14 @@ fn resolve_player_destroyed(
                     game_status.phase = GamePhase::RoundOver;
                     game_status.winner = Some(shooter);
                     play_sound(commands, sounds, SoundKind::LevelClear);
+                    mark_player_tank_destroyed_terminal(commands, assets, player_entity, tank);
                     return;
                 }
             }
         }
     }
 
-    reset_player_upgrade(upgrade, sprite);
-    let parked_top_left = Vec2::new(-TANK_SIZE * 4.0, -TANK_SIZE * 4.0);
-    tank.top_left = parked_top_left;
-    transform.translation = board_object_center(
-        parked_top_left.x,
-        parked_top_left.y,
-        Vec2::splat(TANK_SIZE),
-        6.0,
-    );
-    commands
-        .entity(player_entity)
-        .remove::<(Tank, Health, Shield)>()
-        .insert((
-            PlayerRespawnPending::for_explosion(assets.manifest.explosion_frames()),
-            Visibility::Hidden,
-        ));
+    mark_player_tank_destroyed_for_respawn(commands, assets, player_entity, tank, upgrade);
 }
 
 fn reset_player_upgrade(upgrade: &mut PlayerUpgrade, sprite: &mut Sprite) {
@@ -3829,7 +3799,7 @@ fn tick_player_respawns(
         Entity,
         &mut PlayerRespawnPending,
         &RespawnPoint,
-        &PlayerUpgrade,
+        &mut PlayerUpgrade,
         &mut Transform,
         &mut Sprite,
         &mut TankSpriteState,
@@ -3844,7 +3814,7 @@ fn tick_player_respawns(
         entity,
         mut pending_respawn,
         respawn,
-        upgrade,
+        mut upgrade,
         mut transform,
         mut sprite,
         mut tank_sprite,
@@ -3856,7 +3826,7 @@ fn tick_player_respawns(
 
         tank_sprite.frame = 0;
         tank_sprite.timer.reset();
-        sprite.color = player_upgrade_visual_color(upgrade.level);
+        reset_player_upgrade(&mut upgrade, &mut sprite);
         set_tank_sprite_direction(&mut sprite, &tank_sprite, respawn.facing, &assets.manifest);
         transform.translation = board_object_center(
             respawn.top_left.x,
@@ -3882,7 +3852,6 @@ fn tick_player_respawns(
                     ),
                 },
                 PlayerRespawnDelay::new(),
-                Visibility::Visible,
             ));
         spawn_spawn_effect(&mut commands, &assets, respawn.top_left);
     }
@@ -3900,7 +3869,12 @@ fn tick_shields(
     game_status: Res<GameStatus>,
     mut shielded: Query<
         (Entity, &mut Shield, &PlayerUpgrade, &mut Sprite),
-        (With<Player>, Without<PlayerRespawnDelay>),
+        (
+            With<Player>,
+            Without<PlayerRespawnDelay>,
+            Without<PlayerRespawnPending>,
+            Without<DestroyedTank>,
+        ),
     >,
 ) {
     if !game_status.is_playing() {
@@ -3925,7 +3899,12 @@ fn update_versus_frozen_player_visuals(
     versus_freeze: Res<VersusPlayerFreeze>,
     mut players: Query<
         (&Player, &PlayerUpgrade, Option<&Shield>, &mut Sprite),
-        (With<Player>, Without<PlayerRespawnDelay>),
+        (
+            With<Player>,
+            Without<PlayerRespawnDelay>,
+            Without<PlayerRespawnPending>,
+            Without<DestroyedTank>,
+        ),
     >,
 ) {
     if !visual_effects_can_advance(game_status.phase) {
@@ -4489,6 +4468,48 @@ fn mark_enemy_tank_destroyed(
         .entity(enemy_entity)
         .remove::<(Tank, Health, EnemyTank, EnemyAi, SpawnProtection)>()
         .insert(DestroyedTank::for_explosion(frames));
+}
+
+fn parked_tank_top_left() -> Vec2 {
+    Vec2::new(-TANK_SIZE * 4.0, -TANK_SIZE * 4.0)
+}
+
+fn mark_player_tank_destroyed_for_respawn(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    player_entity: Entity,
+    tank: &mut Tank,
+    upgrade: &mut PlayerUpgrade,
+) {
+    tank.top_left = parked_tank_top_left();
+    upgrade.level = 0;
+    commands
+        .entity(player_entity)
+        .remove::<(Tank, Health, Shield)>()
+        .insert(PlayerRespawnPending::for_explosion(
+            assets.manifest.explosion_frames(),
+        ));
+}
+
+fn mark_player_tank_destroyed_terminal(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    player_entity: Entity,
+    tank: &mut Tank,
+) {
+    tank.top_left = parked_tank_top_left();
+    commands
+        .entity(player_entity)
+        .remove::<(
+            Tank,
+            Health,
+            Shield,
+            PlayerRespawnDelay,
+            PlayerRespawnPending,
+        )>()
+        .insert(DestroyedTank::for_explosion(
+            assets.manifest.explosion_frames(),
+        ));
 }
 
 fn spawn_spawn_effect(commands: &mut Commands, assets: &SpriteAssets, top_left: Vec2) {
@@ -7546,6 +7567,13 @@ mod tests {
             explosion_duration_secs(frames) - 0.01
         )));
         assert!(pending_respawn.tick(Duration::from_secs_f32(0.02)));
+    }
+
+    #[test]
+    fn parked_destroyed_tank_is_outside_the_battlefield() {
+        let top_left = parked_tank_top_left();
+        assert!(top_left.x + TANK_SIZE < 0.0);
+        assert!(top_left.y + TANK_SIZE < 0.0);
     }
 
     #[test]

@@ -2281,6 +2281,25 @@ fn base_wall_positions(tile_grid: &TileGrid) -> Vec<(usize, usize)> {
         return Vec::new();
     }
 
+    base_wall_positions_around_rect(tile_grid, min_x, min_y, max_x, max_y)
+}
+
+fn base_wall_positions_for_top_left(tile_grid: &TileGrid, top_left: Vec2) -> Vec<(usize, usize)> {
+    let min_x = (top_left.x / TILE_SIZE).floor().max(0.0) as usize;
+    let min_y = (top_left.y / TILE_SIZE).floor().max(0.0) as usize;
+    let max_x = (min_x + 1).min(BOARD_TILES - 1);
+    let max_y = (min_y + 1).min(BOARD_TILES - 1);
+
+    base_wall_positions_around_rect(tile_grid, min_x, min_y, max_x, max_y)
+}
+
+fn base_wall_positions_around_rect(
+    tile_grid: &TileGrid,
+    min_x: usize,
+    min_y: usize,
+    max_x: usize,
+    max_y: usize,
+) -> Vec<(usize, usize)> {
     let left = min_x.saturating_sub(2);
     let right = (max_x + 2).min(BOARD_TILES - 1);
     let top = min_y.saturating_sub(2);
@@ -3292,6 +3311,7 @@ fn pickup_powerups(
     powerups: Query<(Entity, &PowerUp, &Transform)>,
     active_sparkles: Query<Entity, With<PowerUpSparkle>>,
     tile_sprites: Query<(Entity, &GridTile)>,
+    bases: Query<&BaseSprite>,
     mut players: Query<
         (
             Entity,
@@ -3345,15 +3365,20 @@ fn pickup_powerups(
                     );
                 }
                 PowerUpKind::Shovel => {
-                    if *game_mode == GameMode::Campaign {
-                        reinforce_base_walls(
-                            &mut commands,
-                            &assets,
-                            &mut tile_grid,
-                            &tile_sprites,
-                            &mut base_reinforcement,
-                        );
-                    }
+                    let positions = shovel_reinforcement_positions(
+                        *game_mode,
+                        player.id,
+                        &tile_grid,
+                        bases.iter(),
+                    );
+                    reinforce_base_walls(
+                        &mut commands,
+                        &assets,
+                        &mut tile_grid,
+                        &tile_sprites,
+                        &mut base_reinforcement,
+                        positions,
+                    );
                 }
                 PowerUpKind::Tank => {
                     lives.current += 1;
@@ -3438,20 +3463,44 @@ fn destroy_visible_enemies(
     }
 }
 
+fn shovel_reinforcement_positions<'a>(
+    mode: GameMode,
+    player: PlayerId,
+    tile_grid: &TileGrid,
+    bases: impl IntoIterator<Item = &'a BaseSprite>,
+) -> Vec<(usize, usize)> {
+    match mode {
+        GameMode::Campaign => base_wall_positions(tile_grid),
+        GameMode::VersusBaseBattle => bases
+            .into_iter()
+            .find(|base| base.owner == Some(player))
+            .map(|base| base_wall_positions_for_top_left(tile_grid, base.top_left))
+            .unwrap_or_default(),
+        GameMode::VersusDeathmatch => Vec::new(),
+    }
+}
+
 fn reinforce_base_walls(
     commands: &mut Commands,
     assets: &SpriteAssets,
     tile_grid: &mut TileGrid,
     tile_sprites: &Query<(Entity, &GridTile)>,
     base_reinforcement: &mut BaseReinforcement,
+    positions: Vec<(usize, usize)>,
 ) {
-    let positions = base_wall_positions(tile_grid);
-    if base_reinforcement.saved_tiles.is_empty() {
-        base_reinforcement.saved_tiles = positions
-            .iter()
-            .map(|(x, y)| (*x, *y, tile_grid.tiles[y * BOARD_TILES + x]))
-            .collect();
+    if !base_reinforcement.saved_tiles.is_empty() {
+        base_reinforcement.start();
+        return;
     }
+
+    if positions.is_empty() {
+        return;
+    }
+
+    base_reinforcement.saved_tiles = positions
+        .iter()
+        .map(|(x, y)| (*x, *y, tile_grid.tiles[y * BOARD_TILES + x]))
+        .collect();
 
     for (x, y) in positions {
         sync_tile_sprite(
@@ -7277,6 +7326,56 @@ mod tests {
     fn base_battle_winner_is_the_destroyed_base_opponent() {
         assert_eq!(base_battle_winner_for_base(PlayerId::One), PlayerId::Two);
         assert_eq!(base_battle_winner_for_base(PlayerId::Two), PlayerId::One);
+    }
+
+    #[test]
+    fn shovel_reinforces_only_the_collectors_base_in_base_battle() {
+        let arena = parse_arena(ARENA_5).expect("arena should parse");
+        let grid = TileGrid::from_arena(&arena).expect("grid should build");
+        let BattleRules::BaseBattle {
+            p1_base, p2_base, ..
+        } = arena.battle_rules
+        else {
+            panic!("arena five should be base battle");
+        };
+        let bases = [
+            BaseSprite {
+                owner: Some(PlayerId::One),
+                top_left: grid_point_top_left(&p1_base),
+            },
+            BaseSprite {
+                owner: Some(PlayerId::Two),
+                top_left: grid_point_top_left(&p2_base),
+            },
+        ];
+
+        let p1_positions = shovel_reinforcement_positions(
+            GameMode::VersusBaseBattle,
+            PlayerId::One,
+            &grid,
+            &bases,
+        );
+        assert!(p1_positions.contains(&(2, 24)));
+        assert!(!p1_positions.contains(&(22, 0)));
+
+        let p2_positions = shovel_reinforcement_positions(
+            GameMode::VersusBaseBattle,
+            PlayerId::Two,
+            &grid,
+            &bases,
+        );
+        assert!(p2_positions.contains(&(22, 0)));
+        assert!(!p2_positions.contains(&(2, 24)));
+
+        assert!(
+            shovel_reinforcement_positions(
+                GameMode::VersusDeathmatch,
+                PlayerId::One,
+                &grid,
+                &bases
+            )
+            .is_empty()
+        );
     }
 
     #[test]

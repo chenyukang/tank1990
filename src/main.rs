@@ -77,6 +77,7 @@ fn main() {
         .insert_resource(ModeSelect::default())
         .insert_resource(GameStatus::default())
         .insert_resource(EnemyFreeze::default())
+        .insert_resource(VersusPlayerFreeze::default())
         .insert_resource(BaseReinforcement::default())
         .insert_resource(VersusPowerUpDirector::inactive())
         .add_plugins(
@@ -110,6 +111,12 @@ fn main() {
             advance_after_stage_intro
                 .after(update_player_control)
                 .before(spawn_enemies),
+        )
+        .add_systems(
+            FixedUpdate,
+            update_versus_frozen_player_visuals
+                .after(tick_shields)
+                .before(update_enemy_visual_feedback),
         )
         .add_systems(
             FixedUpdate,
@@ -597,6 +604,42 @@ impl EnemyFreeze {
         timer.tick(delta);
         if timer.is_finished() {
             self.timer = None;
+        }
+    }
+}
+
+#[derive(Resource, Default)]
+struct VersusPlayerFreeze {
+    frozen_player: Option<PlayerId>,
+    timer: Option<Timer>,
+}
+
+impl VersusPlayerFreeze {
+    fn start(&mut self, player: PlayerId) {
+        self.frozen_player = Some(player);
+        self.timer = Some(Timer::from_seconds(CLOCK_SECONDS, TimerMode::Once));
+    }
+
+    fn reset(&mut self) {
+        self.frozen_player = None;
+        self.timer = None;
+    }
+
+    fn is_player_frozen(&self, player: PlayerId) -> bool {
+        self.frozen_player == Some(player)
+            && self
+                .timer
+                .as_ref()
+                .is_some_and(|timer| !timer.is_finished())
+    }
+
+    fn tick(&mut self, delta: Duration) {
+        let Some(timer) = &mut self.timer else {
+            return;
+        };
+        timer.tick(delta);
+        if timer.is_finished() {
+            self.reset();
         }
     }
 }
@@ -1243,6 +1286,7 @@ fn handle_shared_controls(
     mut versus_powerups: ResMut<VersusPowerUpDirector>,
     mut mode_select: ResMut<ModeSelect>,
     mut enemy_freeze: ResMut<EnemyFreeze>,
+    mut versus_freeze: ResMut<VersusPlayerFreeze>,
     mut base_reinforcement: ResMut<BaseReinforcement>,
     mut menu_queries: ParamSet<(
         Query<Entity, With<GameEntity>>,
@@ -1296,6 +1340,7 @@ fn handle_shared_controls(
                         &mut stage_rules,
                         &mut versus_powerups,
                         &mut enemy_freeze,
+                        &mut versus_freeze,
                         &mut base_reinforcement,
                         &menu_queries.p0(),
                     );
@@ -1314,6 +1359,7 @@ fn handle_shared_controls(
                         &mut stage_rules,
                         &mut versus_powerups,
                         &mut enemy_freeze,
+                        &mut versus_freeze,
                         &mut base_reinforcement,
                         &menu_queries.p0(),
                     );
@@ -1339,6 +1385,7 @@ fn handle_shared_controls(
             &mut versus_powerups,
             &mut mode_select,
             &mut enemy_freeze,
+            &mut versus_freeze,
             &mut base_reinforcement,
             *game_mode,
             &menu_queries.p0(),
@@ -1359,6 +1406,7 @@ fn handle_shared_controls(
                 &mut stage_rules,
                 &mut versus_powerups,
                 &mut enemy_freeze,
+                &mut versus_freeze,
                 &mut base_reinforcement,
                 &menu_queries.p0(),
             ),
@@ -1374,6 +1422,7 @@ fn handle_shared_controls(
                 &mut stage_rules,
                 &mut versus_powerups,
                 &mut enemy_freeze,
+                &mut versus_freeze,
                 &mut base_reinforcement,
                 &menu_queries.p0(),
             ),
@@ -1392,6 +1441,7 @@ fn enter_mode_select(
     versus_powerups: &mut VersusPowerUpDirector,
     mode_select: &mut ModeSelect,
     enemy_freeze: &mut EnemyFreeze,
+    versus_freeze: &mut VersusPlayerFreeze,
     base_reinforcement: &mut BaseReinforcement,
     selected_mode: GameMode,
     game_entities: &Query<Entity, With<GameEntity>>,
@@ -1410,6 +1460,7 @@ fn enter_mode_select(
     *stage_rules = StageRules::default();
     *versus_powerups = VersusPowerUpDirector::inactive();
     enemy_freeze.reset();
+    versus_freeze.reset();
     base_reinforcement.reset();
     game_status.phase = GamePhase::ModeSelect;
     game_status.winner = None;
@@ -1427,6 +1478,7 @@ fn restart_level(
     stage_rules: &mut StageRules,
     versus_powerups: &mut VersusPowerUpDirector,
     enemy_freeze: &mut EnemyFreeze,
+    versus_freeze: &mut VersusPlayerFreeze,
     base_reinforcement: &mut BaseReinforcement,
     game_entities: &Query<Entity, With<GameEntity>>,
 ) {
@@ -1448,6 +1500,7 @@ fn restart_level(
     *stage_rules = StageRules::from_level(&level);
     *versus_powerups = VersusPowerUpDirector::inactive();
     enemy_freeze.reset();
+    versus_freeze.reset();
     base_reinforcement.reset();
     game_status.phase = GamePhase::StageIntro;
     game_status.winner = None;
@@ -1466,6 +1519,7 @@ fn start_versus_round(
     stage_rules: &mut StageRules,
     versus_powerups: &mut VersusPowerUpDirector,
     enemy_freeze: &mut EnemyFreeze,
+    versus_freeze: &mut VersusPlayerFreeze,
     base_reinforcement: &mut BaseReinforcement,
     game_entities: &Query<Entity, With<GameEntity>>,
 ) {
@@ -1513,6 +1567,7 @@ fn start_versus_round(
     *stage_rules = StageRules::default();
     *versus_powerups = VersusPowerUpDirector::from_arena(&arena);
     enemy_freeze.reset();
+    versus_freeze.reset();
     base_reinforcement.reset();
     game_status.phase = GamePhase::StageIntro;
     game_status.arena = arena_index;
@@ -2518,6 +2573,7 @@ fn move_player_tank(
     assets: Res<SpriteAssets>,
     grid: Res<TileGrid>,
     game_status: Res<GameStatus>,
+    versus_freeze: Res<VersusPlayerFreeze>,
     mut tank_queries: ParamSet<(
         Query<&Tank>,
         Query<
@@ -2539,6 +2595,18 @@ fn move_player_tank(
     let occupied: Vec<Vec2> = tank_queries.p0().iter().map(|tank| tank.top_left).collect();
 
     for (mut tank, mut sprite, mut transform, mut tank_sprite, player) in &mut tank_queries.p1() {
+        if versus_freeze.is_player_frozen(player.id) {
+            update_tank_sprite(
+                &mut sprite,
+                &mut tank_sprite,
+                tank.facing,
+                false,
+                time.delta(),
+                &assets.manifest,
+            );
+            continue;
+        }
+
         let Some(direction) =
             held_direction(&keys, player_last_direction(&control, player.id), player.id)
         else {
@@ -2853,6 +2921,7 @@ fn fire_player_bullet(
     sounds: Res<SoundAssets>,
     game_status: Res<GameStatus>,
     stage_rules: Res<StageRules>,
+    versus_freeze: Res<VersusPlayerFreeze>,
     players: Query<(&Tank, &PlayerUpgrade, &Player), (With<Player>, Without<PlayerRespawnDelay>)>,
     bullets: Query<&Bullet>,
 ) {
@@ -2861,6 +2930,10 @@ fn fire_player_bullet(
     }
 
     for (tank, upgrade, player) in &players {
+        if versus_freeze.is_player_frozen(player.id) {
+            continue;
+        }
+
         if !player_fire_pressed(&keys, player.id) {
             continue;
         }
@@ -3307,6 +3380,13 @@ fn base_battle_winner_for_base(base_owner: PlayerId) -> PlayerId {
     base_owner.opponent()
 }
 
+fn clock_freeze_target(game_mode: GameMode, collector: PlayerId) -> Option<PlayerId> {
+    match game_mode {
+        GameMode::Campaign => None,
+        GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => Some(collector.opponent()),
+    }
+}
+
 fn cancel_colliding_bullets(mut commands: Commands, bullets: Query<(Entity, &Bullet)>) {
     let bullets: Vec<(Entity, Vec2)> = bullets
         .iter()
@@ -3359,6 +3439,7 @@ fn pickup_powerups(
     sounds: Res<SoundAssets>,
     mut tile_grid: ResMut<TileGrid>,
     mut enemy_freeze: ResMut<EnemyFreeze>,
+    mut versus_freeze: ResMut<VersusPlayerFreeze>,
     mut base_reinforcement: ResMut<BaseReinforcement>,
     powerups: Query<(Entity, &PowerUp, &Transform)>,
     active_sparkles: Query<Entity, With<PowerUpSparkle>>,
@@ -3405,7 +3486,11 @@ fn pickup_powerups(
                     });
                 }
                 PowerUpKind::Clock => {
-                    enemy_freeze.start();
+                    if let Some(frozen_player) = clock_freeze_target(*game_mode, player.id) {
+                        versus_freeze.start(frozen_player);
+                    } else {
+                        enemy_freeze.start();
+                    }
                 }
                 PowerUpKind::Grenade => {
                     destroy_visible_enemies(
@@ -3459,6 +3544,7 @@ fn tick_powerup_effects(
     assets: Res<SpriteAssets>,
     mut tile_grid: ResMut<TileGrid>,
     mut enemy_freeze: ResMut<EnemyFreeze>,
+    mut versus_freeze: ResMut<VersusPlayerFreeze>,
     mut base_reinforcement: ResMut<BaseReinforcement>,
     tile_sprites: Query<(Entity, &GridTile)>,
 ) {
@@ -3467,6 +3553,7 @@ fn tick_powerup_effects(
     }
 
     enemy_freeze.tick(time.delta());
+    versus_freeze.tick(time.delta());
 
     if base_reinforcement.tick(time.delta()) {
         restore_base_walls(
@@ -3673,6 +3760,29 @@ fn tick_shields(
     }
 }
 
+fn update_versus_frozen_player_visuals(
+    time: Res<Time>,
+    game_status: Res<GameStatus>,
+    versus_freeze: Res<VersusPlayerFreeze>,
+    mut players: Query<
+        (&Player, &PlayerUpgrade, Option<&Shield>, &mut Sprite),
+        (With<Player>, Without<PlayerRespawnDelay>),
+    >,
+) {
+    if !visual_effects_can_advance(game_status.phase) {
+        return;
+    }
+
+    for (player, upgrade, shield, mut sprite) in &mut players {
+        if versus_freeze.is_player_frozen(player.id) {
+            let [r, g, b] = player_frozen_visual_rgb(time.elapsed_secs());
+            sprite.color = Color::srgb_u8(r, g, b);
+        } else if shield.is_none() {
+            sprite.color = player_upgrade_visual_color(upgrade.level);
+        }
+    }
+}
+
 fn update_enemy_visual_feedback(
     time: Res<Time>,
     game_status: Res<GameStatus>,
@@ -3757,6 +3867,7 @@ fn advance_after_level_clear(
     mut score_board: ResMut<ScoreBoard>,
     mut stage_rules: ResMut<StageRules>,
     mut enemy_freeze: ResMut<EnemyFreeze>,
+    mut versus_freeze: ResMut<VersusPlayerFreeze>,
     mut base_reinforcement: ResMut<BaseReinforcement>,
     game_entities: Query<Entity, With<GameEntity>>,
     banners: Query<Entity, With<PhaseBanner>>,
@@ -3804,6 +3915,7 @@ fn advance_after_level_clear(
     score_board.enemies_destroyed = 0;
     score_board.total_enemies = level.enemies.len();
     enemy_freeze.reset();
+    versus_freeze.reset();
     base_reinforcement.reset();
     game_status.stage = next_stage;
     game_status.phase = GamePhase::StageIntro;
@@ -4632,6 +4744,14 @@ fn player_shield_visual_rgb(elapsed_secs: f32, upgrade_level: u8) -> [u8; 3] {
         [160, 220, 255]
     } else {
         player_upgrade_visual_rgb(upgrade_level)
+    }
+}
+
+fn player_frozen_visual_rgb(elapsed_secs: f32) -> [u8; 3] {
+    if elapsed_secs % 0.24 < 0.12 {
+        [136, 216, 255]
+    } else {
+        [216, 248, 255]
     }
 }
 
@@ -7379,6 +7499,38 @@ mod tests {
         assert!(freeze.is_active());
         freeze.tick(Duration::from_secs_f32(CLOCK_SECONDS + 0.1));
         assert!(!freeze.is_active());
+    }
+
+    #[test]
+    fn clock_freeze_target_depends_on_game_mode() {
+        assert_eq!(clock_freeze_target(GameMode::Campaign, PlayerId::One), None);
+        assert_eq!(
+            clock_freeze_target(GameMode::VersusDeathmatch, PlayerId::One),
+            Some(PlayerId::Two)
+        );
+        assert_eq!(
+            clock_freeze_target(GameMode::VersusBaseBattle, PlayerId::Two),
+            Some(PlayerId::One)
+        );
+    }
+
+    #[test]
+    fn versus_player_freeze_targets_one_player_and_expires() {
+        let mut freeze = VersusPlayerFreeze::default();
+        freeze.start(PlayerId::Two);
+
+        assert!(!freeze.is_player_frozen(PlayerId::One));
+        assert!(freeze.is_player_frozen(PlayerId::Two));
+
+        freeze.tick(Duration::from_secs_f32(CLOCK_SECONDS + 0.1));
+
+        assert!(!freeze.is_player_frozen(PlayerId::Two));
+    }
+
+    #[test]
+    fn frozen_player_visuals_flash_blue_white() {
+        assert_eq!(player_frozen_visual_rgb(0.05), [136, 216, 255]);
+        assert_eq!(player_frozen_visual_rgb(0.18), [216, 248, 255]);
     }
 
     #[test]

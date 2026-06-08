@@ -3479,6 +3479,7 @@ fn clock_freeze_target(game_mode: GameMode, collector: PlayerId) -> Option<Playe
 fn cancel_colliding_bullets(
     mut commands: Commands,
     assets: Res<SpriteAssets>,
+    sounds: Res<SoundAssets>,
     bullets: Query<(Entity, &Bullet)>,
 ) {
     let bullets: Vec<(Entity, Vec2)> = bullets
@@ -3498,6 +3499,7 @@ fn cancel_colliding_bullets(
                         &assets,
                         bullet_clash_impact_top_left(bullets[i].1, bullets[j].1),
                     );
+                    play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                 }
             }
         }

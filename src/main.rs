@@ -417,6 +417,8 @@ impl Decodable for RetroSound {
 struct PlayerControl {
     p1_last_direction: Direction,
     p2_last_direction: Direction,
+    p1_direction_priority: Vec<Direction>,
+    p2_direction_priority: Vec<Direction>,
 }
 
 impl Default for PlayerControl {
@@ -424,6 +426,8 @@ impl Default for PlayerControl {
         Self {
             p1_last_direction: Direction::Up,
             p2_last_direction: Direction::Down,
+            p1_direction_priority: Vec::new(),
+            p2_direction_priority: Vec::new(),
         }
     }
 }
@@ -2713,27 +2717,25 @@ fn spawn_player_tank(
 }
 
 fn update_player_control(keys: Res<ButtonInput<KeyCode>>, mut control: ResMut<PlayerControl>) {
-    for (key, direction) in [
-        (KeyCode::KeyW, Direction::Up),
-        (KeyCode::KeyS, Direction::Down),
-        (KeyCode::KeyA, Direction::Left),
-        (KeyCode::KeyD, Direction::Right),
-    ] {
-        if keys.just_pressed(key) {
-            control.p1_last_direction = direction;
-        }
-    }
+    let PlayerControl {
+        p1_last_direction,
+        p2_last_direction,
+        p1_direction_priority,
+        p2_direction_priority,
+    } = control.as_mut();
 
-    for (key, direction) in [
-        (KeyCode::ArrowUp, Direction::Up),
-        (KeyCode::ArrowDown, Direction::Down),
-        (KeyCode::ArrowLeft, Direction::Left),
-        (KeyCode::ArrowRight, Direction::Right),
-    ] {
-        if keys.just_pressed(key) {
-            control.p2_last_direction = direction;
-        }
-    }
+    update_direction_priority(
+        &keys,
+        PlayerId::One,
+        p1_direction_priority,
+        p1_last_direction,
+    );
+    update_direction_priority(
+        &keys,
+        PlayerId::Two,
+        p2_direction_priority,
+        p2_last_direction,
+    );
 }
 
 fn move_player_tank(
@@ -4531,6 +4533,56 @@ fn player_last_direction(control: &PlayerControl, player: PlayerId) -> Direction
         PlayerId::One => control.p1_last_direction,
         PlayerId::Two => control.p2_last_direction,
     }
+}
+
+fn update_direction_priority(
+    keys: &ButtonInput<KeyCode>,
+    player: PlayerId,
+    priority: &mut Vec<Direction>,
+    last_direction: &mut Direction,
+) {
+    for (key, direction) in direction_key_pairs(player) {
+        if keys.just_pressed(key) {
+            record_direction_press(priority, direction);
+        }
+    }
+
+    prune_direction_priority(priority, |direction| {
+        direction_is_held(keys, direction, player)
+    });
+    if let Some(direction) = preferred_direction(priority) {
+        *last_direction = direction;
+    }
+}
+
+fn direction_key_pairs(player: PlayerId) -> [(KeyCode, Direction); 4] {
+    match player {
+        PlayerId::One => [
+            (KeyCode::KeyW, Direction::Up),
+            (KeyCode::KeyS, Direction::Down),
+            (KeyCode::KeyA, Direction::Left),
+            (KeyCode::KeyD, Direction::Right),
+        ],
+        PlayerId::Two => [
+            (KeyCode::ArrowUp, Direction::Up),
+            (KeyCode::ArrowDown, Direction::Down),
+            (KeyCode::ArrowLeft, Direction::Left),
+            (KeyCode::ArrowRight, Direction::Right),
+        ],
+    }
+}
+
+fn record_direction_press(priority: &mut Vec<Direction>, direction: Direction) {
+    priority.retain(|held| *held != direction);
+    priority.push(direction);
+}
+
+fn prune_direction_priority(priority: &mut Vec<Direction>, is_held: impl Fn(Direction) -> bool) {
+    priority.retain(|direction| is_held(*direction));
+}
+
+fn preferred_direction(priority: &[Direction]) -> Option<Direction> {
+    priority.last().copied()
 }
 
 fn held_direction(
@@ -7774,6 +7826,35 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn direction_priority_uses_most_recent_pressed_direction() {
+        let mut priority = Vec::new();
+
+        record_direction_press(&mut priority, Direction::Down);
+        record_direction_press(&mut priority, Direction::Right);
+        record_direction_press(&mut priority, Direction::Up);
+
+        assert_eq!(preferred_direction(&priority), Some(Direction::Up));
+
+        prune_direction_priority(&mut priority, |direction| {
+            matches!(direction, Direction::Down | Direction::Right)
+        });
+
+        assert_eq!(preferred_direction(&priority), Some(Direction::Right));
+    }
+
+    #[test]
+    fn direction_priority_repress_moves_direction_to_latest_slot() {
+        let mut priority = Vec::new();
+
+        record_direction_press(&mut priority, Direction::Left);
+        record_direction_press(&mut priority, Direction::Right);
+        record_direction_press(&mut priority, Direction::Left);
+
+        assert_eq!(priority, [Direction::Right, Direction::Left]);
+        assert_eq!(preferred_direction(&priority), Some(Direction::Left));
     }
 
     #[test]

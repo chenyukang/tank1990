@@ -30,6 +30,7 @@ const BULLET_SIZE: f32 = 4.0;
 const PLAYER_SPEED: f32 = 60.0;
 const BULLET_SPEED: f32 = 240.0;
 const PLAYER_FAST_BULLET_SPEED: f32 = 300.0;
+const POWER_ENEMY_BULLET_SPEED: f32 = 300.0;
 const ENEMY_BULLET_LIMIT: usize = 4;
 const ENEMY_BULLET_LIMIT_PER_TANK: usize = 1;
 const SNAP_DISTANCE: f32 = 2.0;
@@ -1894,7 +1895,7 @@ fn fire_enemy_bullets(
                 top_left: bullet_top_left,
                 facing: tank.facing,
                 owner: Team::Enemy,
-                speed: BULLET_SPEED,
+                speed: enemy_bullet_speed(enemy.kind),
                 breaks_steel: false,
             },
             EnemyBulletSource {
@@ -3082,6 +3083,13 @@ fn enemy_fire_interval(kind: EnemyKind) -> f32 {
     }
 }
 
+fn enemy_bullet_speed(kind: EnemyKind) -> f32 {
+    match kind {
+        EnemyKind::Power => POWER_ENEMY_BULLET_SPEED,
+        EnemyKind::Basic | EnemyKind::Fast | EnemyKind::Armor => BULLET_SPEED,
+    }
+}
+
 fn enemy_score(kind: EnemyKind) -> u32 {
     match kind {
         EnemyKind::Basic => 100,
@@ -4207,6 +4215,17 @@ mod tests {
         assert_eq!(enemy_score(EnemyKind::Fast), 200);
         assert_eq!(enemy_score(EnemyKind::Power), 300);
         assert_eq!(enemy_score(EnemyKind::Armor), 400);
+    }
+
+    #[test]
+    fn power_enemies_fire_faster_bullets() {
+        assert_eq!(enemy_bullet_speed(EnemyKind::Basic), BULLET_SPEED);
+        assert_eq!(enemy_bullet_speed(EnemyKind::Fast), BULLET_SPEED);
+        assert_eq!(enemy_bullet_speed(EnemyKind::Armor), BULLET_SPEED);
+        assert_eq!(
+            enemy_bullet_speed(EnemyKind::Power),
+            POWER_ENEMY_BULLET_SPEED
+        );
     }
 
     #[test]

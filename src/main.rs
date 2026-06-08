@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -8,6 +10,7 @@ use std::fs;
 
 const LEVEL_COUNT: usize = 3;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
+const VERSUS_ARENA: usize = 1;
 
 const VIRTUAL_WIDTH: f32 = 256.0;
 const VIRTUAL_HEIGHT: f32 = 240.0;
@@ -32,6 +35,7 @@ fn main() {
         .insert_resource(ClearColor(Color::BLACK))
         .insert_resource(Time::<Fixed>::from_hz(60.0))
         .insert_resource(PlayerControl::default())
+        .insert_resource(GameMode::Campaign)
         .insert_resource(GameStatus::default())
         .add_plugins(
             DefaultPlugins
@@ -94,15 +98,48 @@ struct SpriteAssets {
     base_destroyed: Handle<Image>,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 struct PlayerControl {
-    last_direction: Direction,
+    p1_last_direction: Direction,
+    p2_last_direction: Direction,
+}
+
+impl Default for PlayerControl {
+    fn default() -> Self {
+        Self {
+            p1_last_direction: Direction::Up,
+            p2_last_direction: Direction::Down,
+        }
+    }
+}
+
+#[derive(Resource, Clone, Copy, Debug, Eq, PartialEq)]
+enum GameMode {
+    Campaign,
+    VersusDeathmatch,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PlayerId {
+    One,
+    Two,
+}
+
+impl PlayerId {
+    fn team(self) -> Team {
+        match self {
+            Self::One => Team::Player1,
+            Self::Two => Team::Player2,
+        }
+    }
 }
 
 #[derive(Resource)]
 struct GameStatus {
     phase: GamePhase,
     stage: usize,
+    arena: usize,
+    winner: Option<PlayerId>,
     transition_timer: Timer,
 }
 
@@ -111,6 +148,8 @@ impl Default for GameStatus {
         Self {
             phase: GamePhase::Playing,
             stage: 1,
+            arena: VERSUS_ARENA,
+            winner: None,
             transition_timer: Timer::from_seconds(LEVEL_CLEAR_DELAY_SECONDS, TimerMode::Once),
         }
     }
@@ -128,6 +167,7 @@ enum GamePhase {
     Paused,
     GameOver,
     LevelClear,
+    RoundOver,
     Victory,
 }
 
@@ -137,6 +177,65 @@ struct ScoreBoard {
     lives: i32,
     enemies_destroyed: usize,
     total_enemies: usize,
+    p1_score: u32,
+    p2_score: u32,
+    p1_lives: i32,
+    p2_lives: i32,
+    target_score: u32,
+    respawn_invulnerability_secs: f32,
+}
+
+impl ScoreBoard {
+    fn campaign(total_enemies: usize) -> Self {
+        Self {
+            score: 0,
+            lives: 3,
+            enemies_destroyed: 0,
+            total_enemies,
+            p1_score: 0,
+            p2_score: 0,
+            p1_lives: 3,
+            p2_lives: 0,
+            target_score: 0,
+            respawn_invulnerability_secs: 2.0,
+        }
+    }
+
+    fn versus(lives: i32, target_score: u32, respawn_invulnerability_secs: f32) -> Self {
+        Self {
+            score: 0,
+            lives,
+            enemies_destroyed: 0,
+            total_enemies: 0,
+            p1_score: 0,
+            p2_score: 0,
+            p1_lives: lives,
+            p2_lives: lives,
+            target_score,
+            respawn_invulnerability_secs,
+        }
+    }
+
+    fn player_score(&self, player: PlayerId) -> u32 {
+        match player {
+            PlayerId::One => self.p1_score,
+            PlayerId::Two => self.p2_score,
+        }
+    }
+
+    fn add_player_score(&mut self, player: PlayerId) {
+        match player {
+            PlayerId::One => self.p1_score += 1,
+            PlayerId::Two => self.p2_score += 1,
+        }
+    }
+
+    fn set_player_lives(&mut self, player: PlayerId, lives: i32) {
+        match player {
+            PlayerId::One => self.p1_lives = lives,
+            PlayerId::Two => self.p2_lives = lives,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -158,6 +257,16 @@ impl EnemyDirector {
             spawn_cursor: 0,
         }
     }
+
+    fn inactive() -> Self {
+        Self {
+            roster: VecDeque::new(),
+            spawns: Vec::new(),
+            spawn_timer: Timer::from_seconds(1.0, TimerMode::Repeating),
+            max_active: 0,
+            spawn_cursor: 0,
+        }
+    }
 }
 
 #[derive(Resource, Clone)]
@@ -167,15 +276,23 @@ struct TileGrid {
 
 impl TileGrid {
     fn from_level(level: &LevelDefinition) -> Result<Self, String> {
-        if level.map.len() != BOARD_TILES {
+        Self::from_map(&level.map)
+    }
+
+    fn from_arena(arena: &ArenaDefinition) -> Result<Self, String> {
+        Self::from_map(&arena.map)
+    }
+
+    fn from_map(map: &[String]) -> Result<Self, String> {
+        if map.len() != BOARD_TILES {
             return Err(format!(
                 "expected {BOARD_TILES} map rows, got {}",
-                level.map.len()
+                map.len()
             ));
         }
 
         let mut tiles = Vec::with_capacity(BOARD_TILES * BOARD_TILES);
-        for (y, row) in level.map.iter().enumerate() {
+        for (y, row) in map.iter().enumerate() {
             let chars: Vec<char> = row.chars().collect();
             if chars.len() != BOARD_TILES {
                 return Err(format!(
@@ -311,6 +428,25 @@ struct LevelDefinition {
     max_enemies_on_screen: usize,
 }
 
+#[derive(Deserialize)]
+struct ArenaDefinition {
+    name: String,
+    map: Vec<String>,
+    p1_spawn: SpawnPoint,
+    p2_spawn: SpawnPoint,
+    battle_rules: BattleRules,
+    powerup_spawns: Vec<GridPoint>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+enum BattleRules {
+    Deathmatch {
+        target_score: u32,
+        lives: i32,
+        respawn_invulnerability_secs: f32,
+    },
+}
+
 #[derive(Clone, Deserialize)]
 struct SpawnPoint {
     x: usize,
@@ -333,7 +469,9 @@ enum EnemyKind {
 }
 
 #[derive(Component)]
-struct Player;
+struct Player {
+    id: PlayerId,
+}
 
 #[derive(Component)]
 struct GameEntity;
@@ -365,8 +503,23 @@ struct Bullet {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Team {
-    Player,
+    Player1,
+    Player2,
     Enemy,
+}
+
+impl Team {
+    fn player_id(self) -> Option<PlayerId> {
+        match self {
+            Self::Player1 => Some(PlayerId::One),
+            Self::Player2 => Some(PlayerId::Two),
+            Self::Enemy => None,
+        }
+    }
+
+    fn is_player(self) -> bool {
+        self.player_id().is_some()
+    }
 }
 
 #[derive(Component)]
@@ -375,7 +528,10 @@ struct Health {
 }
 
 #[derive(Component)]
-struct RespawnPoint(Vec2);
+struct RespawnPoint {
+    top_left: Vec2,
+    facing: Direction,
+}
 
 #[derive(Component)]
 struct PlayerLives {
@@ -412,6 +568,9 @@ enum StatusValue {
     Score,
     Lives,
     Stage,
+    P2Score,
+    P2Lives,
+    Target,
 }
 
 #[derive(Component)]
@@ -453,14 +612,9 @@ fn setup(
     info!("Loaded {}", level.name);
     let tile_grid = TileGrid::from_level(&level).expect("level map should be valid");
     let enemy_director = EnemyDirector::from_level(&level);
-    let score_board = ScoreBoard {
-        score: 0,
-        lives: 3,
-        enemies_destroyed: 0,
-        total_enemies: level.enemies.len(),
-    };
+    let score_board = ScoreBoard::campaign(level.enemies.len());
 
-    spawn_screen_frame(&mut commands, &sprite_assets);
+    spawn_screen_frame(&mut commands, &sprite_assets, GameMode::Campaign);
     spawn_level(
         &mut commands,
         &sprite_assets,
@@ -479,6 +633,7 @@ fn handle_shared_controls(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     assets: Res<SpriteAssets>,
+    mut game_mode: ResMut<GameMode>,
     mut game_status: ResMut<GameStatus>,
     mut tile_grid: ResMut<TileGrid>,
     mut director: ResMut<EnemyDirector>,
@@ -489,16 +644,57 @@ fn handle_shared_controls(
         game_status.phase = toggle_pause_phase(game_status.phase);
     }
 
+    if keys.just_pressed(KeyCode::KeyM) {
+        match *game_mode {
+            GameMode::Campaign => start_versus_round(
+                &mut commands,
+                &assets,
+                &mut game_mode,
+                &mut game_status,
+                &mut tile_grid,
+                &mut director,
+                &mut score_board,
+                &game_entities,
+            ),
+            GameMode::VersusDeathmatch => {
+                game_status.stage = 1;
+                *game_mode = GameMode::Campaign;
+                restart_level(
+                    &mut commands,
+                    &assets,
+                    &mut game_status,
+                    &mut tile_grid,
+                    &mut director,
+                    &mut score_board,
+                    &game_entities,
+                );
+            }
+        }
+        return;
+    }
+
     if keys.just_pressed(KeyCode::KeyR) {
-        restart_level(
-            &mut commands,
-            &assets,
-            &mut game_status,
-            &mut tile_grid,
-            &mut director,
-            &mut score_board,
-            &game_entities,
-        );
+        match *game_mode {
+            GameMode::Campaign => restart_level(
+                &mut commands,
+                &assets,
+                &mut game_status,
+                &mut tile_grid,
+                &mut director,
+                &mut score_board,
+                &game_entities,
+            ),
+            GameMode::VersusDeathmatch => start_versus_round(
+                &mut commands,
+                &assets,
+                &mut game_mode,
+                &mut game_status,
+                &mut tile_grid,
+                &mut director,
+                &mut score_board,
+                &game_entities,
+            ),
+        }
     }
 }
 
@@ -518,18 +714,50 @@ fn restart_level(
         commands.entity(entity).despawn();
     }
 
-    spawn_screen_frame(commands, assets);
+    spawn_screen_frame(commands, assets, GameMode::Campaign);
     spawn_level(commands, assets, &level, &new_tile_grid, 3);
 
     *tile_grid = new_tile_grid;
     *director = EnemyDirector::from_level(&level);
-    *score_board = ScoreBoard {
-        score: 0,
-        lives: 3,
-        enemies_destroyed: 0,
-        total_enemies: level.enemies.len(),
-    };
+    *score_board = ScoreBoard::campaign(level.enemies.len());
     game_status.phase = GamePhase::Playing;
+    game_status.winner = None;
+    game_status.transition_timer.reset();
+}
+
+fn start_versus_round(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    game_mode: &mut GameMode,
+    game_status: &mut GameStatus,
+    tile_grid: &mut TileGrid,
+    director: &mut EnemyDirector,
+    score_board: &mut ScoreBoard,
+    game_entities: &Query<Entity, With<GameEntity>>,
+) {
+    let arena = load_arena_definition(VERSUS_ARENA).expect("arena should load");
+    info!("Loaded {}", arena.name);
+    let new_tile_grid = TileGrid::from_arena(&arena).expect("arena map should be valid");
+    let BattleRules::Deathmatch {
+        target_score,
+        lives,
+        respawn_invulnerability_secs,
+    } = arena.battle_rules;
+
+    for entity in game_entities {
+        commands.entity(entity).despawn();
+    }
+
+    spawn_screen_frame(commands, assets, GameMode::VersusDeathmatch);
+    spawn_arena(commands, assets, &arena, &new_tile_grid, lives);
+
+    *game_mode = GameMode::VersusDeathmatch;
+    *tile_grid = new_tile_grid;
+    *director = EnemyDirector::inactive();
+    *score_board = ScoreBoard::versus(lives, target_score, respawn_invulnerability_secs);
+    game_status.phase = GamePhase::Playing;
+    game_status.arena = VERSUS_ARENA;
+    game_status.winner = None;
     game_status.transition_timer.reset();
 }
 
@@ -541,10 +769,24 @@ fn load_stage_definition(stage: usize) -> Result<LevelDefinition, String> {
     load_level(&stage_path(stage))
 }
 
+fn arena_path(arena: usize) -> String {
+    format!("assets/arenas/arena_{arena:02}.ron")
+}
+
+fn load_arena_definition(arena: usize) -> Result<ArenaDefinition, String> {
+    load_arena(&arena_path(arena))
+}
+
 fn load_level(path: &str) -> Result<LevelDefinition, String> {
     let contents =
         fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
     parse_level(&contents)
+}
+
+fn load_arena(path: &str) -> Result<ArenaDefinition, String> {
+    let contents =
+        fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
+    parse_arena(&contents)
 }
 
 fn parse_level(contents: &str) -> Result<LevelDefinition, String> {
@@ -574,7 +816,38 @@ fn parse_level(contents: &str) -> Result<LevelDefinition, String> {
     Ok(level)
 }
 
-fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets) {
+fn parse_arena(contents: &str) -> Result<ArenaDefinition, String> {
+    let arena: ArenaDefinition =
+        ron::from_str(contents).map_err(|err| format!("failed to parse arena: {err}"))?;
+
+    TileGrid::from_arena(&arena)?;
+    let BattleRules::Deathmatch {
+        target_score,
+        lives,
+        respawn_invulnerability_secs,
+    } = arena.battle_rules;
+    if target_score == 0 {
+        return Err("deathmatch target_score must be greater than zero".to_string());
+    }
+    if lives <= 0 {
+        return Err("deathmatch lives must be greater than zero".to_string());
+    }
+    if respawn_invulnerability_secs <= 0.0 {
+        return Err("deathmatch respawn_invulnerability_secs must be positive".to_string());
+    }
+    for point in &arena.powerup_spawns {
+        if point.x >= BOARD_TILES || point.y >= BOARD_TILES {
+            return Err(format!(
+                "powerup spawn ({}, {}) is outside the battlefield",
+                point.x, point.y
+            ));
+        }
+    }
+
+    Ok(arena)
+}
+
+fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets, mode: GameMode) {
     commands.spawn((
         Sprite::from_color(
             Color::srgb_u8(80, 80, 72),
@@ -601,6 +874,13 @@ fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets) {
         GameEntity,
     ));
 
+    match mode {
+        GameMode::Campaign => spawn_campaign_status_panel(commands, assets),
+        GameMode::VersusDeathmatch => spawn_versus_status_panel(commands, assets),
+    }
+}
+
+fn spawn_campaign_status_panel(commands: &mut Commands, assets: &SpriteAssets) {
     spawn_pixel_text(commands, assets, "P1", Vec2::new(214.0, 26.0), 0.3);
     spawn_pixel_text(commands, assets, "SCORE", Vec2::new(214.0, 38.0), 0.3);
     spawn_status_digits(
@@ -651,6 +931,58 @@ fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets) {
             GameEntity,
         ));
     }
+}
+
+fn spawn_versus_status_panel(commands: &mut Commands, assets: &SpriteAssets) {
+    spawn_pixel_text(commands, assets, "P1", Vec2::new(214.0, 26.0), 0.3);
+    spawn_pixel_text(commands, assets, "SCORE", Vec2::new(214.0, 38.0), 0.3);
+    spawn_status_digits(
+        commands,
+        assets,
+        StatusValue::Score,
+        2,
+        Vec2::new(226.0, 49.0),
+        0.3,
+    );
+    spawn_pixel_text(commands, assets, "LIFE", Vec2::new(214.0, 62.0), 0.3);
+    spawn_status_digits(
+        commands,
+        assets,
+        StatusValue::Lives,
+        1,
+        Vec2::new(234.0, 73.0),
+        0.3,
+    );
+
+    spawn_pixel_text(commands, assets, "P2", Vec2::new(214.0, 98.0), 0.3);
+    spawn_pixel_text(commands, assets, "SCORE", Vec2::new(214.0, 110.0), 0.3);
+    spawn_status_digits(
+        commands,
+        assets,
+        StatusValue::P2Score,
+        2,
+        Vec2::new(226.0, 121.0),
+        0.3,
+    );
+    spawn_pixel_text(commands, assets, "LIFE", Vec2::new(214.0, 134.0), 0.3);
+    spawn_status_digits(
+        commands,
+        assets,
+        StatusValue::P2Lives,
+        1,
+        Vec2::new(234.0, 145.0),
+        0.3,
+    );
+
+    spawn_pixel_text(commands, assets, "TARGET", Vec2::new(214.0, 174.0), 0.3);
+    spawn_status_digits(
+        commands,
+        assets,
+        StatusValue::Target,
+        2,
+        Vec2::new(226.0, 185.0),
+        0.3,
+    );
 }
 
 fn spawn_status_digits(
@@ -757,6 +1089,55 @@ fn spawn_level(
     tile_grid: &TileGrid,
     player_lives: i32,
 ) {
+    spawn_terrain(commands, assets, tile_grid);
+
+    commands.spawn((
+        Sprite::from_image(assets.base_intact.clone()),
+        Transform::from_translation(board_object_center(
+            level.base_position.x as f32 * TILE_SIZE,
+            level.base_position.y as f32 * TILE_SIZE,
+            Vec2::splat(TANK_SIZE),
+            4.0,
+        ))
+        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        BaseSprite,
+        GameEntity,
+    ));
+
+    spawn_player_tank(
+        commands,
+        assets,
+        &level.player_spawn,
+        PlayerId::One,
+        player_lives,
+    );
+}
+
+fn spawn_arena(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    arena: &ArenaDefinition,
+    tile_grid: &TileGrid,
+    player_lives: i32,
+) {
+    spawn_terrain(commands, assets, tile_grid);
+    spawn_player_tank(
+        commands,
+        assets,
+        &arena.p1_spawn,
+        PlayerId::One,
+        player_lives,
+    );
+    spawn_player_tank(
+        commands,
+        assets,
+        &arena.p2_spawn,
+        PlayerId::Two,
+        player_lives,
+    );
+}
+
+fn spawn_terrain(commands: &mut Commands, assets: &SpriteAssets, tile_grid: &TileGrid) {
     for y in 0..BOARD_TILES {
         for x in 0..BOARD_TILES {
             let tile = tile_grid.tiles[y * BOARD_TILES + x];
@@ -777,31 +1158,23 @@ fn spawn_level(
             }
         }
     }
+}
 
-    commands.spawn((
-        Sprite::from_image(assets.base_intact.clone()),
-        Transform::from_translation(board_object_center(
-            level.base_position.x as f32 * TILE_SIZE,
-            level.base_position.y as f32 * TILE_SIZE,
-            Vec2::splat(TANK_SIZE),
-            4.0,
-        ))
-        .with_scale(Vec3::splat(WINDOW_SCALE)),
-        BaseSprite,
-        GameEntity,
-    ));
-
-    let player_top_left = Vec2::new(
-        level.player_spawn.x as f32 * TILE_SIZE,
-        level.player_spawn.y as f32 * TILE_SIZE,
-    );
+fn spawn_player_tank(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    spawn: &SpawnPoint,
+    player_id: PlayerId,
+    player_lives: i32,
+) {
+    let player_top_left = Vec2::new(spawn.x as f32 * TILE_SIZE, spawn.y as f32 * TILE_SIZE);
 
     commands.spawn((
         Sprite::from_atlas_image(
             assets.tank_image.clone(),
             TextureAtlas {
                 layout: assets.tank_layout.clone(),
-                index: tank_sprite_index(Team::Player, level.player_spawn.facing),
+                index: tank_sprite_index(player_id.team(), spawn.facing),
             },
         ),
         Transform::from_translation(board_object_center(
@@ -813,16 +1186,19 @@ fn spawn_level(
         .with_scale(Vec3::splat(WINDOW_SCALE)),
         Tank {
             top_left: player_top_left,
-            facing: level.player_spawn.facing,
+            facing: spawn.facing,
             speed: PLAYER_SPEED,
         },
         Health { current: 1 },
-        RespawnPoint(player_top_left),
+        RespawnPoint {
+            top_left: player_top_left,
+            facing: spawn.facing,
+        },
         PlayerLives {
             current: player_lives,
         },
         PlayerUpgrade { level: 0 },
-        Player,
+        Player { id: player_id },
         GameEntity,
     ));
 }
@@ -830,16 +1206,23 @@ fn spawn_level(
 fn update_player_control(keys: Res<ButtonInput<KeyCode>>, mut control: ResMut<PlayerControl>) {
     for (key, direction) in [
         (KeyCode::KeyW, Direction::Up),
-        (KeyCode::ArrowUp, Direction::Up),
         (KeyCode::KeyS, Direction::Down),
-        (KeyCode::ArrowDown, Direction::Down),
         (KeyCode::KeyA, Direction::Left),
-        (KeyCode::ArrowLeft, Direction::Left),
         (KeyCode::KeyD, Direction::Right),
+    ] {
+        if keys.just_pressed(key) {
+            control.p1_last_direction = direction;
+        }
+    }
+
+    for (key, direction) in [
+        (KeyCode::ArrowUp, Direction::Up),
+        (KeyCode::ArrowDown, Direction::Down),
+        (KeyCode::ArrowLeft, Direction::Left),
         (KeyCode::ArrowRight, Direction::Right),
     ] {
         if keys.just_pressed(key) {
-            control.last_direction = direction;
+            control.p2_last_direction = direction;
         }
     }
 }
@@ -850,34 +1233,39 @@ fn move_player_tank(
     control: Res<PlayerControl>,
     grid: Res<TileGrid>,
     game_status: Res<GameStatus>,
-    mut player: Query<(&mut Tank, &mut Sprite, &mut Transform), With<Player>>,
-    enemies: Query<&Tank, (With<EnemyTank>, Without<Player>)>,
+    mut tank_queries: ParamSet<(
+        Query<&Tank>,
+        Query<(&mut Tank, &mut Sprite, &mut Transform, &Player), With<Player>>,
+    )>,
 ) {
     if !game_status.is_playing() {
         return;
     }
 
-    let Ok((mut tank, mut sprite, mut transform)) = player.single_mut() else {
-        return;
-    };
-    let Some(direction) = held_direction(&keys, control.last_direction) else {
-        return;
-    };
+    let occupied: Vec<Vec2> = tank_queries.p0().iter().map(|tank| tank.top_left).collect();
 
-    tank.facing = direction;
-    if let Some(atlas) = &mut sprite.texture_atlas {
-        atlas.index = tank_sprite_index(Team::Player, direction);
-    }
+    for (mut tank, mut sprite, mut transform, player) in &mut tank_queries.p1() {
+        let Some(direction) =
+            held_direction(&keys, player_last_direction(&control, player.id), player.id)
+        else {
+            continue;
+        };
 
-    let mut next = tank.top_left;
-    snap_to_lane(&mut next, direction);
-    next += direction.movement() * tank.speed * time.delta_secs();
-    next = round_vec2(next);
+        tank.facing = direction;
+        if let Some(atlas) = &mut sprite.texture_atlas {
+            atlas.index = tank_sprite_index(player.id.team(), direction);
+        }
 
-    let occupied: Vec<Vec2> = enemies.iter().map(|tank| tank.top_left).collect();
-    if grid.can_tank_occupy(next) && tank_position_free(next, tank.top_left, &occupied) {
-        tank.top_left = next;
-        transform.translation = board_object_center(next.x, next.y, Vec2::splat(TANK_SIZE), 6.0);
+        let mut next = tank.top_left;
+        snap_to_lane(&mut next, direction);
+        next += direction.movement() * tank.speed * time.delta_secs();
+        next = round_vec2(next);
+
+        if grid.can_tank_occupy(next) && tank_position_free(next, tank.top_left, &occupied) {
+            tank.top_left = next;
+            transform.translation =
+                board_object_center(next.x, next.y, Vec2::splat(TANK_SIZE), 6.0);
+        }
     }
 }
 
@@ -1068,55 +1456,58 @@ fn fire_player_bullet(
     keys: Res<ButtonInput<KeyCode>>,
     assets: Res<SpriteAssets>,
     game_status: Res<GameStatus>,
-    player: Query<(&Tank, &PlayerUpgrade), With<Player>>,
+    players: Query<(&Tank, &PlayerUpgrade, &Player), With<Player>>,
     bullets: Query<&Bullet>,
 ) {
-    if !game_status.is_playing()
-        || !(keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter))
-    {
+    if !game_status.is_playing() {
         return;
     }
 
-    let Ok((tank, upgrade)) = player.single() else {
-        return;
-    };
-    let active_player_bullets = bullets
-        .iter()
-        .filter(|bullet| bullet.owner == Team::Player)
-        .count();
-    if active_player_bullets >= player_bullet_limit(upgrade.level) {
-        return;
-    }
+    for (tank, upgrade, player) in &players {
+        if !player_fire_pressed(&keys, player.id) {
+            continue;
+        }
 
-    let bullet_top_left = spawn_bullet_position(tank.top_left, tank.facing);
-    commands.spawn((
-        Sprite::from_atlas_image(
-            assets.bullet_image.clone(),
-            TextureAtlas {
-                layout: assets.bullet_layout.clone(),
-                index: tank.facing.bullet_sprite_index(),
+        let owner = player.id.team();
+        let active_player_bullets = bullets
+            .iter()
+            .filter(|bullet| bullet.owner == owner)
+            .count();
+        if active_player_bullets >= player_bullet_limit(upgrade.level) {
+            continue;
+        }
+
+        let bullet_top_left = spawn_bullet_position(tank.top_left, tank.facing);
+        commands.spawn((
+            Sprite::from_atlas_image(
+                assets.bullet_image.clone(),
+                TextureAtlas {
+                    layout: assets.bullet_layout.clone(),
+                    index: tank.facing.bullet_sprite_index(),
+                },
+            ),
+            Transform::from_translation(board_object_center(
+                bullet_top_left.x,
+                bullet_top_left.y,
+                Vec2::splat(BULLET_SIZE),
+                7.0,
+            ))
+            .with_scale(Vec3::splat(WINDOW_SCALE)),
+            Bullet {
+                top_left: bullet_top_left,
+                facing: tank.facing,
+                owner,
             },
-        ),
-        Transform::from_translation(board_object_center(
-            bullet_top_left.x,
-            bullet_top_left.y,
-            Vec2::splat(BULLET_SIZE),
-            7.0,
-        ))
-        .with_scale(Vec3::splat(WINDOW_SCALE)),
-        Bullet {
-            top_left: bullet_top_left,
-            facing: tank.facing,
-            owner: Team::Player,
-        },
-        GameEntity,
-    ));
+            GameEntity,
+        ));
+    }
 }
 
 fn move_bullets(
     mut commands: Commands,
     time: Res<Time>,
     assets: Res<SpriteAssets>,
+    game_mode: Res<GameMode>,
     mut grid: ResMut<TileGrid>,
     mut game_status: ResMut<GameStatus>,
     mut score_board: ResMut<ScoreBoard>,
@@ -1129,12 +1520,14 @@ fn move_bullets(
     >,
     mut player_tanks: Query<
         (
+            Entity,
             &mut Tank,
             &mut Transform,
             &RespawnPoint,
             &mut PlayerLives,
             &mut Health,
             Option<&Shield>,
+            &Player,
         ),
         (With<Player>, Without<EnemyTank>, Without<Bullet>),
     >,
@@ -1155,7 +1548,7 @@ fn move_bullets(
             continue;
         }
 
-        if bullet.owner == Team::Player {
+        if *game_mode == GameMode::Campaign && bullet.owner.is_player() {
             let mut hit_enemy = false;
             for (enemy_entity, enemy_tank, enemy, mut health) in &mut enemy_tanks {
                 if rects_overlap(
@@ -1187,43 +1580,108 @@ fn move_bullets(
             if hit_enemy {
                 continue;
             }
-        } else {
-            let Ok((
+        }
+
+        if *game_mode == GameMode::VersusDeathmatch
+            && let Some(shooter) = bullet.owner.player_id()
+        {
+            let mut hit_player = false;
+            for (
+                player_entity,
                 mut player_tank,
                 mut player_transform,
                 respawn,
                 mut lives,
                 mut player_health,
                 shield,
-            )) = player_tanks.single_mut()
-            else {
-                continue;
-            };
-
-            if rects_overlap(
-                bullet.top_left,
-                Vec2::splat(BULLET_SIZE),
-                player_tank.top_left,
-                Vec2::splat(TANK_SIZE),
-            ) {
-                if shield.is_some() {
-                    commands.entity(entity).despawn();
+                player,
+            ) in &mut player_tanks
+            {
+                if player.id == shooter
+                    || !rects_overlap(
+                        bullet.top_left,
+                        Vec2::splat(BULLET_SIZE),
+                        player_tank.top_left,
+                        Vec2::splat(TANK_SIZE),
+                    )
+                {
                     continue;
                 }
 
-                spawn_explosion(&mut commands, &assets, player_tank.top_left);
-                lives.current -= 1;
-                score_board.lives = lives.current;
-                if lives.current <= 0 {
-                    game_status.phase = GamePhase::GameOver;
-                } else {
-                    player_health.current = 1;
-                    player_tank.top_left = respawn.0;
-                    player_tank.facing = Direction::Up;
-                    player_transform.translation =
-                        board_object_center(respawn.0.x, respawn.0.y, Vec2::splat(TANK_SIZE), 6.0);
+                if shield.is_none() {
+                    spawn_explosion(&mut commands, &assets, player_tank.top_left);
+                    resolve_player_destroyed(
+                        &mut commands,
+                        &mut game_status,
+                        &mut score_board,
+                        player_entity,
+                        &mut player_tank,
+                        &mut player_transform,
+                        respawn,
+                        &mut lives,
+                        &mut player_health,
+                        player.id,
+                        Some(shooter),
+                        GameMode::VersusDeathmatch,
+                    );
                 }
                 commands.entity(entity).despawn();
+                hit_player = true;
+                break;
+            }
+            if hit_player {
+                continue;
+            }
+        }
+
+        if bullet.owner == Team::Enemy {
+            let mut hit_player = false;
+            for (
+                player_entity,
+                mut player_tank,
+                mut player_transform,
+                respawn,
+                mut lives,
+                mut player_health,
+                shield,
+                player,
+            ) in &mut player_tanks
+            {
+                if !rects_overlap(
+                    bullet.top_left,
+                    Vec2::splat(BULLET_SIZE),
+                    player_tank.top_left,
+                    Vec2::splat(TANK_SIZE),
+                ) {
+                    continue;
+                }
+
+                if shield.is_some() {
+                    commands.entity(entity).despawn();
+                    hit_player = true;
+                    break;
+                }
+
+                spawn_explosion(&mut commands, &assets, player_tank.top_left);
+                resolve_player_destroyed(
+                    &mut commands,
+                    &mut game_status,
+                    &mut score_board,
+                    player_entity,
+                    &mut player_tank,
+                    &mut player_transform,
+                    respawn,
+                    &mut lives,
+                    &mut player_health,
+                    player.id,
+                    None,
+                    GameMode::Campaign,
+                );
+                commands.entity(entity).despawn();
+                hit_player = true;
+                break;
+            }
+            if hit_player {
                 continue;
             }
         }
@@ -1243,7 +1701,10 @@ fn move_bullets(
                 }
             }
 
-            if tile == TileKind::Base && game_status.is_playing() {
+            if *game_mode == GameMode::Campaign
+                && tile == TileKind::Base
+                && game_status.is_playing()
+            {
                 game_status.phase = GamePhase::GameOver;
                 spawn_explosion(
                     &mut commands,
@@ -1265,6 +1726,75 @@ fn move_bullets(
             Vec2::splat(BULLET_SIZE),
             7.0,
         );
+    }
+}
+
+fn resolve_player_destroyed(
+    commands: &mut Commands,
+    game_status: &mut GameStatus,
+    score_board: &mut ScoreBoard,
+    player_entity: Entity,
+    tank: &mut Tank,
+    transform: &mut Transform,
+    respawn: &RespawnPoint,
+    lives: &mut PlayerLives,
+    health: &mut Health,
+    target: PlayerId,
+    shooter: Option<PlayerId>,
+    mode: GameMode,
+) {
+    lives.current -= 1;
+    health.current = 1;
+
+    match mode {
+        GameMode::Campaign => {
+            score_board.lives = lives.current;
+            if lives.current <= 0 {
+                game_status.phase = GamePhase::GameOver;
+                return;
+            }
+        }
+        GameMode::VersusDeathmatch => {
+            score_board.set_player_lives(target, lives.current);
+            if let Some(shooter) = shooter {
+                score_board.add_player_score(shooter);
+                if let Some(winner) = deathmatch_winner_after_hit(
+                    score_board.player_score(shooter),
+                    lives.current,
+                    score_board.target_score,
+                    shooter,
+                ) {
+                    game_status.phase = GamePhase::RoundOver;
+                    game_status.winner = Some(winner);
+                    return;
+                }
+            }
+        }
+    }
+
+    tank.top_left = respawn.top_left;
+    tank.facing = respawn.facing;
+    transform.translation = board_object_center(
+        respawn.top_left.x,
+        respawn.top_left.y,
+        Vec2::splat(TANK_SIZE),
+        6.0,
+    );
+    commands.entity(player_entity).insert(Shield {
+        timer: Timer::from_seconds(score_board.respawn_invulnerability_secs, TimerMode::Once),
+    });
+}
+
+fn deathmatch_winner_after_hit(
+    shooter_score: u32,
+    target_lives: i32,
+    target_score: u32,
+    shooter: PlayerId,
+) -> Option<PlayerId> {
+    if shooter_score >= target_score || target_lives <= 0 {
+        Some(shooter)
+    } else {
+        None
     }
 }
 
@@ -1294,32 +1824,31 @@ fn pickup_powerups(
         return;
     }
 
-    let Ok((player_entity, tank, mut upgrade)) = players.single_mut() else {
-        return;
-    };
-
     for (powerup_entity, powerup, transform) in &powerups {
         let powerup_top_left = board_top_left_from_translation(transform.translation, TANK_SIZE);
-        if !rects_overlap(
-            tank.top_left,
-            Vec2::splat(TANK_SIZE),
-            powerup_top_left,
-            Vec2::splat(TANK_SIZE),
-        ) {
-            continue;
-        }
+        for (player_entity, tank, mut upgrade) in &mut players {
+            if !rects_overlap(
+                tank.top_left,
+                Vec2::splat(TANK_SIZE),
+                powerup_top_left,
+                Vec2::splat(TANK_SIZE),
+            ) {
+                continue;
+            }
 
-        match powerup.kind {
-            PowerUpKind::Star => {
-                upgrade.level = (upgrade.level + 1).min(3);
+            match powerup.kind {
+                PowerUpKind::Star => {
+                    upgrade.level = (upgrade.level + 1).min(3);
+                }
+                PowerUpKind::Helmet => {
+                    commands.entity(player_entity).insert(Shield {
+                        timer: Timer::from_seconds(HELMET_SECONDS, TimerMode::Once),
+                    });
+                }
             }
-            PowerUpKind::Helmet => {
-                commands.entity(player_entity).insert(Shield {
-                    timer: Timer::from_seconds(HELMET_SECONDS, TimerMode::Once),
-                });
-            }
+            commands.entity(powerup_entity).despawn();
+            break;
         }
-        commands.entity(powerup_entity).despawn();
     }
 }
 
@@ -1371,12 +1900,13 @@ fn tick_shields(
 }
 
 fn check_game_phase(
+    game_mode: Res<GameMode>,
     mut game_status: ResMut<GameStatus>,
     score_board: Res<ScoreBoard>,
     director: Res<EnemyDirector>,
     active_enemies: Query<&EnemyTank>,
 ) {
-    if !game_status.is_playing() {
+    if *game_mode != GameMode::Campaign || !game_status.is_playing() {
         return;
     }
 
@@ -1430,7 +1960,7 @@ fn advance_after_level_clear(
         commands.entity(entity).despawn();
     }
 
-    spawn_screen_frame(&mut commands, &assets);
+    spawn_screen_frame(&mut commands, &assets, GameMode::Campaign);
     spawn_level(
         &mut commands,
         &assets,
@@ -1451,6 +1981,7 @@ fn advance_after_level_clear(
 fn update_status_panel(
     mut commands: Commands,
     assets: Res<SpriteAssets>,
+    game_mode: Res<GameMode>,
     game_status: Res<GameStatus>,
     score_board: Res<ScoreBoard>,
     mut glyphs: Query<(&StatusGlyph, &mut Sprite)>,
@@ -1459,9 +1990,18 @@ fn update_status_panel(
 ) {
     for (glyph, mut sprite) in &mut glyphs {
         let text = match glyph.kind {
-            StatusValue::Score => format!("{:06}", score_board.score.min(999_999)),
-            StatusValue::Lives => format!("{}", score_board.lives.clamp(0, 9)),
+            StatusValue::Score => match *game_mode {
+                GameMode::Campaign => format!("{:06}", score_board.score.min(999_999)),
+                GameMode::VersusDeathmatch => format!("{:02}", score_board.p1_score.min(99)),
+            },
+            StatusValue::Lives => match *game_mode {
+                GameMode::Campaign => format!("{}", score_board.lives.clamp(0, 9)),
+                GameMode::VersusDeathmatch => format!("{}", score_board.p1_lives.clamp(0, 9)),
+            },
             StatusValue::Stage => format!("{:02}", game_status.stage.min(99)),
+            StatusValue::P2Score => format!("{:02}", score_board.p2_score.min(99)),
+            StatusValue::P2Lives => format!("{}", score_board.p2_lives.clamp(0, 9)),
+            StatusValue::Target => format!("{:02}", score_board.target_score.min(99)),
         };
 
         if let Some(ch) = text.chars().nth(glyph.digit)
@@ -1498,6 +2038,11 @@ fn update_status_panel(
         GamePhase::Paused => "PAUSED",
         GamePhase::GameOver => "GAME OVER",
         GamePhase::LevelClear => "LEVEL CLEAR",
+        GamePhase::RoundOver => match game_status.winner {
+            Some(PlayerId::One) => "P1 WIN",
+            Some(PlayerId::Two) => "P2 WIN",
+            None => "GAME OVER",
+        },
         GamePhase::Victory => "VICTORY",
     };
     let text_width = message.chars().count() as f32 * 6.0 - 1.0;
@@ -1536,8 +2081,19 @@ fn toggle_pause_phase(phase: GamePhase) -> GamePhase {
     }
 }
 
-fn held_direction(keys: &ButtonInput<KeyCode>, last_direction: Direction) -> Option<Direction> {
-    if direction_is_held(keys, last_direction) {
+fn player_last_direction(control: &PlayerControl, player: PlayerId) -> Direction {
+    match player {
+        PlayerId::One => control.p1_last_direction,
+        PlayerId::Two => control.p2_last_direction,
+    }
+}
+
+fn held_direction(
+    keys: &ButtonInput<KeyCode>,
+    last_direction: Direction,
+    player: PlayerId,
+) -> Option<Direction> {
+    if direction_is_held(keys, last_direction, player) {
         return Some(last_direction);
     }
 
@@ -1548,15 +2104,28 @@ fn held_direction(keys: &ButtonInput<KeyCode>, last_direction: Direction) -> Opt
         Direction::Right,
     ]
     .into_iter()
-    .find(|direction| direction_is_held(keys, *direction))
+    .find(|direction| direction_is_held(keys, *direction, player))
 }
 
-fn direction_is_held(keys: &ButtonInput<KeyCode>, direction: Direction) -> bool {
-    match direction {
-        Direction::Up => keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp),
-        Direction::Down => keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown),
-        Direction::Left => keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft),
-        Direction::Right => keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight),
+fn direction_is_held(keys: &ButtonInput<KeyCode>, direction: Direction, player: PlayerId) -> bool {
+    match (player, direction) {
+        (PlayerId::One, Direction::Up) => keys.pressed(KeyCode::KeyW),
+        (PlayerId::One, Direction::Down) => keys.pressed(KeyCode::KeyS),
+        (PlayerId::One, Direction::Left) => keys.pressed(KeyCode::KeyA),
+        (PlayerId::One, Direction::Right) => keys.pressed(KeyCode::KeyD),
+        (PlayerId::Two, Direction::Up) => keys.pressed(KeyCode::ArrowUp),
+        (PlayerId::Two, Direction::Down) => keys.pressed(KeyCode::ArrowDown),
+        (PlayerId::Two, Direction::Left) => keys.pressed(KeyCode::ArrowLeft),
+        (PlayerId::Two, Direction::Right) => keys.pressed(KeyCode::ArrowRight),
+    }
+}
+
+fn player_fire_pressed(keys: &ButtonInput<KeyCode>, player: PlayerId) -> bool {
+    match player {
+        PlayerId::One => keys.just_pressed(KeyCode::Space),
+        PlayerId::Two => {
+            keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::ShiftRight)
+        }
     }
 }
 
@@ -1740,11 +2309,11 @@ fn player_bullet_limit(upgrade_level: u8) -> usize {
 }
 
 fn should_drop_powerup(enemies_destroyed: usize) -> bool {
-    enemies_destroyed > 0 && enemies_destroyed % POWERUP_DROP_INTERVAL == 0
+    enemies_destroyed > 0 && enemies_destroyed.is_multiple_of(POWERUP_DROP_INTERVAL)
 }
 
 fn powerup_for_drop(enemies_destroyed: usize) -> PowerUpKind {
-    if enemies_destroyed / POWERUP_DROP_INTERVAL % 2 == 0 {
+    if (enemies_destroyed / POWERUP_DROP_INTERVAL).is_multiple_of(2) {
         PowerUpKind::Helmet
     } else {
         PowerUpKind::Star
@@ -1760,7 +2329,8 @@ fn powerup_sprite_index(kind: PowerUpKind) -> usize {
 
 fn tank_sprite_index(team: Team, direction: Direction) -> usize {
     let base = match team {
-        Team::Player => 0,
+        Team::Player1 => 0,
+        Team::Player2 => 4,
         Team::Enemy => 4,
     };
     base + direction.tank_sprite_index()
@@ -2059,7 +2629,7 @@ fn create_effect_atlas() -> Image {
 
 fn draw_explosion_frame(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
     let center = 8_i32;
-    let radius = [2, 4, 6, 7][frame] as i32;
+    let radius = [2, 4, 6, 7][frame];
     for y in 0..16_i32 {
         for x in 0..16_i32 {
             let distance = (x - center).abs() + (y - center).abs();
@@ -2230,6 +2800,9 @@ fn glyph_pattern(ch: char) -> [&'static str; 7] {
         'C' => [
             "#####", "#....", "#....", "#....", "#....", "#....", "#####",
         ],
+        'D' => [
+            "####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####.",
+        ],
         'E' => [
             "#####", "#....", "#....", "####.", "#....", "#....", "#####",
         ],
@@ -2266,8 +2839,14 @@ fn glyph_pattern(ch: char) -> [&'static str; 7] {
         'T' => [
             "#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#..",
         ],
+        'U' => [
+            "#...#", "#...#", "#...#", "#...#", "#...#", "#...#", "#####",
+        ],
         'V' => [
             "#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#..",
+        ],
+        'W' => [
+            "#...#", "#...#", "#...#", "#...#", "#.#.#", "##.##", "#...#",
         ],
         'Y' => [
             "#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#..",
@@ -2338,11 +2917,18 @@ mod tests {
     const LEVEL_1: &str = include_str!("../assets/levels/001.level.ron");
     const LEVEL_2: &str = include_str!("../assets/levels/002.level.ron");
     const LEVEL_3: &str = include_str!("../assets/levels/003.level.ron");
+    const ARENA_1: &str = include_str!("../assets/arenas/arena_01.ron");
 
     #[test]
     fn stage_paths_use_three_digit_level_numbers() {
         assert_eq!(stage_path(1), "assets/levels/001.level.ron");
         assert_eq!(stage_path(12), "assets/levels/012.level.ron");
+    }
+
+    #[test]
+    fn arena_paths_use_two_digit_arena_numbers() {
+        assert_eq!(arena_path(1), "assets/arenas/arena_01.ron");
+        assert_eq!(arena_path(12), "assets/arenas/arena_12.ron");
     }
 
     #[test]
@@ -2360,6 +2946,39 @@ mod tests {
             assert_eq!(level.enemies.len(), 20);
             assert_eq!(level.enemy_spawns.len(), 3);
         }
+    }
+
+    #[test]
+    fn authored_arena_file_matches_deathmatch_shape() {
+        let arena = parse_arena(ARENA_1).expect("arena should parse");
+        assert_eq!(arena.name, "Arena 1");
+        assert_eq!(arena.map.len(), BOARD_TILES);
+        assert!(
+            arena
+                .map
+                .iter()
+                .all(|row| row.chars().count() == BOARD_TILES)
+        );
+        assert_eq!(arena.powerup_spawns.len(), 1);
+
+        let BattleRules::Deathmatch {
+            target_score,
+            lives,
+            respawn_invulnerability_secs,
+        } = arena.battle_rules;
+        assert_eq!(target_score, 5);
+        assert_eq!(lives, 3);
+        assert_eq!(respawn_invulnerability_secs, 2.0);
+
+        let grid = TileGrid::from_arena(&arena).expect("grid should build");
+        assert!(grid.can_tank_occupy(Vec2::new(
+            arena.p1_spawn.x as f32 * TILE_SIZE,
+            arena.p1_spawn.y as f32 * TILE_SIZE
+        )));
+        assert!(grid.can_tank_occupy(Vec2::new(
+            arena.p2_spawn.x as f32 * TILE_SIZE,
+            arena.p2_spawn.y as f32 * TILE_SIZE
+        )));
     }
 
     #[test]
@@ -2398,7 +3017,24 @@ mod tests {
             toggle_pause_phase(GamePhase::LevelClear),
             GamePhase::LevelClear
         );
+        assert_eq!(
+            toggle_pause_phase(GamePhase::RoundOver),
+            GamePhase::RoundOver
+        );
         assert_eq!(toggle_pause_phase(GamePhase::Victory), GamePhase::Victory);
+    }
+
+    #[test]
+    fn deathmatch_winner_requires_target_score_or_zero_lives() {
+        assert_eq!(deathmatch_winner_after_hit(4, 2, 5, PlayerId::One), None);
+        assert_eq!(
+            deathmatch_winner_after_hit(5, 2, 5, PlayerId::One),
+            Some(PlayerId::One)
+        );
+        assert_eq!(
+            deathmatch_winner_after_hit(2, 0, 5, PlayerId::Two),
+            Some(PlayerId::Two)
+        );
     }
 
     #[test]

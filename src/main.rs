@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const ASSET_MANIFEST_PATH: &str = "assets/manifest.ron";
-const LEVEL_COUNT: usize = 21;
+const LEVEL_COUNT: usize = 22;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const ARENA_COUNT: usize = 3;
 const DEFAULT_VERSUS_ARENA: usize = 1;
@@ -5155,6 +5155,7 @@ mod tests {
     const LEVEL_19: &str = include_str!("../assets/levels/019.level.ron");
     const LEVEL_20: &str = include_str!("../assets/levels/020.level.ron");
     const LEVEL_21: &str = include_str!("../assets/levels/021.level.ron");
+    const LEVEL_22: &str = include_str!("../assets/levels/022.level.ron");
     const ARENA_1: &str = include_str!("../assets/arenas/arena_01.ron");
     const ARENA_2: &str = include_str!("../assets/arenas/arena_02.ron");
     const ARENA_3: &str = include_str!("../assets/arenas/arena_03.ron");
@@ -5182,6 +5183,7 @@ mod tests {
             (19, LEVEL_19),
             (20, LEVEL_20),
             (21, LEVEL_21),
+            (22, LEVEL_22),
         ]
     }
 
@@ -5406,7 +5408,7 @@ mod tests {
         for contents in [
             LEVEL_3, LEVEL_4, LEVEL_5, LEVEL_6, LEVEL_7, LEVEL_8, LEVEL_9, LEVEL_10, LEVEL_11,
             LEVEL_12, LEVEL_13, LEVEL_14, LEVEL_15, LEVEL_16, LEVEL_17, LEVEL_18, LEVEL_19,
-            LEVEL_20, LEVEL_21,
+            LEVEL_20, LEVEL_21, LEVEL_22,
         ] {
             let level = parse_level(contents).expect("level should parse");
             assert_eq!(
@@ -5731,6 +5733,18 @@ mod tests {
         assert!(grid.tiles.contains(&TileKind::Ice));
         assert_eq!(stage_21.spawn_interval_secs, 0.88);
         assert_eq!(stage_21.powerup_carriers.len(), 6);
+    }
+
+    #[test]
+    fn stage_twenty_two_authors_forest_ice_axis_pressure() {
+        let stage_22 = parse_level(LEVEL_22).expect("level should parse");
+        let grid = TileGrid::from_level(&stage_22).expect("grid should build");
+        assert!(grid.tiles.contains(&TileKind::Forest));
+        assert!(grid.tiles.contains(&TileKind::Ice));
+        assert!(grid.tiles.contains(&TileKind::Water));
+        assert!(grid.tiles.contains(&TileKind::Steel));
+        assert_eq!(stage_22.spawn_interval_secs, 0.86);
+        assert_eq!(stage_22.powerup_carriers.len(), 6);
     }
 
     #[test]

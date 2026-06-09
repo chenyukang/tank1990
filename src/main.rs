@@ -1876,12 +1876,34 @@ fn stage_path(stage: usize) -> String {
     format!("assets/levels/{stage:03}.level.ron")
 }
 
+fn personal_stage_path(stage: usize) -> String {
+    format!("assets/personal/levels/{stage:03}.level.ron")
+}
+
+fn runtime_stage_path(stage: usize) -> String {
+    preferred_existing_path(&personal_stage_path(stage), &stage_path(stage), |path| {
+        Path::new(path).is_file()
+    })
+}
+
+fn preferred_existing_path(
+    personal_path: &str,
+    authored_path: &str,
+    exists: impl Fn(&str) -> bool,
+) -> String {
+    if exists(personal_path) {
+        personal_path.to_string()
+    } else {
+        authored_path.to_string()
+    }
+}
+
 fn load_stage_definition(stage: usize) -> Result<LevelDefinition, String> {
-    load_level(&stage_path(stage))
+    load_level(&runtime_stage_path(stage))
 }
 
 fn load_stage_bundle(stage: usize) -> Result<(LevelDefinition, TileGrid), String> {
-    let path = stage_path(stage);
+    let path = runtime_stage_path(stage);
     let level = load_stage_definition(stage)?;
     let grid = TileGrid::from_level(&level)
         .map_err(|err| format!("failed to build level grid {path}: {err}"))?;
@@ -1889,7 +1911,7 @@ fn load_stage_bundle(stage: usize) -> Result<(LevelDefinition, TileGrid), String
 }
 
 fn load_stage_bundle_or_panic(stage: usize) -> (LevelDefinition, TileGrid) {
-    let path = stage_path(stage);
+    let path = runtime_stage_path(stage);
     load_stage_bundle(stage).unwrap_or_else(|err| {
         panic!("{}", campaign_stage_load_error(stage, &path, &err));
     })
@@ -1903,12 +1925,22 @@ fn arena_path(arena: usize) -> String {
     format!("assets/arenas/arena_{arena:02}.ron")
 }
 
+fn personal_arena_path(arena: usize) -> String {
+    format!("assets/personal/arenas/arena_{arena:02}.ron")
+}
+
+fn runtime_arena_path(arena: usize) -> String {
+    preferred_existing_path(&personal_arena_path(arena), &arena_path(arena), |path| {
+        Path::new(path).is_file()
+    })
+}
+
 fn load_arena_definition(arena: usize) -> Result<ArenaDefinition, String> {
-    load_arena(&arena_path(arena))
+    load_arena(&runtime_arena_path(arena))
 }
 
 fn load_arena_bundle(arena: usize) -> Result<(ArenaDefinition, TileGrid), String> {
-    let path = arena_path(arena);
+    let path = runtime_arena_path(arena);
     let arena_definition = load_arena_definition(arena)?;
     let grid = TileGrid::from_arena(&arena_definition)
         .map_err(|err| format!("failed to build arena grid {path}: {err}"))?;
@@ -1916,7 +1948,7 @@ fn load_arena_bundle(arena: usize) -> Result<(ArenaDefinition, TileGrid), String
 }
 
 fn load_arena_bundle_or_panic(arena: usize) -> (ArenaDefinition, TileGrid) {
-    let path = arena_path(arena);
+    let path = runtime_arena_path(arena);
     load_arena_bundle(arena).unwrap_or_else(|err| {
         panic!("{}", versus_arena_load_error(arena, &path, &err));
     })
@@ -7313,12 +7345,50 @@ mod tests {
     fn stage_paths_use_three_digit_level_numbers() {
         assert_eq!(stage_path(1), "assets/levels/001.level.ron");
         assert_eq!(stage_path(12), "assets/levels/012.level.ron");
+        assert_eq!(
+            personal_stage_path(1),
+            "assets/personal/levels/001.level.ron"
+        );
+        assert_eq!(
+            personal_stage_path(12),
+            "assets/personal/levels/012.level.ron"
+        );
     }
 
     #[test]
     fn arena_paths_use_two_digit_arena_numbers() {
         assert_eq!(arena_path(1), "assets/arenas/arena_01.ron");
         assert_eq!(arena_path(12), "assets/arenas/arena_12.ron");
+        assert_eq!(
+            personal_arena_path(1),
+            "assets/personal/arenas/arena_01.ron"
+        );
+        assert_eq!(
+            personal_arena_path(12),
+            "assets/personal/arenas/arena_12.ron"
+        );
+    }
+
+    #[test]
+    fn runtime_paths_prefer_personal_files_when_present() {
+        let selected = preferred_existing_path(
+            "assets/personal/levels/001.level.ron",
+            "assets/levels/001.level.ron",
+            |path| path.starts_with("assets/personal/"),
+        );
+
+        assert_eq!(selected, "assets/personal/levels/001.level.ron");
+    }
+
+    #[test]
+    fn runtime_paths_fallback_to_authored_files_without_personal_override() {
+        let selected = preferred_existing_path(
+            "assets/personal/arenas/arena_01.ron",
+            "assets/arenas/arena_01.ron",
+            |_| false,
+        );
+
+        assert_eq!(selected, "assets/arenas/arena_01.ron");
     }
 
     #[test]

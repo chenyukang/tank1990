@@ -335,6 +335,15 @@ assets/arenas/arena_01.ron
 assets/arenas/arena_02.ron
 ```
 
+Personal map overrides may live in the gitignored `assets/personal/` tree:
+
+```text
+assets/personal/levels/001.level.ron
+assets/personal/arenas/arena_01.ron
+```
+
+Runtime should prefer a personal level or arena file when it exists, then fall back to the authored repository file. Personal maps must use the same RON schema and validation rules as committed levels and arenas. This is intended for private playtesting with copied, recreated, or ROM-derived map data; do not commit original commercial maps.
+
 ### 9.1 Solo Level Definition
 
 Example:

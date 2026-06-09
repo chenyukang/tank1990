@@ -1490,6 +1490,7 @@ enum StatusValue {
     Stage,
     P2Score,
     P2Lives,
+    Arena,
     Target,
 }
 
@@ -2844,18 +2845,40 @@ fn spawn_versus_status_panel(commands: &mut Commands, assets: &SpriteAssets, sho
         0.3,
     );
 
+    spawn_pixel_text(
+        commands,
+        assets,
+        "ARENA",
+        versus_arena_label_top_left(),
+        0.3,
+    );
+    spawn_status_digits(
+        commands,
+        assets,
+        StatusValue::Arena,
+        2,
+        versus_arena_number_top_left(),
+        0.3,
+    );
+
     if show_target {
-        spawn_pixel_text(commands, assets, "TARGET", Vec2::new(214.0, 174.0), 0.3);
+        spawn_pixel_text(
+            commands,
+            assets,
+            "TARGET",
+            versus_target_label_top_left(),
+            0.3,
+        );
         spawn_status_digits(
             commands,
             assets,
             StatusValue::Target,
             2,
-            Vec2::new(226.0, 185.0),
+            versus_target_number_top_left(),
             0.3,
         );
     } else {
-        spawn_pixel_text(commands, assets, "BASE", Vec2::new(220.0, 180.0), 0.3);
+        spawn_pixel_text(commands, assets, "BASE", versus_base_label_top_left(), 0.3);
     }
 }
 
@@ -5093,24 +5116,7 @@ fn update_status_panel(
     banners: Query<Entity, With<PhaseBanner>>,
 ) {
     for (glyph, mut sprite) in &mut glyphs {
-        let text = match glyph.kind {
-            StatusValue::Score => match *game_mode {
-                GameMode::Campaign => format!("{:06}", score_board.score.min(999_999)),
-                GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
-                    format!("{:02}", score_board.p1_score.min(99))
-                }
-            },
-            StatusValue::Lives => match *game_mode {
-                GameMode::Campaign => format!("{}", score_board.lives.clamp(0, 9)),
-                GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
-                    format!("{}", score_board.p1_lives.clamp(0, 9))
-                }
-            },
-            StatusValue::Stage => format!("{:02}", game_status.stage.min(99)),
-            StatusValue::P2Score => format!("{:02}", score_board.p2_score.min(99)),
-            StatusValue::P2Lives => format!("{}", score_board.p2_lives.clamp(0, 9)),
-            StatusValue::Target => format!("{:02}", score_board.target_score.min(99)),
-        };
+        let text = status_value_text(glyph.kind, *game_mode, &game_status, &score_board);
 
         if let Some(ch) = text.chars().nth(glyph.digit)
             && let Some(atlas) = &mut sprite.texture_atlas
@@ -5146,6 +5152,33 @@ fn update_status_panel(
     spawn_phase_text(&mut commands, &assets, &lines, 114.5, 9.0);
 }
 
+fn status_value_text(
+    kind: StatusValue,
+    mode: GameMode,
+    game_status: &GameStatus,
+    score_board: &ScoreBoard,
+) -> String {
+    match kind {
+        StatusValue::Score => match mode {
+            GameMode::Campaign => format!("{:06}", score_board.score.min(999_999)),
+            GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
+                format!("{:02}", score_board.p1_score.min(99))
+            }
+        },
+        StatusValue::Lives => match mode {
+            GameMode::Campaign => format!("{}", score_board.lives.clamp(0, 9)),
+            GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
+                format!("{}", score_board.p1_lives.clamp(0, 9))
+            }
+        },
+        StatusValue::Stage => format!("{:02}", game_status.stage.min(99)),
+        StatusValue::P2Score => format!("{:02}", score_board.p2_score.min(99)),
+        StatusValue::P2Lives => format!("{}", score_board.p2_lives.clamp(0, 9)),
+        StatusValue::Arena => format!("{:02}", game_status.arena.min(99)),
+        StatusValue::Target => format!("{:02}", score_board.target_score.min(99)),
+    }
+}
+
 fn enemy_marker_top_left(index: usize) -> Vec2 {
     let col = index % ENEMY_MARKER_COLUMNS;
     let row = index / ENEMY_MARKER_COLUMNS;
@@ -5172,6 +5205,26 @@ fn versus_life_icon_top_left(player: PlayerId) -> Vec2 {
         PlayerId::One => Vec2::new(222.0, 73.0),
         PlayerId::Two => Vec2::new(222.0, 145.0),
     }
+}
+
+fn versus_arena_label_top_left() -> Vec2 {
+    Vec2::new(214.0, 158.0)
+}
+
+fn versus_arena_number_top_left() -> Vec2 {
+    Vec2::new(226.0, 169.0)
+}
+
+fn versus_target_label_top_left() -> Vec2 {
+    Vec2::new(214.0, 184.0)
+}
+
+fn versus_target_number_top_left() -> Vec2 {
+    Vec2::new(226.0, 195.0)
+}
+
+fn versus_base_label_top_left() -> Vec2 {
+    Vec2::new(220.0, 190.0)
 }
 
 fn player_life_icon_tank_index(manifest: &AssetManifest, player: PlayerId) -> usize {
@@ -9475,6 +9528,7 @@ mod tests {
             assert!(top_left.y >= 24.0);
             assert!(top_left.y + PLAYER_LIFE_ICON_SIZE <= BOARD_ORIGIN_Y + board_size());
         }
+        assert!(p2_top_left.y + PLAYER_LIFE_ICON_SIZE <= versus_arena_label_top_left().y);
         assert_eq!(
             player_life_icon_tank_index(&manifest, PlayerId::One),
             manifest.tank_index(TankSpriteSet::Player1, Direction::Up, 0)
@@ -9482,6 +9536,72 @@ mod tests {
         assert_eq!(
             player_life_icon_tank_index(&manifest, PlayerId::Two),
             manifest.tank_index(TankSpriteSet::Player2, Direction::Up, 0)
+        );
+    }
+
+    #[test]
+    fn versus_arena_and_objective_labels_fit_status_panel() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let labeled_rows = [
+            ("ARENA", versus_arena_label_top_left()),
+            ("TARGET", versus_target_label_top_left()),
+            ("BASE", versus_base_label_top_left()),
+        ];
+        let digit_rows = [
+            ("99", versus_arena_number_top_left()),
+            ("99", versus_target_number_top_left()),
+        ];
+
+        for (label, top_left) in labeled_rows {
+            assert!(top_left.x >= 212.0);
+            assert!(top_left.x + phase_text_width(label) <= VIRTUAL_WIDTH - 4.0);
+            assert!(top_left.y >= 24.0);
+            assert!(top_left.y + GENERATED_GLYPH_HEIGHT as f32 <= BOARD_ORIGIN_Y + board_size());
+            for ch in label.chars() {
+                assert_manifest_glyph_is_visible(&manifest, ch);
+            }
+        }
+
+        for (digits, top_left) in digit_rows {
+            assert!(top_left.x >= 212.0);
+            assert!(top_left.x + phase_text_width(digits) <= VIRTUAL_WIDTH - 4.0);
+            assert!(top_left.y >= 24.0);
+            assert!(top_left.y + GENERATED_GLYPH_HEIGHT as f32 <= BOARD_ORIGIN_Y + board_size());
+        }
+        assert!(versus_arena_number_top_left().y < versus_target_label_top_left().y);
+        assert!(versus_target_number_top_left().y > versus_target_label_top_left().y);
+        assert!(versus_base_label_top_left().y > versus_arena_number_top_left().y);
+    }
+
+    #[test]
+    fn status_value_text_tracks_versus_arena_number() {
+        let score_board = ScoreBoard::versus(3, 5, 2.0);
+        let arena_five = GameStatus {
+            arena: 5,
+            ..GameStatus::default()
+        };
+        let late_arena = GameStatus {
+            arena: 135,
+            ..GameStatus::default()
+        };
+
+        assert_eq!(
+            status_value_text(
+                StatusValue::Arena,
+                GameMode::VersusDeathmatch,
+                &arena_five,
+                &score_board
+            ),
+            "05"
+        );
+        assert_eq!(
+            status_value_text(
+                StatusValue::Arena,
+                GameMode::VersusBaseBattle,
+                &late_arena,
+                &score_board
+            ),
+            "99"
         );
     }
 

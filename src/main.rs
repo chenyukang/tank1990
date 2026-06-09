@@ -9234,6 +9234,13 @@ mod tests {
         bullet_paths_clash(a_start, a_end, b_start, b_end).map(|clash| clash.impact_top_left)
     }
 
+    fn spawn_overlay_effects_for_test(mut commands: Commands, assets: Res<SpriteAssets>) {
+        spawn_bullet_impact_effect(&mut commands, &assets, Vec2::new(16.0, 16.0));
+        spawn_explosion(&mut commands, &assets, Vec2::new(32.0, 16.0));
+        spawn_spawn_effect(&mut commands, &assets, Vec2::new(48.0, 16.0));
+        spawn_base_destruction_effect(&mut commands, &assets, Vec2::new(64.0, 16.0));
+    }
+
     fn spawn_player_with_initial_shield_for_test(
         mut commands: Commands,
         assets: Res<SpriteAssets>,
@@ -11380,6 +11387,28 @@ mod tests {
         assert!(terrain_z(TileKind::Forest) < 8.0);
         assert!(terrain_z(TileKind::Brick) < terrain_z(TileKind::Forest));
         assert!(terrain_z(TileKind::Water) < terrain_z(TileKind::Forest));
+    }
+
+    #[test]
+    fn short_effect_animations_render_above_forest_overlay() {
+        let mut app = App::new();
+        app.insert_resource(test_sprite_assets());
+        app.add_systems(Update, spawn_overlay_effects_for_test);
+
+        app.update();
+
+        let forest_z = terrain_z(TileKind::Forest);
+        let mut effects = app.world_mut().query::<(&Transform, &SpriteAnimation)>();
+        let z_values: Vec<f32> = effects
+            .iter(app.world())
+            .map(|(transform, _)| transform.translation.z)
+            .collect();
+
+        assert_eq!(z_values.len(), 4);
+        assert!(
+            z_values.iter().all(|z| *z > forest_z),
+            "all short effect animations should render above forest overlay: {z_values:?}"
+        );
     }
 
     #[test]

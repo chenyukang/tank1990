@@ -8571,48 +8571,38 @@ fn create_base_image(manifest: GeneratedSpriteManifest, destroyed: bool) -> Imag
 
 fn create_score_badge_icon(manifest: GeneratedSpriteManifest) -> Image {
     let mut pixels = vec![0; manifest.width * manifest.height * 4];
-    fill_rect(
-        &mut pixels,
-        manifest.width,
-        2,
-        1,
-        4,
-        1,
-        [248, 232, 128, 255],
-    );
-    fill_rect(&mut pixels, manifest.width, 1, 2, 6, 4, [216, 160, 56, 255]);
-    fill_rect(&mut pixels, manifest.width, 2, 6, 4, 1, [136, 88, 40, 255]);
-    fill_rect(
-        &mut pixels,
-        manifest.width,
-        3,
-        3,
-        2,
-        2,
-        [255, 248, 184, 255],
-    );
-    set_pixel(&mut pixels, manifest.width, 1, 2, [248, 216, 96, 255]);
-    set_pixel(&mut pixels, manifest.width, 6, 2, [248, 216, 96, 255]);
-    set_pixel(&mut pixels, manifest.width, 1, 5, [136, 88, 40, 255]);
-    set_pixel(&mut pixels, manifest.width, 6, 5, [136, 88, 40, 255]);
+    let dark = [96, 64, 32, 255];
+    let shadow = [136, 88, 40, 255];
+    let gold = [224, 160, 56, 255];
+    let light = [255, 232, 128, 255];
+
+    fill_rect(&mut pixels, manifest.width, 2, 0, 4, 1, light);
+    fill_rect(&mut pixels, manifest.width, 1, 1, 6, 3, gold);
+    set_pixel(&mut pixels, manifest.width, 0, 2, shadow);
+    set_pixel(&mut pixels, manifest.width, 7, 2, shadow);
+    fill_rect(&mut pixels, manifest.width, 2, 4, 4, 1, shadow);
+    fill_rect(&mut pixels, manifest.width, 3, 5, 2, 1, dark);
+    fill_rect(&mut pixels, manifest.width, 2, 6, 4, 1, gold);
+    fill_rect(&mut pixels, manifest.width, 1, 7, 6, 1, dark);
+    fill_rect(&mut pixels, manifest.width, 3, 2, 2, 1, light);
     image_from_pixels(manifest.width, manifest.height, pixels)
 }
 
 fn create_stage_flag_icon(manifest: GeneratedSpriteManifest) -> Image {
     let mut pixels = vec![0; manifest.width * manifest.height * 4];
-    fill_rect(
-        &mut pixels,
-        manifest.width,
-        1,
-        1,
-        1,
-        6,
-        [232, 232, 208, 255],
-    );
-    fill_rect(&mut pixels, manifest.width, 2, 1, 5, 3, [248, 216, 72, 255]);
-    fill_rect(&mut pixels, manifest.width, 2, 4, 3, 1, [176, 112, 40, 255]);
-    fill_rect(&mut pixels, manifest.width, 0, 7, 4, 1, [120, 120, 96, 255]);
-    set_pixel(&mut pixels, manifest.width, 6, 3, [248, 168, 56, 255]);
+    let pole = [232, 232, 208, 255];
+    let pole_shadow = [120, 120, 96, 255];
+    let flag_light = [255, 232, 96, 255];
+    let flag_mid = [232, 168, 48, 255];
+    let flag_dark = [160, 96, 32, 255];
+
+    fill_rect(&mut pixels, manifest.width, 1, 0, 1, 7, pole);
+    set_pixel(&mut pixels, manifest.width, 2, 6, pole_shadow);
+    fill_rect(&mut pixels, manifest.width, 2, 1, 5, 1, flag_light);
+    fill_rect(&mut pixels, manifest.width, 2, 2, 5, 2, flag_mid);
+    fill_rect(&mut pixels, manifest.width, 2, 4, 3, 1, flag_dark);
+    set_pixel(&mut pixels, manifest.width, 6, 3, flag_light);
+    fill_rect(&mut pixels, manifest.width, 0, 7, 4, 1, pole_shadow);
     image_from_pixels(manifest.width, manifest.height, pixels)
 }
 
@@ -11116,6 +11106,11 @@ mod tests {
         let pixels = image.data.as_ref().expect("score icon should have pixels");
         assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] == 0));
         assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] == 255));
+        assert_eq!(image_pixel(&image, 0, 0), [0, 0, 0, 0]);
+        assert_eq!(image_pixel(&image, 3, 0), [255, 232, 128, 255]);
+        assert_eq!(image_pixel(&image, 0, 2), [136, 88, 40, 255]);
+        assert_eq!(image_pixel(&image, 3, 5), [96, 64, 32, 255]);
+        assert_eq!(image_pixel(&image, 1, 7), [96, 64, 32, 255]);
     }
 
     #[test]
@@ -11144,6 +11139,12 @@ mod tests {
         let pixels = image.data.as_ref().expect("stage icon should have pixels");
         assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] == 0));
         assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] == 255));
+        assert_eq!(image_pixel(&image, 0, 0), [0, 0, 0, 0]);
+        assert_eq!(image_pixel(&image, 1, 0), [232, 232, 208, 255]);
+        assert_eq!(image_pixel(&image, 2, 1), [255, 232, 96, 255]);
+        assert_eq!(image_pixel(&image, 6, 3), [255, 232, 96, 255]);
+        assert_eq!(image_pixel(&image, 2, 4), [160, 96, 32, 255]);
+        assert_eq!(image_pixel(&image, 0, 7), [120, 120, 96, 255]);
     }
 
     #[test]

@@ -5578,10 +5578,8 @@ fn direction_is_held(keys: &ButtonInput<KeyCode>, direction: Direction, player: 
 
 fn player_fire_pressed(keys: &ButtonInput<KeyCode>, player: PlayerId) -> bool {
     match player {
-        PlayerId::One => keys.just_pressed(KeyCode::Space),
-        PlayerId::Two => {
-            keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::ShiftRight)
-        }
+        PlayerId::One => keys.pressed(KeyCode::Space),
+        PlayerId::Two => keys.pressed(KeyCode::Enter) || keys.pressed(KeyCode::ShiftRight),
     }
 }
 
@@ -10741,6 +10739,35 @@ mod tests {
         assert_eq!(bullet.speed, PLAYER_FAST_BULLET_SPEED);
         assert!(bullet.breaks_steel);
         assert!(!bullet.resolved);
+    }
+
+    #[test]
+    fn player_fire_system_treats_held_fire_as_ready_input() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(64.0, 80.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::Space);
+        keys.clear_just_pressed(KeyCode::Space);
+
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        spawn_test_player(app.world_mut(), PlayerId::One, tank_top_left, 3);
+        app.add_systems(Update, fire_player_bullet);
+
+        app.update();
+
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        let bullets: Vec<_> = bullets.iter(app.world()).collect();
+        assert_eq!(bullets.len(), 1);
+        assert_eq!(bullets[0].owner, Team::Player1);
+        assert_eq!(bullets[0].speed, BULLET_SPEED);
     }
 
     #[test]

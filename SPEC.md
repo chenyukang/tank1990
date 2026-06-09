@@ -191,8 +191,7 @@ To mimic classic digital controls:
 
 - Only one movement axis is active at a time.
 - If multiple direction keys are held, use the most recently pressed direction.
-- Fire is edge-triggered by default: one shot request per press.
-- Holding fire may be supported later, but should still respect bullet limits.
+- Fire can be tapped or held; held fire issues new shots only when bullet limits allow it.
 
 ## 7. Core Gameplay Rules
 

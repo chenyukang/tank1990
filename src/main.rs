@@ -126,7 +126,8 @@ static LEVEL_CLEAR_BANNER_LINES: [&str; 1] = ["LEVEL CLEAR"];
 static P1_WIN_BANNER_LINES: [&str; 2] = ["P1 WIN", "PRESS R OR M"];
 static P2_WIN_BANNER_LINES: [&str; 2] = ["P2 WIN", "PRESS R OR M"];
 static VICTORY_BANNER_LINES: [&str; 3] = ["VICTORY", "ALL STAGES CLEAR", "PRESS R OR M"];
-static MODE_SELECT_HINT_LINES: [&str; 3] = ["WS SELECT", "AD ARENA", "SPACE START"];
+static MODE_SELECT_HINT_LINES: [&str; 3] =
+    ["WS ARROWS SELECT", "AD ARROWS ARENA", "SPACE ENTER START"];
 const DEFAULT_RESPAWN_INVULNERABILITY_SECONDS: f32 = 2.0;
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
@@ -10021,6 +10022,10 @@ mod tests {
     #[test]
     fn mode_select_hints_fit_and_use_available_pixel_glyphs() {
         let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        assert_eq!(
+            MODE_SELECT_HINT_LINES,
+            ["WS ARROWS SELECT", "AD ARROWS ARENA", "SPACE ENTER START"]
+        );
         for line in MODE_SELECT_HINT_LINES {
             assert!(
                 phase_text_width(line) <= 208.0,

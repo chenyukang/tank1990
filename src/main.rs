@@ -69,7 +69,7 @@ const LEVEL_COUNT: usize = 50;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const LEVEL_CLEAR_SCORECARD_SECONDS: f32 = 4.0;
 const STAGE_INTRO_SECONDS: f32 = 1.2;
-const ARENA_COUNT: usize = 6;
+const ARENA_COUNT: usize = 7;
 const DEFAULT_VERSUS_ARENA: usize = 1;
 const TANK_ATLAS_TILES: usize = 48;
 const TANK_ANIMATION_FRAMES: usize = 2;
@@ -8411,6 +8411,7 @@ mod tests {
     const ARENA_4: &str = include_str!("../assets/arenas/arena_04.ron");
     const ARENA_5: &str = include_str!("../assets/arenas/arena_05.ron");
     const ARENA_6: &str = include_str!("../assets/arenas/arena_06.ron");
+    const ARENA_7: &str = include_str!("../assets/arenas/arena_07.ron");
     const GITIGNORE: &str = include_str!("../.gitignore");
     const TEST_SPAWN_INVULNERABILITY_SECONDS: f32 = 3.25;
 
@@ -8477,6 +8478,7 @@ mod tests {
             (4, ARENA_4),
             (5, ARENA_5),
             (6, ARENA_6),
+            (7, ARENA_7),
         ]
     }
 
@@ -9592,7 +9594,7 @@ mod tests {
                     lives,
                     respawn_invulnerability_secs,
                 } => {
-                    assert!(index < 5);
+                    assert!(matches!(index, 1..=4 | 7));
                     assert_eq!(target_score, 5);
                     assert_eq!(lives, 3);
                     assert_eq!(respawn_invulnerability_secs, 2.0);
@@ -11172,13 +11174,15 @@ mod tests {
         assert_eq!(next_arena(3), 4);
         assert_eq!(next_arena(4), 5);
         assert_eq!(next_arena(5), 6);
-        assert_eq!(next_arena(6), 1);
-        assert_eq!(previous_arena(1), 6);
+        assert_eq!(next_arena(6), 7);
+        assert_eq!(next_arena(7), 1);
+        assert_eq!(previous_arena(1), 7);
         assert_eq!(previous_arena(2), 1);
         assert_eq!(previous_arena(3), 2);
         assert_eq!(previous_arena(4), 3);
         assert_eq!(previous_arena(5), 4);
         assert_eq!(previous_arena(6), 5);
+        assert_eq!(previous_arena(7), 6);
     }
 
     #[test]
@@ -12340,6 +12344,26 @@ mod tests {
         };
         assert_eq!(p1_base, GridPoint { x: 0, y: 24 });
         assert_eq!(p2_base, GridPoint { x: 24, y: 0 });
+    }
+
+    #[test]
+    fn arena_seven_authors_forest_island_deathmatch_space() {
+        let arena = parse_arena(ARENA_7).expect("arena should parse");
+        let grid = TileGrid::from_arena(&arena).expect("grid should build");
+
+        assert!(grid.tiles.contains(&TileKind::Water));
+        assert!(grid.tiles.contains(&TileKind::Forest));
+        assert!(grid.tiles.contains(&TileKind::Ice));
+        assert!(grid.tiles.contains(&TileKind::Steel));
+        assert_eq!(arena.powerup_spawns.len(), 3);
+        assert_eq!(arena.p1_spawn.x, 4);
+        assert_eq!(arena.p1_spawn.y, 24);
+        assert_eq!(arena.p2_spawn.x, 22);
+        assert_eq!(arena.p2_spawn.y, 0);
+        let BattleRules::Deathmatch { target_score, .. } = arena.battle_rules else {
+            panic!("arena seven should be deathmatch");
+        };
+        assert_eq!(target_score, 5);
     }
 
     #[test]

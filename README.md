@@ -42,7 +42,7 @@ In game:
 ## Current Content
 
 - Campaign: 50 authored stages in `assets/levels/`.
-- Versus: 6 authored arenas in `assets/arenas/`.
+- Versus: 7 authored arenas in `assets/arenas/`.
 - Arenas 5 and 6 are `BaseBattle`; the others are `Deathmatch`.
 - Generated placeholder sprite atlases and sounds are used when no personal
   override exists.

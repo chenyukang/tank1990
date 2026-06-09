@@ -12264,6 +12264,73 @@ mod tests {
     }
 
     #[test]
+    fn spawn_protected_enemy_absorbs_player_bullet_without_damage_or_score() {
+        let enemy_top_left = Vec2::new(96.0, 0.0);
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ScoreBoard::campaign(20));
+        app.world_mut().spawn((
+            Tank {
+                top_left: enemy_top_left,
+                facing: Direction::Down,
+                speed: enemy_speed(EnemyKind::Basic),
+            },
+            Transform::from_translation(board_object_center(
+                enemy_top_left.x,
+                enemy_top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0,
+            )),
+            EnemyTank {
+                kind: EnemyKind::Basic,
+                carried_powerup: None,
+            },
+            Health { current: 1 },
+            SpawnProtection::for_spawn_shimmer(SpriteFrameRange { first: 4, last: 7 }),
+        ));
+        app.world_mut().spawn((
+            Bullet {
+                previous_top_left: enemy_top_left,
+                top_left: enemy_top_left,
+                facing: Direction::Down,
+                owner: Team::Player1,
+                speed: BULLET_SPEED,
+                breaks_steel: false,
+                resolved: false,
+            },
+            Transform::from_translation(board_object_center(
+                enemy_top_left.x,
+                enemy_top_left.y,
+                Vec2::splat(BULLET_SIZE),
+                7.0,
+            )),
+        ));
+        app.add_systems(Update, move_bullets);
+
+        app.update();
+
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 0);
+        let mut enemies = app.world_mut().query::<(&EnemyTank, &Health)>();
+        let enemies: Vec<(EnemyKind, i32)> = enemies
+            .iter(app.world())
+            .map(|(enemy, health)| (enemy.kind, health.current))
+            .collect();
+        assert_eq!(enemies, [(EnemyKind::Basic, 1)]);
+        let score_board = app.world().resource::<ScoreBoard>();
+        assert_eq!(score_board.score, 0);
+        assert_eq!(score_board.enemies_destroyed, 0);
+    }
+
+    #[test]
     fn player_respawn_delay_expires_after_spawn_shimmer() {
         let frames = SpriteFrameRange { first: 4, last: 7 };
         let duration = spawn_shimmer_duration_secs(frames);

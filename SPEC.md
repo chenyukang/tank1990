@@ -238,6 +238,7 @@ Player upgrade behavior:
 - Armored tanks require multiple hits.
 - Player tanks lose one life when destroyed.
 - Destroyed player tanks respawn with short invulnerability if lives remain.
+- Player respawn should wait if another tank currently occupies the respawn area.
 - Bases are destroyed by a direct bullet hit.
 - A destroyed tank plays an explosion animation before disappearing.
 - A respawning player tank plays a spawn animation before control resumes.

@@ -3369,12 +3369,9 @@ fn spawn_enemies(
         let spawn = director.spawns[director.spawn_cursor].clone();
         director.spawn_cursor = (director.spawn_cursor + 1) % director.spawns.len();
         let top_left = Vec2::new(spawn.x as f32 * TILE_SIZE, spawn.y as f32 * TILE_SIZE);
+        let occupied: Vec<Vec2> = tanks.iter().map(|tank| tank.top_left).collect();
 
-        if !grid.can_tank_occupy(top_left)
-            || tanks
-                .iter()
-                .any(|tank| tank_rects_overlap(tank.top_left, top_left))
-        {
+        if !grid.can_tank_occupy(top_left) || !tank_spawn_position_free(top_left, &occupied) {
             continue;
         }
 
@@ -4482,11 +4479,14 @@ fn tick_player_respawns(
         &mut Sprite,
         &mut TankSpriteState,
     )>,
+    active_tanks: Query<&Tank>,
     mut respawning_players: Query<(Entity, &mut PlayerRespawnDelay)>,
 ) {
     if !game_status.is_playing() {
         return;
     }
+
+    let mut occupied_positions: Vec<Vec2> = active_tanks.iter().map(|tank| tank.top_left).collect();
 
     for (
         entity,
@@ -4499,6 +4499,9 @@ fn tick_player_respawns(
     ) in &mut pending_players
     {
         if !pending_respawn.tick(time.delta()) {
+            continue;
+        }
+        if !tank_spawn_position_free(respawn.top_left, &occupied_positions) {
             continue;
         }
 
@@ -4531,6 +4534,7 @@ fn tick_player_respawns(
                 },
                 PlayerRespawnDelay::for_spawn_shimmer(assets.manifest.spawn_shimmer_frames()),
             ));
+        occupied_positions.push(respawn.top_left);
         spawn_spawn_effect(&mut commands, &assets, respawn.top_left);
     }
 
@@ -6008,6 +6012,12 @@ fn tank_position_free(candidate: Vec2, current: Vec2, occupied: &[Vec2]) -> bool
     occupied
         .iter()
         .filter(|position| **position != current)
+        .all(|position| !tank_rects_overlap(candidate, *position))
+}
+
+fn tank_spawn_position_free(candidate: Vec2, occupied: &[Vec2]) -> bool {
+    occupied
+        .iter()
         .all(|position| !tank_rects_overlap(candidate, *position))
 }
 
@@ -9892,6 +9902,22 @@ mod tests {
         assert!(tank_position_free(
             Vec2::new(72.0, 16.0),
             current,
+            &[current, other]
+        ));
+    }
+
+    #[test]
+    fn tank_spawn_position_blocks_any_overlapping_tank() {
+        let current = Vec2::new(16.0, 16.0);
+        let other = Vec2::new(48.0, 16.0);
+
+        assert!(!tank_spawn_position_free(current, &[current, other]));
+        assert!(!tank_spawn_position_free(
+            Vec2::new(40.0, 16.0),
+            &[current, other]
+        ));
+        assert!(tank_spawn_position_free(
+            Vec2::new(72.0, 16.0),
             &[current, other]
         ));
     }

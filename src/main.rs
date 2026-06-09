@@ -9196,6 +9196,12 @@ mod tests {
                     ),
                 },
                 TankSpriteState::new(TankSpriteSet::enemy(kind)),
+                Transform::from_translation(board_object_center(
+                    top_left.x,
+                    top_left.y,
+                    Vec2::splat(TANK_SIZE),
+                    6.0,
+                )),
                 Sprite::default(),
             ))
             .id()
@@ -14568,6 +14574,68 @@ mod tests {
             .expect("P2 should remain spawned");
         assert_eq!(p2.0, p2_top_left);
         assert_eq!(p2.1, Direction::Left);
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 0);
+    }
+
+    #[test]
+    fn campaign_clock_pickup_freezes_enemy_spawn_movement_and_fire() {
+        let level = parse_level(LEVEL_1).expect("level should parse");
+        let mut app = App::new();
+        let player_top_left = Vec2::new(32.0, 32.0);
+        let enemy_top_left = Vec2::new(96.0, 32.0);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(
+            enemy_fire_interval(EnemyKind::Basic) + 0.1,
+        ));
+
+        app.insert_resource(time);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(StageRules::default());
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.insert_resource(BaseReinforcement::default());
+        app.insert_resource(ScoreBoard::campaign(level.enemies.len()));
+        app.insert_resource(EnemyDirector::from_level(&level));
+        spawn_test_player(app.world_mut(), PlayerId::One, player_top_left, 3);
+        spawn_test_powerup(app.world_mut(), PowerUpKind::Clock, player_top_left);
+        let enemy = spawn_test_enemy_tank(
+            app.world_mut(),
+            EnemyKind::Basic,
+            enemy_top_left,
+            Direction::Left,
+        );
+        app.add_systems(
+            Update,
+            (
+                pickup_powerups,
+                spawn_enemies,
+                move_enemy_tanks,
+                fire_enemy_bullets,
+            )
+                .chain(),
+        );
+
+        app.update();
+
+        assert!(app.world().resource::<EnemyFreeze>().is_active());
+        assert_eq!(enemy_tank_count(&mut app), 1);
+        let tank = app
+            .world()
+            .get::<Tank>(enemy)
+            .expect("existing enemy should remain frozen in place");
+        assert_eq!(tank.top_left, enemy_top_left);
+        assert_eq!(tank.facing, Direction::Left);
+        let director = app.world().resource::<EnemyDirector>();
+        assert_eq!(director.spawned_count, 0);
+        assert_eq!(director.roster.len(), level.enemies.len());
         let mut bullets = app.world_mut().query::<&Bullet>();
         assert_eq!(bullets.iter(app.world()).count(), 0);
     }

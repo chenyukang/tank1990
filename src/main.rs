@@ -9462,6 +9462,51 @@ mod tests {
         assert!(background_music_modes(&mut app).is_empty());
     }
 
+    #[test]
+    fn main_menu_music_setting_drives_custom_background_loop() {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::Enter);
+
+        let mut app = App::new();
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets_with_custom_music());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus::default());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(EnemyDirector::inactive());
+        app.insert_resource(ScoreBoard::campaign(0));
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPowerUpDirector::inactive());
+        app.insert_resource(ModeSelect {
+            selected: ModeSelectOption::Music,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.insert_resource(BaseReinforcement::default());
+        app.add_systems(
+            Update,
+            (handle_shared_controls, sync_background_music).chain(),
+        );
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ModeSelect>().audio_mode,
+            AudioMode::Custom
+        );
+        assert!(background_music_modes(&mut app).is_empty());
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear();
+        app.world_mut().resource_mut::<GameStatus>().phase = GamePhase::Playing;
+        app.update();
+
+        assert_eq!(background_music_modes(&mut app), vec![AudioMode::Custom]);
+    }
+
     fn background_music_entity_count(app: &mut App) -> usize {
         let mut query = app
             .world_mut()

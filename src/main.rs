@@ -67,7 +67,7 @@ const LEVEL_COUNT: usize = 35;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const LEVEL_CLEAR_SCORECARD_SECONDS: f32 = 4.0;
 const STAGE_INTRO_SECONDS: f32 = 1.2;
-const ARENA_COUNT: usize = 5;
+const ARENA_COUNT: usize = 6;
 const DEFAULT_VERSUS_ARENA: usize = 1;
 const TANK_ATLAS_TILES: usize = 48;
 const TANK_ANIMATION_FRAMES: usize = 2;
@@ -7828,6 +7828,7 @@ mod tests {
     const ARENA_3: &str = include_str!("../assets/arenas/arena_03.ron");
     const ARENA_4: &str = include_str!("../assets/arenas/arena_04.ron");
     const ARENA_5: &str = include_str!("../assets/arenas/arena_05.ron");
+    const ARENA_6: &str = include_str!("../assets/arenas/arena_06.ron");
     const GITIGNORE: &str = include_str!("../.gitignore");
     const TEST_SPAWN_INVULNERABILITY_SECONDS: f32 = 3.25;
 
@@ -7878,6 +7879,7 @@ mod tests {
             (3, ARENA_3),
             (4, ARENA_4),
             (5, ARENA_5),
+            (6, ARENA_6),
         ]
     }
 
@@ -8882,7 +8884,7 @@ mod tests {
                     lives,
                     respawn_invulnerability_secs,
                 } => {
-                    assert!(index < ARENA_COUNT);
+                    assert!(index < 5);
                     assert_eq!(target_score, 5);
                     assert_eq!(lives, 3);
                     assert_eq!(respawn_invulnerability_secs, 2.0);
@@ -8893,7 +8895,7 @@ mod tests {
                     lives,
                     respawn_invulnerability_secs,
                 } => {
-                    assert_eq!(index, ARENA_COUNT);
+                    assert!(index >= 5);
                     assert_eq!(p1_base, GridPoint { x: 0, y: 24 });
                     assert_eq!(p2_base, GridPoint { x: 24, y: 0 });
                     assert_eq!(lives, 3);
@@ -10209,12 +10211,14 @@ mod tests {
         assert_eq!(next_arena(2), 3);
         assert_eq!(next_arena(3), 4);
         assert_eq!(next_arena(4), 5);
-        assert_eq!(next_arena(5), 1);
-        assert_eq!(previous_arena(1), 5);
+        assert_eq!(next_arena(5), 6);
+        assert_eq!(next_arena(6), 1);
+        assert_eq!(previous_arena(1), 6);
         assert_eq!(previous_arena(2), 1);
         assert_eq!(previous_arena(3), 2);
         assert_eq!(previous_arena(4), 3);
         assert_eq!(previous_arena(5), 4);
+        assert_eq!(previous_arena(6), 5);
     }
 
     #[test]
@@ -11223,6 +11227,30 @@ mod tests {
         assert_eq!(arena.p1_spawn.y, 24);
         assert_eq!(arena.p2_spawn.x, 24);
         assert_eq!(arena.p2_spawn.y, 0);
+    }
+
+    #[test]
+    fn arena_six_authors_second_base_battle_lane_mix() {
+        let arena = parse_arena(ARENA_6).expect("arena should parse");
+        let grid = TileGrid::from_arena(&arena).expect("grid should build");
+
+        assert!(grid.tiles.contains(&TileKind::Water));
+        assert!(grid.tiles.contains(&TileKind::Forest));
+        assert!(grid.tiles.contains(&TileKind::Ice));
+        assert!(grid.tiles.contains(&TileKind::Steel));
+        assert_eq!(arena.powerup_spawns.len(), 3);
+        assert_eq!(arena.p1_spawn.x, 4);
+        assert_eq!(arena.p1_spawn.y, 24);
+        assert_eq!(arena.p2_spawn.x, 20);
+        assert_eq!(arena.p2_spawn.y, 0);
+        let BattleRules::BaseBattle {
+            p1_base, p2_base, ..
+        } = arena.battle_rules
+        else {
+            panic!("arena six should be base battle");
+        };
+        assert_eq!(p1_base, GridPoint { x: 0, y: 24 });
+        assert_eq!(p2_base, GridPoint { x: 24, y: 0 });
     }
 
     #[test]

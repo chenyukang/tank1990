@@ -598,7 +598,7 @@ Current implementation note:
 - Base and standalone UI icon manifest entries include generated sprite dimensions.
 - Glyphs use generated placeholder pixels, but their atlas character order and tile dimensions live in `assets/manifest.ron`.
 - Sounds use generated placeholder waveforms, but their retro sweep/noise/note definitions now live in `assets/manifest.ron`.
-- `assets/arenas/arena_05.ron` is the first playable `BaseBattle` arena; destroying a player's base ends the round for the opponent.
+- `assets/arenas/arena_05.ron` is the first playable `BaseBattle` arena, with `arena_06.ron` adding a second base-defense layout; destroying a player's base ends the round for the opponent.
 
 ### 10.2 Audio Style
 

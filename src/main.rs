@@ -69,11 +69,10 @@ const EXPLOSION_FRAME_SECONDS: f32 = 0.07;
 const BULLET_IMPACT_FRAME_SECONDS: f32 = 0.05;
 const STAGE_CLEAR_LIFE_BONUS: u32 = 1000;
 const ENEMY_ALIGNMENT_FIRE_FRACTION: f32 = 0.45;
-const ENEMY_SPAWN_PROTECTION_SECONDS: f32 = 0.35;
-const PLAYER_RESPAWN_DELAY_SECONDS: f32 = 0.35;
 const VERSUS_POWERUP_INTERVAL_SECONDS: f32 = 8.0;
 const SOUND_SAMPLE_RATE: u32 = 22_050;
 const ICE_SPEED_MULTIPLIER: f32 = 1.18;
+const SPAWN_SHIMMER_FRAME_SECONDS: f32 = 0.08;
 
 fn main() {
     App::new()
@@ -1116,9 +1115,9 @@ struct SpawnProtection {
 }
 
 impl SpawnProtection {
-    fn enemy() -> Self {
+    fn for_spawn_shimmer(frames: SpriteFrameRange) -> Self {
         Self {
-            timer: Timer::from_seconds(ENEMY_SPAWN_PROTECTION_SECONDS, TimerMode::Once),
+            timer: Timer::from_seconds(spawn_shimmer_duration_secs(frames), TimerMode::Once),
         }
     }
 
@@ -1134,9 +1133,9 @@ struct PlayerRespawnDelay {
 }
 
 impl PlayerRespawnDelay {
-    fn new() -> Self {
+    fn for_spawn_shimmer(frames: SpriteFrameRange) -> Self {
         Self {
-            timer: Timer::from_seconds(PLAYER_RESPAWN_DELAY_SECONDS, TimerMode::Once),
+            timer: Timer::from_seconds(spawn_shimmer_duration_secs(frames), TimerMode::Once),
         }
     }
 
@@ -2936,7 +2935,7 @@ fn spawn_enemies(
                 turn_timer: Timer::from_seconds(1.2, TimerMode::Repeating),
                 fire_timer: Timer::from_seconds(enemy_fire_interval(kind), TimerMode::Repeating),
             },
-            SpawnProtection::enemy(),
+            SpawnProtection::for_spawn_shimmer(assets.manifest.spawn_shimmer_frames()),
             GameEntity,
         ));
         spawn_spawn_effect(&mut commands, &assets, top_left);
@@ -4042,7 +4041,7 @@ fn tick_player_respawns(
                         TimerMode::Once,
                     ),
                 },
-                PlayerRespawnDelay::new(),
+                PlayerRespawnDelay::for_spawn_shimmer(assets.manifest.spawn_shimmer_frames()),
             ));
         spawn_spawn_effect(&mut commands, &assets, respawn.top_left);
     }
@@ -4699,6 +4698,10 @@ fn explosion_duration_secs(frames: SpriteFrameRange) -> f32 {
     (frames.last - frames.first + 1) as f32 * EXPLOSION_FRAME_SECONDS
 }
 
+fn spawn_shimmer_duration_secs(frames: SpriteFrameRange) -> f32 {
+    (frames.last - frames.first + 1) as f32 * SPAWN_SHIMMER_FRAME_SECONDS
+}
+
 fn spawn_bullet_impact_effect(
     commands: &mut Commands,
     assets: &SpriteAssets,
@@ -4833,7 +4836,7 @@ fn spawn_spawn_effect(commands: &mut Commands, assets: &SpriteAssets, top_left: 
         SpriteAnimation {
             first: frames.first,
             last: frames.last,
-            timer: Timer::from_seconds(0.08, TimerMode::Repeating),
+            timer: Timer::from_seconds(SPAWN_SHIMMER_FRAME_SECONDS, TimerMode::Repeating),
             despawn_on_finish: true,
         },
         GameEntity,
@@ -8096,18 +8099,28 @@ mod tests {
 
     #[test]
     fn spawn_protection_expires_after_spawn_shimmer() {
-        let mut protection = SpawnProtection::enemy();
+        let frames = SpriteFrameRange { first: 4, last: 7 };
+        let duration = spawn_shimmer_duration_secs(frames);
+        let mut protection = SpawnProtection::for_spawn_shimmer(frames);
+
+        assert_eq!(duration, SPAWN_SHIMMER_FRAME_SECONDS * 4.0);
         assert!(!protection.tick(Duration::from_secs_f32(
-            ENEMY_SPAWN_PROTECTION_SECONDS - 0.01
+            duration - SPAWN_SHIMMER_FRAME_SECONDS / 2.0
         )));
-        assert!(protection.tick(Duration::from_secs_f32(0.02)));
+        assert!(protection.tick(Duration::from_secs_f32(SPAWN_SHIMMER_FRAME_SECONDS)));
     }
 
     #[test]
     fn player_respawn_delay_expires_after_spawn_shimmer() {
-        let mut delay = PlayerRespawnDelay::new();
-        assert!(!delay.tick(Duration::from_secs_f32(PLAYER_RESPAWN_DELAY_SECONDS - 0.01)));
-        assert!(delay.tick(Duration::from_secs_f32(0.02)));
+        let frames = SpriteFrameRange { first: 4, last: 7 };
+        let duration = spawn_shimmer_duration_secs(frames);
+        let mut delay = PlayerRespawnDelay::for_spawn_shimmer(frames);
+
+        assert_eq!(duration, SPAWN_SHIMMER_FRAME_SECONDS * 4.0);
+        assert!(!delay.tick(Duration::from_secs_f32(
+            duration - SPAWN_SHIMMER_FRAME_SECONDS / 2.0
+        )));
+        assert!(delay.tick(Duration::from_secs_f32(SPAWN_SHIMMER_FRAME_SECONDS)));
     }
 
     #[test]

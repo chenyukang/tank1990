@@ -127,6 +127,7 @@ static P1_WIN_BANNER_LINES: [&str; 2] = ["P1 WIN", "PRESS R OR M"];
 static P2_WIN_BANNER_LINES: [&str; 2] = ["P2 WIN", "PRESS R OR M"];
 static VICTORY_BANNER_LINES: [&str; 3] = ["VICTORY", "ALL STAGES CLEAR", "PRESS R OR M"];
 static MODE_SELECT_HINT_LINES: [&str; 3] = ["WS SELECT", "AD ARENA", "SPACE START"];
+const DEFAULT_RESPAWN_INVULNERABILITY_SECONDS: f32 = 2.0;
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
 const SHOVEL_SECONDS: f32 = 10.0;
@@ -739,7 +740,7 @@ impl ScoreBoard {
             p1_lives: 3,
             p2_lives: 0,
             target_score: 0,
-            respawn_invulnerability_secs: 2.0,
+            respawn_invulnerability_secs: DEFAULT_RESPAWN_INVULNERABILITY_SECONDS,
         }
     }
 
@@ -1801,7 +1802,14 @@ fn restart_level(
     }
 
     spawn_screen_frame(commands, assets, GameMode::Campaign);
-    spawn_level(commands, assets, &level, &new_tile_grid, 3);
+    spawn_level(
+        commands,
+        assets,
+        &level,
+        &new_tile_grid,
+        3,
+        DEFAULT_RESPAWN_INVULNERABILITY_SECONDS,
+    );
     play_sound(commands, sounds, SoundKind::StageStart);
 
     *tile_grid = new_tile_grid;
@@ -1864,7 +1872,14 @@ fn start_versus_round(
     }
 
     spawn_screen_frame(commands, assets, round_mode);
-    spawn_arena(commands, assets, &arena, &new_tile_grid, lives);
+    spawn_arena(
+        commands,
+        assets,
+        &arena,
+        &new_tile_grid,
+        lives,
+        respawn_invulnerability_secs,
+    );
     play_sound(commands, sounds, SoundKind::StageStart);
 
     *game_mode = round_mode;
@@ -2933,6 +2948,7 @@ fn spawn_level(
     level: &LevelDefinition,
     tile_grid: &TileGrid,
     player_lives: i32,
+    spawn_invulnerability_secs: f32,
 ) {
     spawn_terrain(commands, assets, tile_grid);
 
@@ -2944,6 +2960,7 @@ fn spawn_level(
         &level.player_spawn,
         PlayerId::One,
         player_lives,
+        spawn_invulnerability_secs,
     );
 }
 
@@ -2953,6 +2970,7 @@ fn spawn_arena(
     arena: &ArenaDefinition,
     tile_grid: &TileGrid,
     player_lives: i32,
+    spawn_invulnerability_secs: f32,
 ) {
     spawn_terrain(commands, assets, tile_grid);
     if let BattleRules::BaseBattle {
@@ -2968,6 +2986,7 @@ fn spawn_arena(
         &arena.p1_spawn,
         PlayerId::One,
         player_lives,
+        spawn_invulnerability_secs,
     );
     spawn_player_tank(
         commands,
@@ -2975,6 +2994,7 @@ fn spawn_arena(
         &arena.p2_spawn,
         PlayerId::Two,
         player_lives,
+        spawn_invulnerability_secs,
     );
 }
 
@@ -3197,6 +3217,7 @@ fn spawn_player_tank(
     spawn: &SpawnPoint,
     player_id: PlayerId,
     player_lives: i32,
+    spawn_invulnerability_secs: f32,
 ) {
     let player_top_left = spawn_point_top_left(spawn);
 
@@ -3235,6 +3256,9 @@ fn spawn_player_tank(
             current: player_lives,
         },
         PlayerUpgrade { level: 0 },
+        Shield {
+            timer: Timer::from_seconds(spawn_invulnerability_secs, TimerMode::Once),
+        },
         Player { id: player_id },
         GameEntity,
     ));
@@ -4942,6 +4966,7 @@ fn advance_after_level_clear(
         &level,
         &new_tile_grid,
         score_board.lives.max(1),
+        DEFAULT_RESPAWN_INVULNERABILITY_SECONDS,
     );
     play_sound(&mut commands, &sounds, SoundKind::StageStart);
 
@@ -7473,6 +7498,7 @@ mod tests {
     const ARENA_4: &str = include_str!("../assets/arenas/arena_04.ron");
     const ARENA_5: &str = include_str!("../assets/arenas/arena_05.ron");
     const GITIGNORE: &str = include_str!("../.gitignore");
+    const TEST_SPAWN_INVULNERABILITY_SECONDS: f32 = 3.25;
 
     fn authored_levels() -> [(usize, &'static str); LEVEL_COUNT] {
         [
@@ -7601,6 +7627,24 @@ mod tests {
             level_clear: sound.clone(),
             game_over: sound,
         }
+    }
+
+    fn spawn_player_with_initial_shield_for_test(
+        mut commands: Commands,
+        assets: Res<SpriteAssets>,
+    ) {
+        spawn_player_tank(
+            &mut commands,
+            &assets,
+            &SpawnPoint {
+                x: 8,
+                y: 24,
+                facing: Direction::Up,
+            },
+            PlayerId::One,
+            3,
+            TEST_SPAWN_INVULNERABILITY_SECONDS,
+        );
     }
 
     fn refresh_same_kind_steel_tile_for_test(
@@ -9853,6 +9897,29 @@ mod tests {
             explosion_duration_secs(frames) - 0.01
         )));
         assert!(pending_respawn.tick(Duration::from_secs_f32(0.02)));
+    }
+
+    #[test]
+    fn initial_player_spawn_starts_with_invulnerability_shield() {
+        let mut app = App::new();
+        app.insert_resource(test_sprite_assets());
+        app.add_systems(Update, spawn_player_with_initial_shield_for_test);
+
+        app.update();
+
+        let mut players = app.world_mut().query::<(&Player, &Tank, &Shield)>();
+        let spawned: Vec<(PlayerId, Vec2, f32)> = players
+            .iter(app.world())
+            .map(|(player, tank, shield)| (player.id, tank.top_left, shield.timer.remaining_secs()))
+            .collect();
+
+        assert_eq!(spawned.len(), 1);
+        assert_eq!(spawned[0].0, PlayerId::One);
+        assert_eq!(spawned[0].1, Vec2::new(64.0, 192.0));
+        assert!(
+            (spawned[0].2 - TEST_SPAWN_INVULNERABILITY_SECONDS).abs() <= f32::EPSILON,
+            "initial shield should use the configured spawn invulnerability"
+        );
     }
 
     #[test]

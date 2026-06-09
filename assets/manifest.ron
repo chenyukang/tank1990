@@ -27,6 +27,7 @@
       ],
     ),
   ),
+  bullets: (up: 0, down: 1, left: 2, right: 3),
   terrain: (
     brick: 0,
     steel: 1,

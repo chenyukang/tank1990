@@ -21,6 +21,7 @@ const ARENA_COUNT: usize = 5;
 const DEFAULT_VERSUS_ARENA: usize = 1;
 const TANK_ATLAS_TILES: usize = 48;
 const TANK_ANIMATION_FRAMES: usize = 2;
+const BULLET_ATLAS_TILES: usize = 4;
 const TERRAIN_ATLAS_TILES: usize = 6;
 const EFFECT_ATLAS_TILES: usize = 20;
 const POWERUP_ATLAS_TILES: usize = 6;
@@ -193,6 +194,7 @@ struct SpriteAssets {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 struct AssetManifest {
     tanks: TankSpriteManifest,
+    bullets: DirectionalSpriteManifest,
     terrain: TerrainSpriteManifest,
     effects: EffectSpriteManifest,
     powerups: PowerUpSpriteManifest,
@@ -203,6 +205,10 @@ struct AssetManifest {
 impl AssetManifest {
     fn tank_index(&self, set: TankSpriteSet, direction: Direction, frame: usize) -> usize {
         self.tanks.frames_for(set)[frame.min(TANK_ANIMATION_FRAMES - 1)].index(direction)
+    }
+
+    fn bullet_index(&self, direction: Direction) -> usize {
+        self.bullets.index(direction)
     }
 
     fn terrain_index(&self, tile: TileKind) -> Option<usize> {
@@ -1056,19 +1062,6 @@ impl Direction {
             Self::Right => Vec2::new(1.0, 0.0),
         }
     }
-
-    fn tank_sprite_index(self) -> usize {
-        match self {
-            Self::Up => 0,
-            Self::Down => 1,
-            Self::Left => 2,
-            Self::Right => 3,
-        }
-    }
-
-    fn bullet_sprite_index(self) -> usize {
-        self.tank_sprite_index()
-    }
 }
 
 #[derive(Deserialize)]
@@ -1852,6 +1845,7 @@ fn parse_asset_manifest(contents: &str) -> Result<AssetManifest, String> {
 
 fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
     validate_tank_frames(&manifest.tanks)?;
+    validate_bullet_manifest(manifest.bullets)?;
 
     for (name, index) in [
         ("terrain.brick", manifest.terrain.brick),
@@ -1902,6 +1896,23 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
 
     validate_glyph_manifest(&manifest.glyphs)?;
     validate_sound_manifest(&manifest.sounds)?;
+
+    Ok(())
+}
+
+fn validate_bullet_manifest(manifest: DirectionalSpriteManifest) -> Result<(), String> {
+    for (direction, index) in [
+        ("up", manifest.up),
+        ("down", manifest.down),
+        ("left", manifest.left),
+        ("right", manifest.right),
+    ] {
+        if index >= BULLET_ATLAS_TILES {
+            return Err(format!(
+                "bullets.{direction} index {index} is outside the generated bullet atlas"
+            ));
+        }
+    }
 
     Ok(())
 }
@@ -3300,7 +3311,7 @@ fn fire_enemy_bullets(
                 assets.bullet_image.clone(),
                 TextureAtlas {
                     layout: assets.bullet_layout.clone(),
-                    index: tank.facing.bullet_sprite_index(),
+                    index: assets.manifest.bullet_index(tank.facing),
                 },
             ),
             Transform::from_translation(board_object_center(
@@ -3373,7 +3384,7 @@ fn fire_player_bullet(
                 assets.bullet_image.clone(),
                 TextureAtlas {
                     layout: assets.bullet_layout.clone(),
-                    index: tank.facing.bullet_sprite_index(),
+                    index: assets.manifest.bullet_index(tank.facing),
                 },
             ),
             Transform::from_translation(board_object_center(
@@ -5827,7 +5838,7 @@ fn create_sprite_assets(
     let bullet_image = images.add(create_bullet_atlas());
     let bullet_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::splat(4),
-        4,
+        BULLET_ATLAS_TILES as u32,
         1,
         None,
         None,
@@ -6190,13 +6201,29 @@ fn draw_tank_group(pixels: &mut [u8], width: usize, x_offset: usize, palette: Ta
 }
 
 fn create_bullet_atlas() -> Image {
-    let mut pixels = vec![0; 4 * 4 * 4 * 4];
-    for x_offset in [0, 4, 8, 12] {
-        fill_rect(&mut pixels, 16, x_offset, 0, 4, 4, [248, 248, 216, 255]);
-        set_pixel(&mut pixels, 16, x_offset, 0, [128, 112, 64, 255]);
-        set_pixel(&mut pixels, 16, x_offset + 3, 3, [128, 112, 64, 255]);
+    let atlas_width = BULLET_SIZE as usize * BULLET_ATLAS_TILES;
+    let mut pixels = vec![0; atlas_width * BULLET_SIZE as usize * 4];
+    for index in 0..BULLET_ATLAS_TILES {
+        let x_offset = index * BULLET_SIZE as usize;
+        fill_rect(
+            &mut pixels,
+            atlas_width,
+            x_offset,
+            0,
+            4,
+            4,
+            [248, 248, 216, 255],
+        );
+        set_pixel(&mut pixels, atlas_width, x_offset, 0, [128, 112, 64, 255]);
+        set_pixel(
+            &mut pixels,
+            atlas_width,
+            x_offset + 3,
+            3,
+            [128, 112, 64, 255],
+        );
     }
-    image_from_pixels(16, 4, pixels)
+    image_from_pixels(atlas_width, BULLET_SIZE as usize, pixels)
 }
 
 fn create_effect_atlas() -> Image {
@@ -6957,6 +6984,11 @@ mod tests {
             45
         );
 
+        assert_eq!(manifest.bullet_index(Direction::Up), 0);
+        assert_eq!(manifest.bullet_index(Direction::Down), 1);
+        assert_eq!(manifest.bullet_index(Direction::Left), 2);
+        assert_eq!(manifest.bullet_index(Direction::Right), 3);
+
         assert_eq!(manifest.terrain_index(TileKind::Brick), Some(0));
         assert_eq!(manifest.terrain_index(TileKind::Steel), Some(1));
         assert_eq!(manifest.terrain_index(TileKind::Water), Some(2));
@@ -7058,6 +7090,17 @@ mod tests {
             parse_asset_manifest(&invalid)
                 .expect_err("missing tank animation frame should fail")
                 .contains("must define 2 animation frames")
+        );
+
+        let invalid = MANIFEST.replacen(
+            "bullets: (up: 0, down: 1, left: 2, right: 3)",
+            "bullets: (up: 0, down: 1, left: 2, right: 4)",
+            1,
+        );
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("invalid bullet index should fail")
+                .contains("bullets.right index 4 is outside the generated bullet atlas")
         );
 
         let invalid = MANIFEST.replacen("ice: 5", "ice: 6", 1);

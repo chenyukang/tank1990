@@ -531,8 +531,9 @@ Suggested contents:
 
 Current implementation note:
 
-- `assets/manifest.ron` maps generated tank, terrain, power-up, effect, glyph, and sound entries to semantic names, frame ranges, or generated-asset parameters.
+- `assets/manifest.ron` maps generated tank, bullet, terrain, power-up, effect, glyph, and sound entries to semantic names, directional indices, frame ranges, or generated-asset parameters.
 - Tank manifest entries include separate two-frame directional groups for P1, P2, Basic, Fast, Power, and Armor tanks.
+- Bullet manifest entries include four directional atlas indices.
 - Terrain manifest entries include a two-frame water animation range plus static brick, steel, forest, and ice entries.
 - Effect manifest entries include explosion, spawn shimmer, base destruction, and power-up sparkle frame ranges.
 - Glyphs use generated placeholder pixels, but their atlas character order and tile dimensions live in `assets/manifest.ron`.

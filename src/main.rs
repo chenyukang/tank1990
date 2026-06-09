@@ -10467,6 +10467,126 @@ mod tests {
     }
 
     #[test]
+    fn bullet_spawns_from_center_front_of_tank() {
+        let tank_top_left = Vec2::new(64.0, 80.0);
+
+        assert_eq!(
+            spawn_bullet_position(tank_top_left, Direction::Up),
+            Vec2::new(70.0, 76.0)
+        );
+        assert_eq!(
+            spawn_bullet_position(tank_top_left, Direction::Down),
+            Vec2::new(70.0, 96.0)
+        );
+        assert_eq!(
+            spawn_bullet_position(tank_top_left, Direction::Left),
+            Vec2::new(60.0, 86.0)
+        );
+        assert_eq!(
+            spawn_bullet_position(tank_top_left, Direction::Right),
+            Vec2::new(80.0, 86.0)
+        );
+    }
+
+    #[test]
+    fn player_fire_system_uses_upgrade_stats_for_spawned_bullet() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(64.0, 80.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::Space);
+
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(StageRules {
+            player_steel_destruction: true,
+        });
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.world_mut().spawn((
+            Tank {
+                top_left: tank_top_left,
+                facing: Direction::Up,
+                speed: PLAYER_SPEED,
+            },
+            PlayerUpgrade { level: 3 },
+            Player { id: PlayerId::One },
+        ));
+        app.add_systems(Update, fire_player_bullet);
+
+        app.update();
+
+        let expected_top_left = spawn_bullet_position(tank_top_left, Direction::Up);
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        let bullets: Vec<_> = bullets.iter(app.world()).collect();
+        assert_eq!(bullets.len(), 1);
+        let bullet = bullets[0];
+        assert_eq!(bullet.previous_top_left, expected_top_left);
+        assert_eq!(bullet.top_left, expected_top_left);
+        assert_eq!(bullet.facing, Direction::Up);
+        assert_eq!(bullet.owner, Team::Player1);
+        assert_eq!(bullet.speed, PLAYER_FAST_BULLET_SPEED);
+        assert!(bullet.breaks_steel);
+        assert!(!bullet.resolved);
+    }
+
+    #[test]
+    fn player_fire_system_respects_upgrade_bullet_limit() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(64.0, 80.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::Space);
+
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(StageRules {
+            player_steel_destruction: true,
+        });
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.world_mut().spawn((
+            Tank {
+                top_left: tank_top_left,
+                facing: Direction::Up,
+                speed: PLAYER_SPEED,
+            },
+            PlayerUpgrade { level: 3 },
+            Player { id: PlayerId::One },
+        ));
+        app.world_mut().spawn(Bullet {
+            previous_top_left: Vec2::new(8.0, 8.0),
+            top_left: Vec2::new(8.0, 8.0),
+            facing: Direction::Right,
+            owner: Team::Player1,
+            speed: BULLET_SPEED,
+            breaks_steel: false,
+            resolved: false,
+        });
+        app.world_mut().spawn(Bullet {
+            previous_top_left: Vec2::new(24.0, 8.0),
+            top_left: Vec2::new(24.0, 8.0),
+            facing: Direction::Right,
+            owner: Team::Player1,
+            speed: BULLET_SPEED,
+            breaks_steel: false,
+            resolved: false,
+        });
+        app.add_systems(Update, fire_player_bullet);
+
+        app.update();
+
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 2);
+    }
+
+    #[test]
     fn bullet_tile_destruction_respects_steel_breaking_flag() {
         assert!(bullet_destroys_tile(TileKind::Brick, false));
         assert!(!bullet_destroys_tile(TileKind::Steel, false));

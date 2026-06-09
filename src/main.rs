@@ -3685,11 +3685,12 @@ fn move_bullets(
         (
             Entity,
             &Tank,
+            &mut Transform,
             &EnemyTank,
             &mut Health,
             Option<&SpawnProtection>,
         ),
-        (With<EnemyTank>, Without<Player>),
+        (With<EnemyTank>, Without<Player>, Without<Bullet>),
     >,
     mut player_tanks: Query<
         (
@@ -3730,7 +3731,14 @@ fn move_bullets(
 
         if *game_mode == GameMode::Campaign && bullet.owner.is_player() {
             let mut hit_enemy = false;
-            for (enemy_entity, enemy_tank, enemy, mut health, spawn_protection) in &mut enemy_tanks
+            for (
+                enemy_entity,
+                enemy_tank,
+                mut enemy_transform,
+                enemy,
+                mut health,
+                spawn_protection,
+            ) in &mut enemy_tanks
             {
                 if rects_overlap(
                     bullet.top_left,
@@ -3749,19 +3757,21 @@ fn move_bullets(
                     health.current -= 1;
                     let hit_sound = enemy_hit_sound(health.current);
                     if health.current <= 0 {
+                        let enemy_top_left = enemy_tank.top_left;
                         score_board.record_enemy_destroyed(enemy.kind);
                         mark_enemy_tank_destroyed(
                             &mut commands,
                             &assets,
                             enemy_entity,
-                            enemy_tank.top_left,
+                            enemy_top_left,
+                            &mut enemy_transform,
                         );
                         if let Some(powerup_kind) = enemy.carried_powerup {
                             spawn_powerup(
                                 &mut commands,
                                 &assets,
                                 powerup_kind,
-                                enemy_tank.top_left,
+                                enemy_top_left,
                                 &active_powerups,
                                 &active_sparkles,
                             );
@@ -4231,7 +4241,10 @@ fn pickup_powerups(
         ),
         (With<Player>, Without<EnemyTank>, Without<PowerUp>),
     >,
-    enemy_tanks: Query<(Entity, &Tank, &EnemyTank), (With<EnemyTank>, Without<Player>)>,
+    mut enemy_tanks: Query<
+        (Entity, &Tank, &mut Transform, &EnemyTank),
+        (With<EnemyTank>, Without<Player>, Without<PowerUp>),
+    >,
     mut score_board: ResMut<ScoreBoard>,
 ) {
     if !game_status.is_playing() {
@@ -4287,7 +4300,7 @@ fn pickup_powerups(
                             &assets,
                             &sounds,
                             &mut score_board,
-                            &enemy_tanks,
+                            &mut enemy_tanks,
                         );
                     }
                 }
@@ -4435,12 +4448,18 @@ fn destroy_visible_enemies<F: QueryFilter>(
     assets: &SpriteAssets,
     sounds: &SoundAssets,
     score_board: &mut ScoreBoard,
-    enemy_tanks: &Query<(Entity, &Tank, &EnemyTank), F>,
+    enemy_tanks: &mut Query<(Entity, &Tank, &mut Transform, &EnemyTank), F>,
 ) {
     let mut destroyed_any = false;
-    for (enemy_entity, enemy_tank, enemy) in enemy_tanks {
+    for (enemy_entity, enemy_tank, mut transform, enemy) in enemy_tanks {
         score_board.record_enemy_destroyed(enemy.kind);
-        mark_enemy_tank_destroyed(commands, assets, enemy_entity, enemy_tank.top_left);
+        mark_enemy_tank_destroyed(
+            commands,
+            assets,
+            enemy_entity,
+            enemy_tank.top_left,
+            &mut transform,
+        );
         destroyed_any = true;
     }
 
@@ -5377,9 +5396,11 @@ fn mark_enemy_tank_destroyed(
     assets: &SpriteAssets,
     enemy_entity: Entity,
     top_left: Vec2,
+    transform: &mut Transform,
 ) {
     let frames = assets.manifest.explosion_frames();
     spawn_explosion(commands, assets, top_left);
+    park_tank_transform(transform);
     commands
         .entity(enemy_entity)
         .remove::<(Tank, Health, EnemyTank, EnemyAi, SpawnProtection)>()
@@ -5395,9 +5416,13 @@ fn parked_tank_translation() -> Vec3 {
     board_object_center(top_left.x, top_left.y, Vec2::splat(TANK_SIZE), 6.0)
 }
 
-fn park_player_tank(tank: &mut Tank, transform: &mut Transform) {
-    tank.top_left = parked_tank_top_left();
+fn park_tank_transform(transform: &mut Transform) {
     transform.translation = parked_tank_translation();
+}
+
+fn park_tank(tank: &mut Tank, transform: &mut Transform) {
+    tank.top_left = parked_tank_top_left();
+    park_tank_transform(transform);
 }
 
 fn mark_player_tank_destroyed_for_respawn(
@@ -5408,7 +5433,7 @@ fn mark_player_tank_destroyed_for_respawn(
     transform: &mut Transform,
     upgrade: &mut PlayerUpgrade,
 ) {
-    park_player_tank(tank, transform);
+    park_tank(tank, transform);
     upgrade.level = 0;
     commands
         .entity(player_entity)
@@ -5425,7 +5450,7 @@ fn mark_player_tank_destroyed_terminal(
     tank: &mut Tank,
     transform: &mut Transform,
 ) {
-    park_player_tank(tank, transform);
+    park_tank(tank, transform);
     commands
         .entity(player_entity)
         .remove::<(
@@ -9486,7 +9511,7 @@ mod tests {
     }
 
     #[test]
-    fn parked_player_tank_translation_is_off_board() {
+    fn parked_tank_translation_is_off_board() {
         let top_left = board_top_left_from_translation(parked_tank_translation(), TANK_SIZE);
 
         assert_eq!(top_left, parked_tank_top_left());

@@ -24,7 +24,8 @@ TANK_WINDOW_SCALE=4x cargo run
 Mode select:
 
 - `W` / `S` or arrow up/down: switch Campaign/Battle
-- `A` / `D` or arrow left/right: choose arena while Battle is selected
+- `A` / `D` or arrow left/right: choose stage while Campaign is selected, or
+  arena while Battle is selected
 - `Space`, `Enter`, or `RightShift`: start
 
 In game:

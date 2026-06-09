@@ -127,7 +127,7 @@ static P1_WIN_BANNER_LINES: [&str; 2] = ["P1 WIN", "PRESS R OR M"];
 static P2_WIN_BANNER_LINES: [&str; 2] = ["P2 WIN", "PRESS R OR M"];
 static VICTORY_BANNER_LINES: [&str; 3] = ["VICTORY", "ALL STAGES CLEAR", "PRESS R OR M"];
 static MODE_SELECT_HINT_LINES: [&str; 3] =
-    ["WS ARROWS SELECT", "AD ARROWS ARENA", "SPACE ENTER START"];
+    ["WS ARROWS SELECT", "AD ARROWS PICK", "SPACE ENTER START"];
 const DEFAULT_RESPAWN_INVULNERABILITY_SECONDS: f32 = 2.0;
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
@@ -648,6 +648,7 @@ impl GameMode {
 #[derive(Resource)]
 struct ModeSelect {
     selected: GameMode,
+    stage: usize,
     arena: usize,
 }
 
@@ -655,6 +656,7 @@ impl Default for ModeSelect {
     fn default() -> Self {
         Self {
             selected: GameMode::Campaign,
+            stage: 1,
             arena: DEFAULT_VERSUS_ARENA,
         }
     }
@@ -1514,6 +1516,11 @@ struct PhaseBanner;
 struct ModeSelectCursor;
 
 #[derive(Component)]
+struct ModeSelectStageGlyph {
+    digit: usize,
+}
+
+#[derive(Component)]
 struct ModeSelectArenaGlyph {
     digit: usize,
 }
@@ -1583,6 +1590,7 @@ fn setup(
         &mut commands,
         &sprite_assets,
         GameMode::Campaign,
+        1,
         DEFAULT_VERSUS_ARENA,
     );
 
@@ -1613,6 +1621,7 @@ fn handle_shared_controls(
     mut menu_queries: ParamSet<(
         Query<Entity, With<GameEntity>>,
         Query<&mut Transform, With<ModeSelectCursor>>,
+        Query<(&ModeSelectStageGlyph, &mut Sprite)>,
         Query<(&ModeSelectArenaGlyph, &mut Sprite)>,
         Query<(&ModeSelectBattleKindGlyph, &mut Sprite)>,
     )>,
@@ -1627,36 +1636,50 @@ fn handle_shared_controls(
             update_mode_select_cursor(&mut menu_queries.p1(), mode_select.selected);
         }
 
-        if mode_select.selected.is_versus()
-            && (keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft))
-        {
-            mode_select.arena = previous_arena(mode_select.arena);
-            update_mode_select_arena_digits(
-                &mut menu_queries.p2(),
-                &assets.manifest.glyphs,
-                mode_select.arena,
-            );
-            update_mode_select_battle_kind(
-                &mut menu_queries.p3(),
-                &assets.manifest.glyphs,
-                mode_select.arena,
-            );
+        if keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft) {
+            if mode_select.selected.is_versus() {
+                mode_select.arena = previous_arena(mode_select.arena);
+                update_mode_select_arena_digits(
+                    &mut menu_queries.p3(),
+                    &assets.manifest.glyphs,
+                    mode_select.arena,
+                );
+                update_mode_select_battle_kind(
+                    &mut menu_queries.p4(),
+                    &assets.manifest.glyphs,
+                    mode_select.arena,
+                );
+            } else {
+                mode_select.stage = previous_stage(mode_select.stage);
+                update_mode_select_stage_digits(
+                    &mut menu_queries.p2(),
+                    &assets.manifest.glyphs,
+                    mode_select.stage,
+                );
+            }
         }
 
-        if mode_select.selected.is_versus()
-            && (keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight))
-        {
-            mode_select.arena = next_arena(mode_select.arena);
-            update_mode_select_arena_digits(
-                &mut menu_queries.p2(),
-                &assets.manifest.glyphs,
-                mode_select.arena,
-            );
-            update_mode_select_battle_kind(
-                &mut menu_queries.p3(),
-                &assets.manifest.glyphs,
-                mode_select.arena,
-            );
+        if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) {
+            if mode_select.selected.is_versus() {
+                mode_select.arena = next_arena(mode_select.arena);
+                update_mode_select_arena_digits(
+                    &mut menu_queries.p3(),
+                    &assets.manifest.glyphs,
+                    mode_select.arena,
+                );
+                update_mode_select_battle_kind(
+                    &mut menu_queries.p4(),
+                    &assets.manifest.glyphs,
+                    mode_select.arena,
+                );
+            } else {
+                mode_select.stage = next_stage(mode_select.stage);
+                update_mode_select_stage_digits(
+                    &mut menu_queries.p2(),
+                    &assets.manifest.glyphs,
+                    mode_select.stage,
+                );
+            }
         }
 
         if keys.just_pressed(KeyCode::Space)
@@ -1665,7 +1688,7 @@ fn handle_shared_controls(
         {
             match mode_select.selected {
                 GameMode::Campaign => {
-                    game_status.stage = 1;
+                    game_status.stage = selected_campaign_stage(&mode_select);
                     *game_mode = GameMode::Campaign;
                     restart_level(
                         &mut commands,
@@ -1789,8 +1812,15 @@ fn enter_mode_select(
     }
 
     mode_select.selected = selected_mode.mode_select_option();
+    mode_select.stage = game_status.stage.clamp(1, LEVEL_COUNT);
     mode_select.arena = game_status.arena.clamp(1, ARENA_COUNT);
-    spawn_mode_select_screen(commands, assets, mode_select.selected, mode_select.arena);
+    spawn_mode_select_screen(
+        commands,
+        assets,
+        mode_select.selected,
+        mode_select.stage,
+        mode_select.arena,
+    );
 
     *tile_grid = TileGrid::empty();
     *director = EnemyDirector::inactive();
@@ -2515,6 +2545,7 @@ fn spawn_mode_select_screen(
     commands: &mut Commands,
     assets: &SpriteAssets,
     selected: GameMode,
+    stage: usize,
     arena: usize,
 ) {
     commands.spawn((
@@ -2546,9 +2577,11 @@ fn spawn_mode_select_screen(
         mode_select_option_top_left(GameMode::VersusDeathmatch),
         0.3,
     );
-    spawn_pixel_text(commands, assets, "ARENA", Vec2::new(77.0, 145.0), 0.3);
-    spawn_mode_select_arena_digits(commands, assets, arena, Vec2::new(113.0, 145.0), 0.3);
-    spawn_mode_select_battle_kind(commands, assets, arena, Vec2::new(133.0, 145.0), 0.3);
+    spawn_pixel_text(commands, assets, "STAGE", Vec2::new(59.0, 145.0), 0.3);
+    spawn_mode_select_stage_digits(commands, assets, stage, Vec2::new(95.0, 145.0), 0.3);
+    spawn_pixel_text(commands, assets, "ARENA", Vec2::new(59.0, 157.0), 0.3);
+    spawn_mode_select_arena_digits(commands, assets, arena, Vec2::new(95.0, 157.0), 0.3);
+    spawn_mode_select_battle_kind(commands, assets, arena, Vec2::new(115.0, 157.0), 0.3);
     spawn_mode_select_hints(commands, assets);
     spawn_mode_select_cursor(commands, assets, selected);
 }
@@ -2560,9 +2593,39 @@ fn spawn_mode_select_hints(commands: &mut Commands, assets: &SpriteAssets) {
             commands,
             assets,
             line,
-            Vec2::new((208.0 - text_width) / 2.0, 169.0 + index as f32 * 12.0),
+            Vec2::new((208.0 - text_width) / 2.0, 174.0 + index as f32 * 12.0),
             0.3,
         );
+    }
+}
+
+fn spawn_mode_select_stage_digits(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    stage: usize,
+    top_left: Vec2,
+    z: f32,
+) {
+    let text = format!("{:02}", stage.min(99));
+    for digit in 0..2 {
+        let ch = text.chars().nth(digit).unwrap_or('0');
+        commands.spawn((
+            Sprite::from_atlas_image(
+                assets.glyph_image.clone(),
+                TextureAtlas {
+                    layout: assets.glyph_layout.clone(),
+                    index: glyph_index(ch, &assets.manifest.glyphs),
+                },
+            ),
+            Transform::from_translation(virtual_center_scaled(
+                Vec2::new(top_left.x + digit as f32 * GLYPH_ADVANCE, top_left.y),
+                glyph_size(&assets.manifest.glyphs),
+                z,
+            ))
+            .with_scale(Vec3::splat(window_scale())),
+            ModeSelectStageGlyph { digit },
+            GameEntity,
+        ));
     }
 }
 
@@ -5428,6 +5491,41 @@ fn previous_arena(current: usize) -> usize {
         ARENA_COUNT
     } else {
         current - 1
+    }
+}
+
+fn next_stage(current: usize) -> usize {
+    if current >= LEVEL_COUNT {
+        1
+    } else {
+        current + 1
+    }
+}
+
+fn previous_stage(current: usize) -> usize {
+    if current <= 1 {
+        LEVEL_COUNT
+    } else {
+        current - 1
+    }
+}
+
+fn selected_campaign_stage(mode_select: &ModeSelect) -> usize {
+    mode_select.stage.clamp(1, LEVEL_COUNT)
+}
+
+fn update_mode_select_stage_digits(
+    glyphs: &mut Query<(&ModeSelectStageGlyph, &mut Sprite)>,
+    glyph_manifest: &GlyphManifest,
+    stage: usize,
+) {
+    let text = format!("{:02}", stage.min(99));
+    for (glyph, mut sprite) in glyphs {
+        if let Some(ch) = text.chars().nth(glyph.digit)
+            && let Some(atlas) = &mut sprite.texture_atlas
+        {
+            atlas.index = glyph_index(ch, glyph_manifest);
+        }
     }
 }
 
@@ -10219,6 +10317,7 @@ mod tests {
     #[test]
     fn game_starts_at_mode_select() {
         assert_eq!(GameStatus::default().phase, GamePhase::ModeSelect);
+        assert_eq!(ModeSelect::default().stage, 1);
         assert_eq!(GameStatus::default().arena, DEFAULT_VERSUS_ARENA);
     }
 
@@ -10251,6 +10350,32 @@ mod tests {
     }
 
     #[test]
+    fn mode_select_stage_selection_wraps_authored_campaign() {
+        assert_eq!(ModeSelect::default().stage, 1);
+        assert_eq!(next_stage(1), 2);
+        assert_eq!(next_stage(LEVEL_COUNT - 1), LEVEL_COUNT);
+        assert_eq!(next_stage(LEVEL_COUNT), 1);
+        assert_eq!(previous_stage(1), LEVEL_COUNT);
+        assert_eq!(previous_stage(2), 1);
+        assert_eq!(previous_stage(LEVEL_COUNT), LEVEL_COUNT - 1);
+    }
+
+    #[test]
+    fn selected_campaign_stage_clamps_to_authored_campaign_range() {
+        let mut mode_select = ModeSelect {
+            stage: 12,
+            ..ModeSelect::default()
+        };
+        assert_eq!(selected_campaign_stage(&mode_select), 12);
+
+        mode_select.stage = 0;
+        assert_eq!(selected_campaign_stage(&mode_select), 1);
+
+        mode_select.stage = LEVEL_COUNT + 5;
+        assert_eq!(selected_campaign_stage(&mode_select), LEVEL_COUNT);
+    }
+
+    #[test]
     fn mode_select_cursor_tracks_selected_option() {
         let campaign = mode_select_cursor_translation(GameMode::Campaign);
         let battle = mode_select_cursor_translation(GameMode::VersusDeathmatch);
@@ -10263,12 +10388,15 @@ mod tests {
         let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
         assert_eq!(
             MODE_SELECT_HINT_LINES,
-            ["WS ARROWS SELECT", "AD ARROWS ARENA", "SPACE ENTER START"]
+            ["WS ARROWS SELECT", "AD ARROWS PICK", "SPACE ENTER START"]
         );
-        for line in MODE_SELECT_HINT_LINES {
+        for line in ["STAGE", "ARENA", "37", "BASE", "DUEL"]
+            .into_iter()
+            .chain(MODE_SELECT_HINT_LINES)
+        {
             assert!(
                 phase_text_width(line) <= 208.0,
-                "mode select hint should fit in the playfield"
+                "mode select text should fit in the playfield"
             );
             for ch in line.chars().filter(|ch| *ch != ' ') {
                 assert_manifest_glyph_is_visible(&manifest, ch);

@@ -125,6 +125,7 @@ Win condition:
 
 Progression:
 
+- Mode select may choose the starting authored stage for practice or private playtesting.
 - Load the next level after clearing the current level.
 - If the last authored level is cleared, show a victory screen or loop with harder enemy rosters.
 

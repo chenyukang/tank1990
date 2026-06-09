@@ -4854,7 +4854,6 @@ fn advance_after_level_clear(
     mut versus_freeze: ResMut<VersusPlayerFreeze>,
     mut base_reinforcement: ResMut<BaseReinforcement>,
     game_entities: Query<Entity, With<GameEntity>>,
-    banners: Query<Entity, With<PhaseBanner>>,
 ) {
     if game_status.phase != GamePhase::LevelClear {
         return;
@@ -4866,11 +4865,17 @@ fn advance_after_level_clear(
     }
 
     if game_status.stage >= LEVEL_COUNT {
-        for entity in &banners {
-            commands.entity(entity).despawn();
-        }
-        game_status.phase = GamePhase::Victory;
-        game_status.transition_timer.reset();
+        enter_victory_screen(
+            &mut commands,
+            &mut game_status,
+            &mut tile_grid,
+            &mut director,
+            &mut stage_rules,
+            &mut enemy_freeze,
+            &mut versus_freeze,
+            &mut base_reinforcement,
+            &game_entities,
+        );
         return;
     }
 
@@ -4904,6 +4909,32 @@ fn advance_after_level_clear(
     game_status.stage = next_stage;
     game_status.phase = GamePhase::StageIntro;
     game_status.transition_timer = Timer::from_seconds(STAGE_INTRO_SECONDS, TimerMode::Once);
+}
+
+fn enter_victory_screen(
+    commands: &mut Commands,
+    game_status: &mut GameStatus,
+    tile_grid: &mut TileGrid,
+    director: &mut EnemyDirector,
+    stage_rules: &mut StageRules,
+    enemy_freeze: &mut EnemyFreeze,
+    versus_freeze: &mut VersusPlayerFreeze,
+    base_reinforcement: &mut BaseReinforcement,
+    game_entities: &Query<Entity, With<GameEntity>>,
+) {
+    for entity in game_entities {
+        commands.entity(entity).despawn();
+    }
+
+    *tile_grid = TileGrid::empty();
+    *director = EnemyDirector::inactive();
+    *stage_rules = StageRules::default();
+    enemy_freeze.reset();
+    versus_freeze.reset();
+    base_reinforcement.reset();
+    game_status.phase = GamePhase::Victory;
+    game_status.winner = None;
+    game_status.transition_timer.reset();
 }
 
 fn update_status_panel(
@@ -7525,6 +7556,30 @@ mod tests {
         );
     }
 
+    fn enter_victory_screen_for_test(
+        mut commands: Commands,
+        mut game_status: ResMut<GameStatus>,
+        mut tile_grid: ResMut<TileGrid>,
+        mut director: ResMut<EnemyDirector>,
+        mut stage_rules: ResMut<StageRules>,
+        mut enemy_freeze: ResMut<EnemyFreeze>,
+        mut versus_freeze: ResMut<VersusPlayerFreeze>,
+        mut base_reinforcement: ResMut<BaseReinforcement>,
+        game_entities: Query<Entity, With<GameEntity>>,
+    ) {
+        enter_victory_screen(
+            &mut commands,
+            &mut game_status,
+            &mut tile_grid,
+            &mut director,
+            &mut stage_rules,
+            &mut enemy_freeze,
+            &mut versus_freeze,
+            &mut base_reinforcement,
+            &game_entities,
+        );
+    }
+
     #[test]
     fn window_scale_defaults_and_accepts_integer_scales() {
         assert_eq!(parse_window_scale(None), DEFAULT_WINDOW_SCALE);
@@ -9128,6 +9183,75 @@ mod tests {
             phase_banner_lines(GamePhase::Victory, None).expect("victory should show a banner"),
             VICTORY_BANNER_LINES.as_slice()
         );
+    }
+
+    #[test]
+    fn victory_screen_clears_previous_stage_entities_and_runtime_state() {
+        let mut app = App::new();
+        let mut grid = TileGrid::empty();
+        grid.set(10, 24, TileKind::Brick);
+
+        let level = parse_level(LEVEL_1).expect("level should parse");
+        let mut enemy_freeze = EnemyFreeze::default();
+        enemy_freeze.start();
+        let mut versus_freeze = VersusPlayerFreeze::default();
+        versus_freeze.start(PlayerId::Two);
+        let mut base_reinforcement = BaseReinforcement {
+            timer: None,
+            saved_tiles: vec![(10, 24, TileKind::Brick)],
+        };
+        base_reinforcement.start();
+
+        app.insert_resource(GameStatus {
+            phase: GamePhase::LevelClear,
+            stage: LEVEL_COUNT,
+            arena: DEFAULT_VERSUS_ARENA,
+            winner: Some(PlayerId::One),
+            transition_timer: Timer::from_seconds(LEVEL_CLEAR_SCORECARD_SECONDS, TimerMode::Once),
+        });
+        app.insert_resource(grid);
+        app.insert_resource(EnemyDirector::from_level(&level));
+        app.insert_resource(StageRules {
+            player_steel_destruction: true,
+        });
+        app.insert_resource(enemy_freeze);
+        app.insert_resource(versus_freeze);
+        app.insert_resource(base_reinforcement);
+        app.world_mut()
+            .spawn((GameEntity, GridTile { x: 10, y: 24 }));
+        app.world_mut().spawn((GameEntity, PhaseBanner));
+        app.add_systems(Update, enter_victory_screen_for_test);
+
+        app.update();
+
+        let mut game_entities = app.world_mut().query::<&GameEntity>();
+        assert_eq!(game_entities.iter(app.world()).count(), 0);
+
+        let status = app.world().resource::<GameStatus>();
+        assert_eq!(status.phase, GamePhase::Victory);
+        assert_eq!(status.stage, LEVEL_COUNT);
+        assert_eq!(status.winner, None);
+        assert!(
+            app.world()
+                .resource::<TileGrid>()
+                .tiles
+                .iter()
+                .all(|tile| *tile == TileKind::Empty)
+        );
+        let director = app.world().resource::<EnemyDirector>();
+        assert!(director.roster.is_empty());
+        assert!(director.spawns.is_empty());
+        assert_eq!(director.max_active, 0);
+        assert_eq!(*app.world().resource::<StageRules>(), StageRules::default());
+        assert!(!app.world().resource::<EnemyFreeze>().is_active());
+        assert!(
+            !app.world()
+                .resource::<VersusPlayerFreeze>()
+                .is_player_frozen(PlayerId::Two)
+        );
+        let reinforcement = app.world().resource::<BaseReinforcement>();
+        assert!(reinforcement.timer.is_none());
+        assert!(reinforcement.saved_tiles.is_empty());
     }
 
     #[test]

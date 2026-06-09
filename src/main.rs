@@ -74,6 +74,9 @@ const STAGE_CLEAR_LIFE_BONUS: u32 = 1000;
 const ENEMY_ALIGNMENT_FIRE_FRACTION: f32 = 0.45;
 const VERSUS_POWERUP_INTERVAL_SECONDS: f32 = 8.0;
 const SOUND_SAMPLE_RATE: u32 = 22_050;
+const MAX_RETRO_SOUND_SECONDS: f32 = 1.0;
+const MAX_RETRO_SOUND_FREQUENCY: f32 = 4_000.0;
+const MAX_RETRO_SOUND_VOLUME: f32 = 1.0;
 const ICE_SPEED_MULTIPLIER: f32 = 1.18;
 const SPAWN_SHIMMER_FRAME_SECONDS: f32 = 0.08;
 
@@ -190,6 +193,7 @@ struct AssetManifest {
     terrain: TerrainSpriteManifest,
     effects: EffectSpriteManifest,
     powerups: PowerUpSpriteManifest,
+    sounds: SoundManifest,
 }
 
 impl AssetManifest {
@@ -326,6 +330,37 @@ struct PowerUpSpriteManifest {
     grenade: usize,
     shovel: usize,
     tank: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct SoundManifest {
+    fire: RetroSoundSpec,
+    brick_hit: RetroSoundSpec,
+    steel_hit: RetroSoundSpec,
+    tank_explosion: RetroSoundSpec,
+    base_destroyed: RetroSoundSpec,
+    powerup_pickup: RetroSoundSpec,
+    stage_start: RetroSoundSpec,
+    level_clear: RetroSoundSpec,
+    game_over: RetroSoundSpec,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+enum RetroSoundSpec {
+    Sweep {
+        duration_secs: f32,
+        start_frequency: f32,
+        end_frequency: f32,
+        volume: f32,
+    },
+    Noise {
+        duration_secs: f32,
+        volume: f32,
+        seed: u32,
+    },
+    Layered {
+        notes: Vec<SoundNote>,
+    },
 }
 
 #[derive(Resource)]
@@ -1381,7 +1416,7 @@ fn setup(
     commands.spawn(Camera2d);
 
     let sprite_assets = create_sprite_assets(&mut images, &mut atlas_layouts);
-    let sound_assets = create_sound_assets(&mut retro_sounds);
+    let sound_assets = create_sound_assets(&mut retro_sounds, &sprite_assets.manifest);
     spawn_mode_select_screen(
         &mut commands,
         &sprite_assets,
@@ -1838,6 +1873,99 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
         }
     }
 
+    validate_sound_manifest(&manifest.sounds)?;
+
+    Ok(())
+}
+
+fn validate_sound_manifest(manifest: &SoundManifest) -> Result<(), String> {
+    for (name, spec) in sound_manifest_specs(manifest) {
+        validate_sound_spec(name, spec)?;
+    }
+    Ok(())
+}
+
+fn sound_manifest_specs(manifest: &SoundManifest) -> [(&'static str, &RetroSoundSpec); 9] {
+    [
+        ("sounds.fire", &manifest.fire),
+        ("sounds.brick_hit", &manifest.brick_hit),
+        ("sounds.steel_hit", &manifest.steel_hit),
+        ("sounds.tank_explosion", &manifest.tank_explosion),
+        ("sounds.base_destroyed", &manifest.base_destroyed),
+        ("sounds.powerup_pickup", &manifest.powerup_pickup),
+        ("sounds.stage_start", &manifest.stage_start),
+        ("sounds.level_clear", &manifest.level_clear),
+        ("sounds.game_over", &manifest.game_over),
+    ]
+}
+
+fn validate_sound_spec(name: &str, spec: &RetroSoundSpec) -> Result<(), String> {
+    match spec {
+        RetroSoundSpec::Sweep {
+            duration_secs,
+            start_frequency,
+            end_frequency,
+            volume,
+        } => {
+            validate_sound_duration(name, *duration_secs)?;
+            validate_sound_frequency(name, "start_frequency", *start_frequency)?;
+            validate_sound_frequency(name, "end_frequency", *end_frequency)?;
+            validate_sound_volume(name, *volume)
+        }
+        RetroSoundSpec::Noise {
+            duration_secs,
+            volume,
+            seed,
+        } => {
+            validate_sound_duration(name, *duration_secs)?;
+            validate_sound_volume(name, *volume)?;
+            if *seed == 0 {
+                return Err(format!("{name} noise seed must be nonzero"));
+            }
+            Ok(())
+        }
+        RetroSoundSpec::Layered { notes } => {
+            if notes.is_empty() {
+                return Err(format!("{name} must define at least one note"));
+            }
+
+            let total_duration: f32 = notes.iter().map(|note| note.duration_secs).sum();
+            validate_sound_duration(name, total_duration)?;
+            for (index, note) in notes.iter().enumerate() {
+                let note_name = format!("{name}.notes[{index}]");
+                validate_sound_duration(&note_name, note.duration_secs)?;
+                validate_sound_frequency(&note_name, "frequency", note.frequency)?;
+                validate_sound_volume(&note_name, note.volume)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_sound_duration(name: &str, duration_secs: f32) -> Result<(), String> {
+    if duration_secs <= 0.0 || duration_secs > MAX_RETRO_SOUND_SECONDS {
+        return Err(format!(
+            "{name} duration {duration_secs} must be in 0..={MAX_RETRO_SOUND_SECONDS} seconds"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_sound_frequency(name: &str, field: &str, frequency: f32) -> Result<(), String> {
+    if frequency <= 0.0 || frequency > MAX_RETRO_SOUND_FREQUENCY {
+        return Err(format!(
+            "{name} {field} {frequency} must be in 0..={MAX_RETRO_SOUND_FREQUENCY} Hz"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_sound_volume(name: &str, volume: f32) -> Result<(), String> {
+    if volume <= 0.0 || volume > MAX_RETRO_SOUND_VOLUME {
+        return Err(format!(
+            "{name} volume {volume} must be in 0..={MAX_RETRO_SOUND_VOLUME}"
+        ));
+    }
     Ok(())
 }
 
@@ -5679,106 +5807,21 @@ fn create_sprite_assets(
     }
 }
 
-fn create_sound_assets(sounds: &mut Assets<RetroSound>) -> SoundAssets {
+fn create_sound_assets(sounds: &mut Assets<RetroSound>, manifest: &AssetManifest) -> SoundAssets {
     SoundAssets {
-        fire: sounds.add(make_sweep_sound(0.08, 920.0, 420.0, 0.22)),
-        brick_hit: sounds.add(make_noise_sound(0.07, 0.18, 0x1234_5678)),
-        steel_hit: sounds.add(make_sweep_sound(0.08, 1380.0, 1780.0, 0.16)),
-        tank_explosion: sounds.add(make_noise_sound(0.24, 0.30, 0xBEEF_9001)),
-        base_destroyed: sounds.add(make_layered_sound(&[
-            SoundNote {
-                duration_secs: 0.14,
-                frequency: 180.0,
-                volume: 0.24,
-            },
-            SoundNote {
-                duration_secs: 0.16,
-                frequency: 120.0,
-                volume: 0.22,
-            },
-            SoundNote {
-                duration_secs: 0.20,
-                frequency: 80.0,
-                volume: 0.20,
-            },
-        ])),
-        powerup_pickup: sounds.add(make_layered_sound(&[
-            SoundNote {
-                duration_secs: 0.05,
-                frequency: 660.0,
-                volume: 0.18,
-            },
-            SoundNote {
-                duration_secs: 0.05,
-                frequency: 880.0,
-                volume: 0.18,
-            },
-            SoundNote {
-                duration_secs: 0.08,
-                frequency: 1320.0,
-                volume: 0.16,
-            },
-        ])),
-        stage_start: sounds.add(make_layered_sound(&[
-            SoundNote {
-                duration_secs: 0.07,
-                frequency: 392.0,
-                volume: 0.16,
-            },
-            SoundNote {
-                duration_secs: 0.07,
-                frequency: 523.25,
-                volume: 0.16,
-            },
-            SoundNote {
-                duration_secs: 0.12,
-                frequency: 659.25,
-                volume: 0.15,
-            },
-        ])),
-        level_clear: sounds.add(make_layered_sound(&[
-            SoundNote {
-                duration_secs: 0.08,
-                frequency: 523.25,
-                volume: 0.18,
-            },
-            SoundNote {
-                duration_secs: 0.08,
-                frequency: 659.25,
-                volume: 0.18,
-            },
-            SoundNote {
-                duration_secs: 0.08,
-                frequency: 783.99,
-                volume: 0.18,
-            },
-            SoundNote {
-                duration_secs: 0.18,
-                frequency: 1046.5,
-                volume: 0.16,
-            },
-        ])),
-        game_over: sounds.add(make_layered_sound(&[
-            SoundNote {
-                duration_secs: 0.12,
-                frequency: 392.0,
-                volume: 0.18,
-            },
-            SoundNote {
-                duration_secs: 0.12,
-                frequency: 261.63,
-                volume: 0.18,
-            },
-            SoundNote {
-                duration_secs: 0.24,
-                frequency: 130.81,
-                volume: 0.16,
-            },
-        ])),
+        fire: sounds.add(make_manifest_sound(&manifest.sounds.fire)),
+        brick_hit: sounds.add(make_manifest_sound(&manifest.sounds.brick_hit)),
+        steel_hit: sounds.add(make_manifest_sound(&manifest.sounds.steel_hit)),
+        tank_explosion: sounds.add(make_manifest_sound(&manifest.sounds.tank_explosion)),
+        base_destroyed: sounds.add(make_manifest_sound(&manifest.sounds.base_destroyed)),
+        powerup_pickup: sounds.add(make_manifest_sound(&manifest.sounds.powerup_pickup)),
+        stage_start: sounds.add(make_manifest_sound(&manifest.sounds.stage_start)),
+        level_clear: sounds.add(make_manifest_sound(&manifest.sounds.level_clear)),
+        game_over: sounds.add(make_manifest_sound(&manifest.sounds.game_over)),
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 struct SoundNote {
     duration_secs: f32,
     frequency: f32,
@@ -5801,6 +5844,23 @@ fn play_sound(commands: &mut Commands, sounds: &SoundAssets, kind: SoundKind) {
         AudioPlayer(handle),
         PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.45)),
     ));
+}
+
+fn make_manifest_sound(spec: &RetroSoundSpec) -> RetroSound {
+    match spec {
+        RetroSoundSpec::Sweep {
+            duration_secs,
+            start_frequency,
+            end_frequency,
+            volume,
+        } => make_sweep_sound(*duration_secs, *start_frequency, *end_frequency, *volume),
+        RetroSoundSpec::Noise {
+            duration_secs,
+            volume,
+            seed,
+        } => make_noise_sound(*duration_secs, *volume, *seed),
+        RetroSoundSpec::Layered { notes } => make_layered_sound(notes),
+    }
 }
 
 fn make_sweep_sound(
@@ -6822,6 +6882,29 @@ mod tests {
         assert_eq!(manifest.powerup_index(PowerUpKind::Grenade), 3);
         assert_eq!(manifest.powerup_index(PowerUpKind::Shovel), 4);
         assert_eq!(manifest.powerup_index(PowerUpKind::Tank), 5);
+
+        assert!(matches!(
+            manifest.sounds.fire,
+            RetroSoundSpec::Sweep {
+                duration_secs: 0.08,
+                start_frequency: 920.0,
+                end_frequency: 420.0,
+                volume: 0.22,
+            }
+        ));
+        assert!(matches!(
+            manifest.sounds.brick_hit,
+            RetroSoundSpec::Noise {
+                duration_secs: 0.07,
+                volume: 0.18,
+                seed: 305419896,
+            }
+        ));
+        assert!(matches!(
+            manifest.sounds.base_destroyed,
+            RetroSoundSpec::Layered { ref notes } if notes.len() == 3
+        ));
+        assert_eq!(sound_manifest_specs(&manifest.sounds).len(), 9);
     }
 
     #[test]
@@ -6894,6 +6977,39 @@ mod tests {
             parse_asset_manifest(&invalid)
                 .expect_err("invalid power-up index should fail")
                 .contains("outside the generated power-up atlas")
+        );
+    }
+
+    #[test]
+    fn asset_manifest_rejects_invalid_sound_specs() {
+        let invalid = MANIFEST.replacen("duration_secs: 0.08", "duration_secs: 1.5", 1);
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("overlong sound should fail")
+                .contains("sounds.fire duration 1.5")
+        );
+
+        let invalid = MANIFEST.replacen("seed: 305419896", "seed: 0", 1);
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("zero noise seed should fail")
+                .contains("sounds.brick_hit noise seed must be nonzero")
+        );
+
+        let invalid = MANIFEST.replacen("frequency: 1320.0", "frequency: 0.0", 1);
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("zero note frequency should fail")
+                .contains("sounds.powerup_pickup.notes[2] frequency 0")
+        );
+
+        assert!(
+            validate_sound_spec(
+                "sounds.base_destroyed",
+                &RetroSoundSpec::Layered { notes: Vec::new() },
+            )
+            .expect_err("empty layered sound should fail")
+            .contains("sounds.base_destroyed must define at least one note")
         );
     }
 
@@ -8782,26 +8898,9 @@ mod tests {
 
     #[test]
     fn generated_retro_sounds_are_short_and_bounded() {
-        let sounds = [
-            make_sweep_sound(0.08, 920.0, 420.0, 0.22),
-            make_noise_sound(0.07, 0.18, 0x1234_5678),
-            make_sweep_sound(0.08, 1380.0, 1780.0, 0.16),
-            make_noise_sound(0.24, 0.30, 0xBEEF_9001),
-            make_layered_sound(&[
-                SoundNote {
-                    duration_secs: 0.14,
-                    frequency: 180.0,
-                    volume: 0.24,
-                },
-                SoundNote {
-                    duration_secs: 0.16,
-                    frequency: 120.0,
-                    volume: 0.22,
-                },
-            ]),
-        ];
-
-        for sound in sounds {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        for (_, spec) in sound_manifest_specs(&manifest.sounds) {
+            let sound = make_manifest_sound(spec);
             assert_eq!(sound.sample_rate, SOUND_SAMPLE_RATE);
             assert!(!sound.samples.is_empty());
             assert!(sound.samples.len() <= SOUND_SAMPLE_RATE as usize);

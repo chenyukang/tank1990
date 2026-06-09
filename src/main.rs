@@ -8071,27 +8071,51 @@ fn create_effect_atlas(manifest: GeneratedAtlasManifest) -> Image {
 }
 
 fn draw_explosion_frame(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
-    let center = 8_i32;
-    let radius = [2, 4, 6, 7][frame];
-    for y in 0..16_i32 {
-        for x in 0..16_i32 {
-            let distance = (x - center).abs() + (y - center).abs();
-            if distance <= radius {
-                let color = if distance <= radius / 2 {
-                    [248, 232, 128, 255]
-                } else if frame < 3 {
-                    [232, 96, 40, 255]
-                } else {
-                    [96, 64, 48, 210]
-                };
-                set_pixel(pixels, width, x_offset + x as usize, y as usize, color);
+    let core = [255, 248, 184, 255];
+    let flame = [248, 184, 64, 255];
+    let ember = [232, 80, 40, 240];
+    let smoke = [88, 72, 64, 190];
+
+    match frame {
+        0 => {
+            fill_rect(pixels, width, x_offset + 7, 7, 2, 2, core);
+            for (x, y) in [(8, 4), (4, 8), (11, 8), (8, 11)] {
+                set_pixel(pixels, width, x_offset + x, y, flame);
             }
+        }
+        1 => {
+            fill_rect(pixels, width, x_offset + 6, 6, 4, 4, core);
+            fill_rect(pixels, width, x_offset + 5, 7, 6, 2, flame);
+            fill_rect(pixels, width, x_offset + 7, 5, 2, 6, flame);
+            for (x, y) in [(4, 6), (11, 6), (4, 10), (11, 10), (8, 3), (8, 12)] {
+                set_pixel(pixels, width, x_offset + x, y, ember);
+            }
+        }
+        2 => {
+            fill_rect(pixels, width, x_offset + 4, 6, 8, 5, flame);
+            fill_rect(pixels, width, x_offset + 6, 4, 4, 9, ember);
+            fill_rect(pixels, width, x_offset + 7, 7, 2, 2, core);
+            for (x, y) in [(3, 8), (12, 8), (8, 3), (8, 13), (5, 5), (11, 11)] {
+                set_pixel(pixels, width, x_offset + x, y, smoke);
+            }
+        }
+        _ => {
+            for (x, y) in [(4, 6), (8, 4), (11, 6), (3, 10), (7, 11), (12, 10), (9, 13)] {
+                set_pixel(pixels, width, x_offset + x, y, smoke);
+            }
+            fill_rect(pixels, width, x_offset + 6, 8, 4, 3, [104, 80, 56, 170]);
+            set_pixel(pixels, width, x_offset + 8, 8, [184, 72, 40, 180]);
         }
     }
 }
 
 fn draw_spawn_frame(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
-    let color = [112, 200, 248, 230];
+    let color = if frame.is_multiple_of(2) {
+        [144, 224, 255, 235]
+    } else {
+        [80, 176, 240, 225]
+    };
+    let accent = [232, 248, 255, 245];
     let inset = frame;
     fill_rect(
         pixels,
@@ -8129,6 +8153,10 @@ fn draw_spawn_frame(pixels: &mut [u8], width: usize, x_offset: usize, frame: usi
         16 - inset * 2,
         color,
     );
+    set_pixel(pixels, width, x_offset + 7, 7, accent);
+    set_pixel(pixels, width, x_offset + 8, 8, accent);
+    set_pixel(pixels, width, x_offset + inset, inset, accent);
+    set_pixel(pixels, width, x_offset + 15 - inset, 15 - inset, accent);
 }
 
 fn draw_base_destruction_frame(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
@@ -8137,16 +8165,21 @@ fn draw_base_destruction_frame(pixels: &mut [u8], width: usize, x_offset: usize,
             fill_rect(pixels, width, x_offset + 4, 5, 8, 7, [224, 160, 72, 255]);
             fill_rect(pixels, width, x_offset + 6, 3, 4, 6, [248, 232, 128, 255]);
             fill_rect(pixels, width, x_offset + 3, 12, 10, 2, [80, 56, 40, 255]);
+            set_pixel(pixels, width, x_offset + 7, 2, [255, 248, 184, 255]);
         }
         1 => {
             fill_rect(pixels, width, x_offset + 2, 6, 12, 6, [232, 96, 40, 255]);
             fill_rect(pixels, width, x_offset + 5, 2, 6, 9, [248, 200, 72, 255]);
             fill_rect(pixels, width, x_offset + 1, 12, 14, 3, [72, 56, 48, 255]);
+            set_pixel(pixels, width, x_offset + 3, 4, [255, 248, 184, 230]);
+            set_pixel(pixels, width, x_offset + 12, 5, [184, 72, 40, 230]);
         }
         2 => {
             fill_rect(pixels, width, x_offset + 3, 4, 10, 8, [104, 88, 80, 220]);
             fill_rect(pixels, width, x_offset + 5, 7, 7, 5, [184, 72, 40, 240]);
             fill_rect(pixels, width, x_offset + 2, 12, 12, 3, [48, 40, 32, 255]);
+            set_pixel(pixels, width, x_offset + 4, 3, [88, 72, 64, 180]);
+            set_pixel(pixels, width, x_offset + 11, 4, [88, 72, 64, 180]);
         }
         _ => {
             fill_rect(pixels, width, x_offset + 2, 11, 12, 4, [48, 40, 32, 255]);
@@ -8183,6 +8216,11 @@ fn draw_powerup_sparkle_frame(pixels: &mut [u8], width: usize, x_offset: usize, 
         fill_rect(pixels, width, x_offset + 7, 0, 2, 3, color);
         fill_rect(pixels, width, x_offset + 7, 13, 2, 3, color);
     }
+    if frame.is_multiple_of(2) {
+        fill_rect(pixels, width, x_offset + 7, 7, 2, 2, color);
+    } else {
+        set_pixel(pixels, width, x_offset + 8, 8, color);
+    }
 }
 
 fn draw_bullet_impact_frame(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
@@ -8196,6 +8234,7 @@ fn draw_bullet_impact_frame(pixels: &mut [u8], width: usize, x_offset: usize, fr
             fill_rect(pixels, width, x_offset + 7, 6, 2, 4, [248, 216, 96, 255]);
             set_pixel(pixels, width, x_offset + 5, 5, [255, 255, 255, 220]);
             set_pixel(pixels, width, x_offset + 10, 10, [232, 96, 40, 230]);
+            set_pixel(pixels, width, x_offset + 12, 8, [248, 216, 96, 220]);
         }
         2 => {
             for (x, y) in [(4, 7), (6, 5), (8, 4), (11, 7), (9, 11), (5, 10)] {
@@ -9817,6 +9856,44 @@ mod tests {
         assert_eq!(image_pixel(&image, tank + 3, 5), [56, 56, 56, 255]);
         assert_eq!(image_pixel(&image, tank + 7, 3), [248, 160, 88, 255]);
         assert_eq!(image_pixel(&image, tank + 5, 11), [128, 40, 40, 255]);
+    }
+
+    #[test]
+    fn generated_effect_atlas_uses_readable_animation_frames() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let image = create_effect_atlas(manifest.atlases.effects);
+        let tile_width = manifest.atlases.effects.tile_width;
+
+        assert_eq!(image_pixel(&image, 8, 8), [255, 248, 184, 255]);
+        assert_eq!(image_pixel(&image, 8, 4), [248, 184, 64, 255]);
+
+        let explosion_smoke = tile_width * 2;
+        assert_eq!(
+            image_pixel(&image, explosion_smoke + 3, 8),
+            [88, 72, 64, 190]
+        );
+
+        let spawn = tile_width * 5;
+        assert_eq!(image_pixel(&image, spawn + 1, 1), [232, 248, 255, 245]);
+        assert_eq!(image_pixel(&image, spawn + 8, 8), [232, 248, 255, 245]);
+
+        let base_flame = tile_width * 9;
+        assert_eq!(image_pixel(&image, base_flame + 3, 4), [255, 248, 184, 230]);
+        let base_smoke = tile_width * 10;
+        assert_eq!(image_pixel(&image, base_smoke + 4, 3), [88, 72, 64, 180]);
+
+        let sparkle = tile_width * 12;
+        assert_eq!(image_pixel(&image, sparkle + 7, 7), [255, 255, 255, 220]);
+        let sparkle_gold = tile_width * 13;
+        assert_eq!(
+            image_pixel(&image, sparkle_gold + 8, 8),
+            [255, 232, 104, 220]
+        );
+
+        let impact = tile_width * 17;
+        assert_eq!(image_pixel(&image, impact + 12, 8), [248, 216, 96, 220]);
+        let impact_smoke = tile_width * 19;
+        assert_eq!(image_pixel(&image, impact_smoke + 8, 8), [72, 56, 48, 130]);
     }
 
     #[test]

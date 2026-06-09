@@ -8871,6 +8871,9 @@ fn set_pixel(pixels: &mut [u8], width: usize, x: usize, y: usize, color: [u8; 4]
 mod tests {
     use super::*;
 
+    #[derive(Component)]
+    struct OldStageEntity;
+
     const MANIFEST: &str = include_str!("../assets/manifest.ron");
     const LEVEL_1: &str = include_str!("../assets/levels/001.level.ron");
     const LEVEL_2: &str = include_str!("../assets/levels/002.level.ron");
@@ -11594,6 +11597,93 @@ mod tests {
             app.world().resource::<ScoreBoard>().score,
             500 + stage_clear_bonus(2)
         );
+    }
+
+    #[test]
+    fn level_clear_transition_loads_next_stage_and_clears_old_entities() {
+        let mut app = App::new();
+        let (next_level, expected_grid) = load_stage_bundle_or_panic(2);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(LEVEL_CLEAR_SCORECARD_SECONDS));
+
+        let level_1 = parse_level(LEVEL_1).expect("level one should parse");
+        let mut score_board = ScoreBoard::campaign(1);
+        score_board.score = 900;
+        score_board.lives = 2;
+        score_board.enemies_destroyed = 1;
+        score_board.enemy_kills.add(EnemyKind::Armor);
+        let mut enemy_freeze = EnemyFreeze::default();
+        enemy_freeze.start();
+        let mut versus_freeze = VersusPlayerFreeze::default();
+        versus_freeze.start(PlayerId::Two);
+        let mut base_reinforcement = BaseReinforcement {
+            timer: None,
+            saved_tiles: vec![(10, 24, TileKind::Brick)],
+        };
+        base_reinforcement.start();
+
+        app.insert_resource(time);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::LevelClear,
+            stage: 1,
+            transition_timer: Timer::from_seconds(LEVEL_CLEAR_SCORECARD_SECONDS, TimerMode::Once),
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::from_level(&level_1).expect("level one grid should build"));
+        app.insert_resource(EnemyDirector::from_level(&level_1));
+        app.insert_resource(score_board);
+        app.insert_resource(StageRules {
+            player_steel_destruction: true,
+        });
+        app.insert_resource(enemy_freeze);
+        app.insert_resource(versus_freeze);
+        app.insert_resource(base_reinforcement);
+        app.world_mut()
+            .spawn((GameEntity, OldStageEntity, GridTile { x: 10, y: 24 }));
+        app.add_systems(Update, advance_after_level_clear);
+
+        app.update();
+
+        let status = app.world().resource::<GameStatus>();
+        assert_eq!(status.stage, 2);
+        assert_eq!(status.phase, GamePhase::StageIntro);
+        assert_eq!(status.winner, None);
+        assert_eq!(
+            app.world().resource::<TileGrid>().tiles,
+            expected_grid.tiles
+        );
+
+        let score_board = app.world().resource::<ScoreBoard>();
+        assert_eq!(score_board.score, 900);
+        assert_eq!(score_board.lives, 2);
+        assert_eq!(score_board.enemies_destroyed, 0);
+        assert_eq!(score_board.total_enemies, next_level.enemies.len());
+        assert_eq!(score_board.enemy_kills.total(), 0);
+
+        let director = app.world().resource::<EnemyDirector>();
+        assert_eq!(director.roster.len(), next_level.enemies.len());
+        assert_eq!(director.spawns.len(), next_level.enemy_spawns.len());
+        assert_eq!(director.max_active, next_level.max_enemies_on_screen);
+        assert_eq!(
+            *app.world().resource::<StageRules>(),
+            StageRules::from_level(&next_level)
+        );
+        assert!(!app.world().resource::<EnemyFreeze>().is_active());
+        assert!(
+            !app.world()
+                .resource::<VersusPlayerFreeze>()
+                .is_player_frozen(PlayerId::Two)
+        );
+        let reinforcement = app.world().resource::<BaseReinforcement>();
+        assert!(reinforcement.timer.is_none());
+        assert!(reinforcement.saved_tiles.is_empty());
+
+        let mut old_entities = app.world_mut().query::<&OldStageEntity>();
+        assert_eq!(old_entities.iter(app.world()).count(), 0);
+        let mut game_entities = app.world_mut().query::<&GameEntity>();
+        assert!(game_entities.iter(app.world()).count() > 0);
     }
 
     #[test]

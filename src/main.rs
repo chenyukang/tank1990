@@ -1361,6 +1361,7 @@ impl TankSpriteState {
 
 #[derive(Component)]
 struct Bullet {
+    previous_top_left: Vec2,
     top_left: Vec2,
     facing: Direction,
     owner: Team,
@@ -3617,6 +3618,7 @@ fn fire_enemy_bullets(
             ))
             .with_scale(Vec3::splat(window_scale())),
             Bullet {
+                previous_top_left: bullet_top_left,
                 top_left: bullet_top_left,
                 facing: tank.facing,
                 owner: Team::Enemy,
@@ -3690,6 +3692,7 @@ fn fire_player_bullet(
             ))
             .with_scale(Vec3::splat(window_scale())),
             Bullet {
+                previous_top_left: bullet_top_left,
                 top_left: bullet_top_left,
                 facing: tank.facing,
                 owner,
@@ -3755,6 +3758,7 @@ fn move_bullets(
         let facing = bullet.facing;
         let speed = bullet.speed;
         let previous_top_left = bullet.top_left;
+        bullet.previous_top_left = previous_top_left;
         bullet.top_left += facing.movement() * speed * time.delta_secs();
         bullet.top_left = round_vec2(bullet.top_left);
 
@@ -4190,23 +4194,21 @@ fn cancel_colliding_bullets(
         return;
     }
 
-    let bullets: Vec<(Entity, Vec2)> = bullets
+    let bullets: Vec<(Entity, Vec2, Vec2)> = bullets
         .iter()
-        .map(|(entity, bullet)| (entity, bullet.top_left))
+        .map(|(entity, bullet)| (entity, bullet.previous_top_left, bullet.top_left))
         .collect();
     let mut destroyed = HashSet::new();
 
     for i in 0..bullets.len() {
         for j in (i + 1)..bullets.len() {
-            if bullet_positions_overlap(bullets[i].1, bullets[j].1) {
+            if let Some(impact_top_left) =
+                bullet_paths_clash(bullets[i].1, bullets[i].2, bullets[j].1, bullets[j].2)
+            {
                 let first_was_live = destroyed.insert(bullets[i].0);
                 let second_was_live = destroyed.insert(bullets[j].0);
                 if first_was_live && second_was_live {
-                    spawn_bullet_impact_effect(
-                        &mut commands,
-                        &assets,
-                        bullet_clash_impact_top_left(bullets[i].1, bullets[j].1),
-                    );
+                    spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
                     play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                 }
             }
@@ -6414,6 +6416,50 @@ fn tank_spawn_position_free(candidate: Vec2, occupied: &[Vec2]) -> bool {
 
 fn bullet_positions_overlap(a: Vec2, b: Vec2) -> bool {
     rects_overlap(a, Vec2::splat(BULLET_SIZE), b, Vec2::splat(BULLET_SIZE))
+}
+
+fn bullet_paths_clash(a_start: Vec2, a_end: Vec2, b_start: Vec2, b_end: Vec2) -> Option<Vec2> {
+    if bullet_positions_overlap(a_start, b_start) {
+        return Some(bullet_clash_impact_top_left(a_start, b_start));
+    }
+
+    let a_delta = a_end - a_start;
+    let b_delta = b_end - b_start;
+    let relative_delta = b_delta - a_delta;
+    let expanded_min = a_start - Vec2::splat(BULLET_SIZE);
+    let expanded_max = a_start + Vec2::splat(BULLET_SIZE);
+
+    let (x_entry, x_exit) =
+        swept_axis_times(b_start.x, relative_delta.x, expanded_min.x, expanded_max.x)?;
+    let (y_entry, y_exit) =
+        swept_axis_times(b_start.y, relative_delta.y, expanded_min.y, expanded_max.y)?;
+
+    let entry_time = x_entry.max(y_entry);
+    let exit_time = x_exit.min(y_exit);
+    if entry_time > exit_time || !(0.0..=1.0).contains(&entry_time) {
+        return None;
+    }
+
+    Some(round_vec2(bullet_clash_impact_top_left(
+        a_start + a_delta * entry_time,
+        b_start + b_delta * entry_time,
+    )))
+}
+
+fn swept_axis_times(
+    point: f32,
+    delta: f32,
+    expanded_min: f32,
+    expanded_max: f32,
+) -> Option<(f32, f32)> {
+    if delta == 0.0 {
+        return (point >= expanded_min && point <= expanded_max)
+            .then_some((f32::NEG_INFINITY, f32::INFINITY));
+    }
+
+    let first = (expanded_min - point) / delta;
+    let second = (expanded_max - point) / delta;
+    Some((first.min(second), first.max(second)))
 }
 
 fn bullet_clash_impact_top_left(a: Vec2, b: Vec2) -> Vec2 {
@@ -11057,6 +11103,45 @@ mod tests {
             Vec2::new(10.0, 10.0),
             Vec2::new(14.0, 10.0)
         ));
+    }
+
+    #[test]
+    fn bullet_paths_clash_detects_fast_head_on_crossing() {
+        assert_eq!(
+            bullet_paths_clash(
+                Vec2::new(8.0, 8.0),
+                Vec2::new(36.0, 8.0),
+                Vec2::new(36.0, 8.0),
+                Vec2::new(8.0, 8.0)
+            ),
+            Some(Vec2::new(22.0, 8.0))
+        );
+    }
+
+    #[test]
+    fn bullet_paths_clash_ignores_missed_lanes() {
+        assert_eq!(
+            bullet_paths_clash(
+                Vec2::new(8.0, 8.0),
+                Vec2::new(36.0, 8.0),
+                Vec2::new(36.0, 16.0),
+                Vec2::new(8.0, 16.0)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn bullet_paths_clash_ignores_edge_touch_moving_apart() {
+        assert_eq!(
+            bullet_paths_clash(
+                Vec2::new(8.0, 8.0),
+                Vec2::new(8.0, 8.0),
+                Vec2::new(12.0, 8.0),
+                Vec2::new(16.0, 8.0)
+            ),
+            None
+        );
     }
 
     #[test]

@@ -6429,6 +6429,52 @@ fn bullet_overlapped_tile_range(top_left: Vec2) -> Option<(usize, usize, usize, 
     Some((left, right, top, bottom))
 }
 
+fn bullet_blocking_tile_key(delta: Vec2, tile_x: usize, tile_y: usize) -> (i32, i32, i32) {
+    if delta.x.abs() > delta.y.abs() {
+        let primary = if delta.x < 0.0 {
+            -(tile_x as i32)
+        } else {
+            tile_x as i32
+        };
+        (0, primary, tile_y as i32)
+    } else if delta.y.abs() > delta.x.abs() {
+        let primary = if delta.y < 0.0 {
+            -(tile_y as i32)
+        } else {
+            tile_y as i32
+        };
+        (0, primary, tile_x as i32)
+    } else {
+        (1, tile_y as i32, tile_x as i32)
+    }
+}
+
+fn first_blocking_tile_overlapped_by_bullet(
+    grid: &TileGrid,
+    top_left: Vec2,
+    delta: Vec2,
+) -> Option<(usize, usize, TileKind)> {
+    let (left, right, top, bottom) = bullet_overlapped_tile_range(top_left)?;
+    let mut best = None;
+
+    for tile_y in top..=bottom {
+        for tile_x in left..=right {
+            let tile = grid.tiles[tile_y * BOARD_TILES + tile_x];
+            if !tile.bullet_blocks() {
+                continue;
+            }
+
+            let key = bullet_blocking_tile_key(delta, tile_x, tile_y);
+            match best {
+                Some((_, _, _, best_key)) if best_key <= key => {}
+                _ => best = Some((tile_x, tile_y, tile, key)),
+            }
+        }
+    }
+
+    best.map(|(tile_x, tile_y, tile, _)| (tile_x, tile_y, tile))
+}
+
 fn bullet_blocking_tile_hit(
     grid: &TileGrid,
     start_top_left: Vec2,
@@ -6439,22 +6485,15 @@ fn bullet_blocking_tile_hit(
     for step in 1..=steps {
         let center = start + delta * (step as f32 / steps as f32);
         let impact_top_left = round_vec2(center - Vec2::splat(BULLET_SIZE / 2.0));
-        let Some((left, right, top, bottom)) = bullet_overlapped_tile_range(impact_top_left) else {
-            continue;
-        };
-
-        for tile_y in top..=bottom {
-            for tile_x in left..=right {
-                let tile = grid.tiles[tile_y * BOARD_TILES + tile_x];
-                if tile.bullet_blocks() {
-                    return Some(BulletTileHit {
-                        x: tile_x,
-                        y: tile_y,
-                        tile,
-                        impact_top_left,
-                    });
-                }
-            }
+        if let Some((tile_x, tile_y, tile)) =
+            first_blocking_tile_overlapped_by_bullet(grid, impact_top_left, delta)
+        {
+            return Some(BulletTileHit {
+                x: tile_x,
+                y: tile_y,
+                tile,
+                impact_top_left,
+            });
         }
     }
 
@@ -11137,6 +11176,36 @@ mod tests {
         assert_eq!(hit.y, 1);
         assert_eq!(hit.tile, TileKind::Brick);
         assert_eq!(hit.impact_top_left, Vec2::new(24.0, 5.0));
+    }
+
+    #[test]
+    fn bullet_tile_hit_prefers_side_wall_before_base_when_moving_left() {
+        let mut grid = TileGrid::empty();
+        grid.set(13, 24, TileKind::Base);
+        grid.set(14, 24, TileKind::Brick);
+
+        let hit = bullet_blocking_tile_hit(&grid, Vec2::new(115.0, 192.0), Vec2::new(111.0, 192.0))
+            .expect("bullet should hit the wall before the base");
+
+        assert_eq!(hit.x, 14);
+        assert_eq!(hit.y, 24);
+        assert_eq!(hit.tile, TileKind::Brick);
+        assert_eq!(hit.impact_top_left, Vec2::new(111.0, 192.0));
+    }
+
+    #[test]
+    fn bullet_tile_hit_prefers_bottom_wall_before_base_when_moving_up() {
+        let mut grid = TileGrid::empty();
+        grid.set(12, 24, TileKind::Base);
+        grid.set(12, 25, TileKind::Brick);
+
+        let hit = bullet_blocking_tile_hit(&grid, Vec2::new(96.0, 203.0), Vec2::new(96.0, 199.0))
+            .expect("bullet should hit the wall before the base");
+
+        assert_eq!(hit.x, 12);
+        assert_eq!(hit.y, 25);
+        assert_eq!(hit.tile, TileKind::Brick);
+        assert_eq!(hit.impact_top_left, Vec2::new(96.0, 199.0));
     }
 
     #[test]

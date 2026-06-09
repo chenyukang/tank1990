@@ -12996,6 +12996,66 @@ mod tests {
     }
 
     #[test]
+    fn player_move_system_blocks_tank_from_entering_water_tile() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(16.0, 16.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyD);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(TILE_SIZE / PLAYER_SPEED));
+        let mut grid = TileGrid::empty();
+        grid.set(4, 2, TileKind::Water);
+        grid.set(4, 3, TileKind::Water);
+
+        app.insert_resource(time);
+        app.insert_resource(keys);
+        app.insert_resource(PlayerControl::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(grid);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.world_mut().spawn((
+            Tank {
+                top_left: tank_top_left,
+                facing: Direction::Up,
+                speed: PLAYER_SPEED,
+            },
+            TankSpriteState::new(TankSpriteSet::player(PlayerId::One)),
+            Player { id: PlayerId::One },
+            Transform::from_translation(board_object_center(
+                tank_top_left.x,
+                tank_top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0,
+            )),
+            Sprite::default(),
+        ));
+        app.add_systems(Update, move_player_tank);
+
+        app.update();
+
+        let mut players = app
+            .world_mut()
+            .query::<(&Tank, &Transform, &TankSpriteState)>();
+        let (tank, transform, sprite_state) = players.single(app.world()).unwrap();
+        assert_eq!(tank.top_left, tank_top_left);
+        assert_eq!(tank.facing, Direction::Right);
+        assert_eq!(
+            transform.translation,
+            board_object_center(
+                tank_top_left.x,
+                tank_top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0
+            )
+        );
+        assert_eq!(sprite_state.frame, 0);
+    }
+
+    #[test]
     fn player_fire_system_treats_held_fire_as_ready_input() {
         let mut app = App::new();
         let tank_top_left = Vec2::new(64.0, 80.0);

@@ -29,6 +29,7 @@ const PERSONAL_BASE_INTACT_PATH: &str = "personal/base_intact.png";
 const PERSONAL_BASE_DESTROYED_PATH: &str = "personal/base_destroyed.png";
 const PERSONAL_SCORE_BADGE_PATH: &str = "personal/score_badge.png";
 const PERSONAL_STAGE_FLAG_PATH: &str = "personal/stage_flag.png";
+const PERSONAL_SHIELD_PATH: &str = "personal/shield.png";
 const PERSONAL_GLYPH_ATLAS_PATH: &str = "personal/glyphs.png";
 const PERSONAL_FIRE_SOUND_PATH: &str = "personal/sounds/fire.ogg";
 const PERSONAL_BRICK_HIT_SOUND_PATH: &str = "personal/sounds/brick_hit.ogg";
@@ -41,7 +42,7 @@ const PERSONAL_LEVEL_CLEAR_SOUND_PATH: &str = "personal/sounds/level_clear.ogg";
 const PERSONAL_GAME_OVER_SOUND_PATH: &str = "personal/sounds/game_over.ogg";
 const PERSONAL_BACKGROUND_MUSIC_SOUND_PATH: &str = "personal/sounds/background.ogg";
 #[cfg(test)]
-const PERSONAL_SPRITE_OVERRIDE_PATHS: [&str; 10] = [
+const PERSONAL_SPRITE_OVERRIDE_PATHS: [&str; 11] = [
     PERSONAL_TANK_ATLAS_PATH,
     PERSONAL_TERRAIN_ATLAS_PATH,
     PERSONAL_BULLET_ATLAS_PATH,
@@ -51,6 +52,7 @@ const PERSONAL_SPRITE_OVERRIDE_PATHS: [&str; 10] = [
     PERSONAL_BASE_DESTROYED_PATH,
     PERSONAL_SCORE_BADGE_PATH,
     PERSONAL_STAGE_FLAG_PATH,
+    PERSONAL_SHIELD_PATH,
     PERSONAL_GLYPH_ATLAS_PATH,
 ];
 #[cfg(test)]
@@ -84,6 +86,7 @@ const EFFECT_ATLAS_TILE_SIZE: usize = 16;
 const POWERUP_ATLAS_TILES: usize = 6;
 const POWERUP_ATLAS_TILE_SIZE: usize = 16;
 const GENERATED_BASE_SIZE: usize = 16;
+const GENERATED_SHIELD_SIZE: usize = 16;
 const GENERATED_UI_ICON_SIZE: usize = 8;
 
 const VIRTUAL_WIDTH: f32 = 256.0;
@@ -237,6 +240,12 @@ fn main() {
         )
         .add_systems(
             FixedUpdate,
+            sync_shield_visuals
+                .after(tick_shields)
+                .before(update_versus_frozen_player_visuals),
+        )
+        .add_systems(
+            FixedUpdate,
             update_base_reinforcement_visuals
                 .after(tick_powerup_effects)
                 .before(update_powerup_visuals),
@@ -300,6 +309,7 @@ struct SpriteAssets {
     base_destroyed: Handle<Image>,
     score_badge_icon: Handle<Image>,
     stage_flag_icon: Handle<Image>,
+    shield_image: Handle<Image>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -1536,6 +1546,11 @@ struct PlayerUpgrade {
 #[derive(Component)]
 struct Shield {
     timer: Timer,
+}
+
+#[derive(Component)]
+struct ShieldVisual {
+    owner: Entity,
 }
 
 #[derive(Component)]
@@ -5267,6 +5282,59 @@ fn tick_shields(
     }
 }
 
+fn sync_shield_visuals(
+    mut commands: Commands,
+    assets: Res<SpriteAssets>,
+    shielded_players: Query<
+        (Entity, &Tank, &Shield),
+        (
+            With<Player>,
+            Without<PlayerRespawnDelay>,
+            Without<PlayerRespawnPending>,
+            Without<DestroyedTank>,
+            Without<ShieldVisual>,
+        ),
+    >,
+    mut visuals: Query<(Entity, &ShieldVisual, &mut Transform, &mut Sprite), Without<Player>>,
+) {
+    let shielded: Vec<(Entity, Vec2, f32)> = shielded_players
+        .iter()
+        .map(|(entity, tank, shield)| (entity, tank.top_left, shield.timer.elapsed_secs()))
+        .collect();
+    let mut matched_owners = Vec::new();
+
+    for (visual_entity, visual, mut transform, mut sprite) in &mut visuals {
+        let Some((_, top_left, elapsed_secs)) =
+            shielded.iter().find(|(owner, _, _)| *owner == visual.owner)
+        else {
+            commands.entity(visual_entity).despawn();
+            continue;
+        };
+
+        transform.translation = shield_visual_translation(*top_left);
+        sprite.color = shield_visual_color(*elapsed_secs);
+        matched_owners.push(visual.owner);
+    }
+
+    for (owner, top_left, elapsed_secs) in shielded {
+        if matched_owners.contains(&owner) {
+            continue;
+        }
+
+        commands.spawn((
+            Sprite {
+                image: assets.shield_image.clone(),
+                color: shield_visual_color(elapsed_secs),
+                ..default()
+            },
+            Transform::from_translation(shield_visual_translation(top_left))
+                .with_scale(Vec3::splat(window_scale())),
+            ShieldVisual { owner },
+            GameEntity,
+        ));
+    }
+}
+
 fn update_versus_frozen_player_visuals(
     time: Res<Time>,
     game_status: Res<GameStatus>,
@@ -6668,6 +6736,23 @@ fn player_shield_visual_rgb(elapsed_secs: f32, upgrade_level: u8) -> [u8; 3] {
     }
 }
 
+fn shield_visual_color(elapsed_secs: f32) -> Color {
+    let [r, g, b] = shield_visual_rgb(elapsed_secs);
+    Color::srgb_u8(r, g, b)
+}
+
+fn shield_visual_rgb(elapsed_secs: f32) -> [u8; 3] {
+    if elapsed_secs % 0.20 < 0.10 {
+        [255, 255, 255]
+    } else {
+        [160, 220, 255]
+    }
+}
+
+fn shield_visual_translation(top_left: Vec2) -> Vec3 {
+    board_object_center(top_left.x, top_left.y, Vec2::splat(TANK_SIZE), 6.7)
+}
+
 fn player_frozen_visual_rgb(elapsed_secs: f32) -> [u8; 3] {
     if elapsed_secs % 0.24 < 0.12 {
         [136, 216, 255]
@@ -7344,6 +7429,10 @@ fn create_sprite_assets(
         image_handle_or_generated(asset_server, images, PERSONAL_STAGE_FLAG_PATH, || {
             create_stage_flag_icon(manifest.ui.stage_flag)
         });
+    let shield_image =
+        image_handle_or_generated(asset_server, images, PERSONAL_SHIELD_PATH, || {
+            create_shield_image()
+        });
 
     SpriteAssets {
         manifest,
@@ -7363,6 +7452,7 @@ fn create_sprite_assets(
         base_destroyed,
         score_badge_icon,
         stage_flag_icon,
+        shield_image,
     }
 }
 
@@ -8606,6 +8696,29 @@ fn create_stage_flag_icon(manifest: GeneratedSpriteManifest) -> Image {
     image_from_pixels(manifest.width, manifest.height, pixels)
 }
 
+fn create_shield_image() -> Image {
+    let mut pixels = vec![0; GENERATED_SHIELD_SIZE * GENERATED_SHIELD_SIZE * 4];
+    let light = [224, 248, 255, 220];
+    let mid = [112, 208, 248, 210];
+    let dark = [48, 128, 200, 180];
+
+    fill_rect(&mut pixels, GENERATED_SHIELD_SIZE, 4, 1, 8, 1, light);
+    fill_rect(&mut pixels, GENERATED_SHIELD_SIZE, 2, 4, 1, 8, light);
+    fill_rect(&mut pixels, GENERATED_SHIELD_SIZE, 13, 4, 1, 8, dark);
+    fill_rect(&mut pixels, GENERATED_SHIELD_SIZE, 4, 13, 8, 1, dark);
+    for (x, y) in [(3, 2), (12, 2), (3, 12), (12, 12)] {
+        fill_rect(&mut pixels, GENERATED_SHIELD_SIZE, x, y, 2, 2, mid);
+    }
+    set_pixel(&mut pixels, GENERATED_SHIELD_SIZE, 7, 0, light);
+    set_pixel(&mut pixels, GENERATED_SHIELD_SIZE, 8, 0, light);
+    set_pixel(&mut pixels, GENERATED_SHIELD_SIZE, 1, 7, light);
+    set_pixel(&mut pixels, GENERATED_SHIELD_SIZE, 14, 8, dark);
+    set_pixel(&mut pixels, GENERATED_SHIELD_SIZE, 7, 14, dark);
+    set_pixel(&mut pixels, GENERATED_SHIELD_SIZE, 8, 14, dark);
+
+    image_from_pixels(GENERATED_SHIELD_SIZE, GENERATED_SHIELD_SIZE, pixels)
+}
+
 fn image_from_pixels(width: usize, height: usize, pixels: Vec<u8>) -> Image {
     let mut image = Image::new_fill(
         Extent3d {
@@ -8845,7 +8958,8 @@ mod tests {
             base_intact: image.clone(),
             base_destroyed: image.clone(),
             score_badge_icon: image.clone(),
-            stage_flag_icon: image,
+            stage_flag_icon: image.clone(),
+            shield_image: image,
         }
     }
 
@@ -9166,7 +9280,8 @@ mod tests {
 
     #[test]
     fn personal_sprite_override_paths_are_asset_root_relative_pngs() {
-        assert_eq!(PERSONAL_SPRITE_OVERRIDE_PATHS.len(), 10);
+        assert_eq!(PERSONAL_SPRITE_OVERRIDE_PATHS.len(), 11);
+        assert!(PERSONAL_SPRITE_OVERRIDE_PATHS.contains(&PERSONAL_SHIELD_PATH));
         for asset_path in PERSONAL_SPRITE_OVERRIDE_PATHS {
             assert!(asset_path.starts_with("personal/"));
             assert!(asset_path.ends_with(".png"));
@@ -11148,6 +11263,30 @@ mod tests {
     }
 
     #[test]
+    fn shield_overlay_sprite_uses_transparent_ring_pixels() {
+        let image = create_shield_image();
+        assert_eq!(
+            image.texture_descriptor.size.width,
+            GENERATED_SHIELD_SIZE as u32
+        );
+        assert_eq!(
+            image.texture_descriptor.size.height,
+            GENERATED_SHIELD_SIZE as u32
+        );
+        let pixels = image
+            .data
+            .as_ref()
+            .expect("shield sprite should have pixels");
+        assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] == 0));
+        assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] > 0));
+        assert_eq!(image_pixel(&image, 0, 0), [0, 0, 0, 0]);
+        assert_eq!(image_pixel(&image, 7, 0), [224, 248, 255, 220]);
+        assert_eq!(image_pixel(&image, 2, 4), [224, 248, 255, 220]);
+        assert_eq!(image_pixel(&image, 13, 4), [48, 128, 200, 180]);
+        assert_eq!(image_pixel(&image, 4, 13), [112, 208, 248, 210]);
+    }
+
+    #[test]
     fn base_sprites_use_manifest_dimensions() {
         let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
         for (sprite, destroyed) in [
@@ -12080,6 +12219,79 @@ mod tests {
     fn helmet_flicker_returns_to_upgrade_visual_between_flashes() {
         assert_eq!(player_shield_visual_rgb(0.05, 2), [160, 220, 255]);
         assert_eq!(player_shield_visual_rgb(0.15, 2), [255, 232, 104]);
+    }
+
+    #[test]
+    fn shield_visuals_follow_active_player_shields_and_cleanup() {
+        let mut app = App::new();
+        let top_left = Vec2::new(64.0, 96.0);
+        let moved_top_left = Vec2::new(72.0, 96.0);
+
+        app.insert_resource(test_sprite_assets());
+        let player = app
+            .world_mut()
+            .spawn((
+                Player { id: PlayerId::One },
+                Tank {
+                    top_left,
+                    facing: Direction::Up,
+                    speed: PLAYER_SPEED,
+                },
+                Shield {
+                    timer: Timer::from_seconds(2.0, TimerMode::Once),
+                },
+            ))
+            .id();
+        app.add_systems(Update, sync_shield_visuals);
+
+        app.update();
+
+        let mut visuals = app
+            .world_mut()
+            .query::<(&ShieldVisual, &Transform, &Sprite)>();
+        let spawned: Vec<(Entity, Vec3, Color)> = visuals
+            .iter(app.world())
+            .map(|(visual, transform, sprite)| (visual.owner, transform.translation, sprite.color))
+            .collect();
+        assert_eq!(spawned.len(), 1);
+        assert_eq!(spawned[0].0, player);
+        assert_eq!(spawned[0].1, shield_visual_translation(top_left));
+        assert_eq!(spawned[0].2, shield_visual_color(0.0));
+
+        {
+            let mut tank = app
+                .world_mut()
+                .get_mut::<Tank>(player)
+                .expect("player tank should exist");
+            tank.top_left = moved_top_left;
+        }
+        {
+            let mut shield = app
+                .world_mut()
+                .get_mut::<Shield>(player)
+                .expect("player shield should exist");
+            shield.timer.tick(Duration::from_secs_f32(0.11));
+        }
+
+        app.update();
+
+        let mut visuals = app
+            .world_mut()
+            .query::<(&ShieldVisual, &Transform, &Sprite)>();
+        let updated: Vec<(Entity, Vec3, Color)> = visuals
+            .iter(app.world())
+            .map(|(visual, transform, sprite)| (visual.owner, transform.translation, sprite.color))
+            .collect();
+        assert_eq!(updated.len(), 1);
+        assert_eq!(updated[0].0, player);
+        assert_eq!(updated[0].1, shield_visual_translation(moved_top_left));
+        assert_eq!(updated[0].2, shield_visual_color(0.11));
+
+        app.world_mut().entity_mut(player).remove::<Shield>();
+        app.update();
+
+        let mut visuals = app.world_mut().query::<&ShieldVisual>();
+        assert_eq!(visuals.iter(app.world()).count(), 0);
     }
 
     #[test]

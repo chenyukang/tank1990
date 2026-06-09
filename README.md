@@ -61,6 +61,7 @@ assets/personal/base_intact.png
 assets/personal/base_destroyed.png
 assets/personal/score_badge.png
 assets/personal/stage_flag.png
+assets/personal/shield.png
 assets/personal/glyphs.png
 ```
 
@@ -71,7 +72,8 @@ The default atlas dimensions are:
 - `bullets.png`: 4 horizontal frames, `4x4` each
 - `effects.png`: 20 horizontal frames, `16x16` each
 - `powerups.png`: 6 horizontal frames, `16x16` each
-- standalone base/UI images: see `assets/manifest.ron`
+- standalone base/UI/shield images: see `assets/manifest.ron`; `shield.png`
+  is `16x16`
 
 Supported personal sound override paths:
 

@@ -532,6 +532,7 @@ Personal sprite overrides:
 - Personal sheets must match the manifest atlas dimensions and index order, for example `personal/tanks.png` is a 48-frame `16x16` horizontal atlas.
 - If personal sheets use a different atlas order, `assets/personal/manifest.ron` may override the committed manifest locally.
 - `personal/glyphs.png` may replace the generated pixel font; glyph order and dimensions still come from the active manifest.
+- `personal/shield.png` is a standalone `16x16` shield overlay, not part of `personal/effects.png`.
 - Do not commit original Tank 1990, Battle City, or ROM-extracted assets to this repository.
 
 Supported personal override paths:
@@ -547,6 +548,7 @@ assets/personal/base_intact.png
 assets/personal/base_destroyed.png
 assets/personal/score_badge.png
 assets/personal/stage_flag.png
+assets/personal/shield.png
 assets/personal/glyphs.png
 ```
 
@@ -601,7 +603,7 @@ Current implementation note:
 - Terrain manifest entries include a two-frame water animation range plus static brick, steel, forest, and ice entries; the generated terrain fallback uses distinct brickwork, metal, wave, foliage, and cracked-ice patterns.
 - Power-up manifest entries include star, helmet, clock, grenade, shovel, and tank icons; the generated fallback uses readable classic-style silhouettes for all six rewards.
 - Effect manifest entries include explosion, spawn shimmer, base destruction, power-up sparkle, and bullet-impact frame ranges; the generated fallback uses readable blast, shimmer, rubble, sparkle, and hit-spark animation patterns.
-- Base and standalone UI icon manifest entries include generated sprite dimensions; the generated fallback distinguishes an intact emblem, destroyed rubble, a score badge, and a stage flag.
+- Base and standalone UI icon manifest entries include generated sprite dimensions; the generated fallback distinguishes an intact emblem, destroyed rubble, a score badge, a stage flag, and a shield overlay.
 - Glyphs use generated placeholder pixels, but their atlas character order and tile dimensions live in `assets/manifest.ron`.
 - Sounds use generated placeholder waveforms, but their retro sweep/noise/note definitions now live in `assets/manifest.ron`.
 - `assets/arenas/arena_05.ron` is the first playable `BaseBattle` arena, with `arena_06.ron` and `arena_08.ron` adding more base-defense layouts; `arena_07.ron` adds another authored `Deathmatch` layout. Destroying a player's base ends the round for the opponent.

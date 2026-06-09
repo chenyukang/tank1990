@@ -2458,9 +2458,7 @@ fn parse_arena(contents: &str) -> Result<ArenaDefinition, String> {
     let grid = TileGrid::from_arena(&arena)?;
     validate_arena_spawns(&grid, &arena)?;
     validate_battle_rules(&grid, arena.battle_rules)?;
-    for (index, point) in arena.powerup_spawns.iter().enumerate() {
-        validate_powerup_spawn(&grid, index + 1, point)?;
-    }
+    validate_powerup_spawns(&grid, &arena.powerup_spawns)?;
 
     Ok(arena)
 }
@@ -6334,6 +6332,24 @@ fn validate_base_positions_do_not_overlap(
     Ok(())
 }
 
+fn validate_powerup_spawns(grid: &TileGrid, points: &[GridPoint]) -> Result<(), String> {
+    let mut seen = HashSet::new();
+
+    for (index, point) in points.iter().enumerate() {
+        let spawn_index = index + 1;
+        validate_powerup_spawn(grid, spawn_index, point)?;
+
+        if !seen.insert((point.x, point.y)) {
+            return Err(format!(
+                "power-up spawn {spawn_index} ({}, {}) is configured more than once",
+                point.x, point.y
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_powerup_spawn(grid: &TileGrid, index: usize, point: &GridPoint) -> Result<(), String> {
     let top_left = Vec2::new(point.x as f32 * TILE_SIZE, point.y as f32 * TILE_SIZE);
     if grid.can_tank_occupy(top_left) {
@@ -8955,6 +8971,22 @@ mod tests {
                 .err()
                 .expect("blocked power-up spawn should fail")
                 .contains("power-up spawn 1 (4, 24) must fit a 16x16 reward on passable tiles")
+        );
+    }
+
+    #[test]
+    fn arena_rejects_duplicate_powerup_spawns() {
+        let duplicate_powerup = ARENA_1.replacen(
+            "  powerup_spawns: [\n    (x: 12, y: 12),\n  ],",
+            "  powerup_spawns: [\n    (x: 12, y: 12),\n    (x: 12, y: 12),\n  ],",
+            1,
+        );
+
+        assert!(
+            parse_arena(&duplicate_powerup)
+                .err()
+                .expect("duplicate power-up spawn should fail")
+                .contains("power-up spawn 2 (12, 12) is configured more than once")
         );
     }
 

@@ -7833,6 +7833,24 @@ fn draw_tank(
     palette: TankPalette,
     frame: usize,
 ) {
+    match direction {
+        Direction::Up | Direction::Down => {
+            draw_vertical_tank(pixels, width, x_offset, direction, palette, frame)
+        }
+        Direction::Left | Direction::Right => {
+            draw_horizontal_tank(pixels, width, x_offset, direction, palette, frame)
+        }
+    }
+}
+
+fn draw_vertical_tank(
+    pixels: &mut [u8],
+    width: usize,
+    x_offset: usize,
+    direction: Direction,
+    palette: TankPalette,
+    frame: usize,
+) {
     fill_rect(pixels, width, x_offset + 2, 2, 4, 12, palette.tread);
     fill_rect(pixels, width, x_offset + 10, 2, 4, 12, palette.tread);
     for y in [3 + frame % 2, 7 + frame % 2, 11 + frame % 2] {
@@ -7846,8 +7864,37 @@ fn draw_tank(
     match direction {
         Direction::Up => fill_rect(pixels, width, x_offset + 7, 0, 2, 7, palette.light),
         Direction::Down => fill_rect(pixels, width, x_offset + 7, 9, 2, 7, palette.light),
-        Direction::Left => fill_rect(pixels, width, x_offset, 7, 7, 2, palette.light),
-        Direction::Right => fill_rect(pixels, width, x_offset + 9, 7, 7, 2, palette.light),
+        Direction::Left | Direction::Right => {}
+    }
+}
+
+fn draw_horizontal_tank(
+    pixels: &mut [u8],
+    width: usize,
+    x_offset: usize,
+    direction: Direction,
+    palette: TankPalette,
+    frame: usize,
+) {
+    fill_rect(pixels, width, x_offset + 2, 2, 12, 4, palette.tread);
+    fill_rect(pixels, width, x_offset + 2, 10, 12, 4, palette.tread);
+    for x in [3 + frame % 2, 7 + frame % 2, 11 + frame % 2] {
+        fill_rect(pixels, width, x_offset + x, 2, 1, 4, palette.dark);
+        fill_rect(pixels, width, x_offset + x, 10, 1, 4, palette.dark);
+    }
+    fill_rect(pixels, width, x_offset + 4, 4, 8, 8, palette.body);
+    fill_rect(pixels, width, x_offset + 6, 6, 4, 4, palette.light);
+
+    match direction {
+        Direction::Left => {
+            fill_rect(pixels, width, x_offset, 7, 7, 2, palette.light);
+            fill_rect(pixels, width, x_offset + 11, 4, 1, 8, palette.dark);
+        }
+        Direction::Right => {
+            fill_rect(pixels, width, x_offset + 9, 7, 7, 2, palette.light);
+            fill_rect(pixels, width, x_offset + 4, 4, 1, 8, palette.dark);
+        }
+        Direction::Up | Direction::Down => {}
     }
 }
 
@@ -8508,6 +8555,15 @@ mod tests {
     const ARENA_8: &str = include_str!("../assets/arenas/arena_08.ron");
     const GITIGNORE: &str = include_str!("../.gitignore");
     const TEST_SPAWN_INVULNERABILITY_SECONDS: f32 = 3.25;
+
+    fn image_pixel(image: &Image, x: usize, y: usize) -> [u8; 4] {
+        let width = image.texture_descriptor.size.width as usize;
+        let pixels = image.data.as_ref().expect("image should have pixel data");
+        let index = (y * width + x) * 4;
+        pixels[index..index + 4]
+            .try_into()
+            .expect("pixel should have four channels")
+    }
 
     fn authored_levels() -> [(usize, &'static str); LEVEL_COUNT] {
         [
@@ -9528,6 +9584,25 @@ mod tests {
             );
             assert!(image.data.as_ref().is_some_and(|pixels| !pixels.is_empty()));
         }
+    }
+
+    #[test]
+    fn generated_tank_atlas_uses_directional_tread_silhouettes() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let image = create_tank_atlas(manifest.atlases.tanks);
+        let player1_tread = [88, 80, 40, 255];
+        let player1_light = [240, 216, 104, 255];
+
+        assert_eq!(image_pixel(&image, 2, 8), player1_tread);
+        assert_eq!(image_pixel(&image, 8, 2), player1_light);
+
+        let left_offset = manifest.atlases.tanks.tile_width * 2;
+        assert_eq!(image_pixel(&image, left_offset + 8, 2), player1_tread);
+        assert_eq!(image_pixel(&image, left_offset + 2, 8), player1_light);
+
+        let right_offset = manifest.atlases.tanks.tile_width * 3;
+        assert_eq!(image_pixel(&image, right_offset + 8, 13), player1_tread);
+        assert_eq!(image_pixel(&image, right_offset + 13, 8), player1_light);
     }
 
     #[test]

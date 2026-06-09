@@ -134,7 +134,7 @@ Stage count target:
 
 - MVP: 3 authored levels.
 - First complete campaign: 35 levels.
-- Current implementation: 42 authored levels.
+- Current implementation: 43 authored levels.
 - Optional Tank 1990-style extended campaign: 50 levels.
 
 ### 5.2 Local Versus

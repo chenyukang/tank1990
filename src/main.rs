@@ -38,6 +38,7 @@ const PERSONAL_POWERUP_PICKUP_SOUND_PATH: &str = "personal/sounds/powerup_pickup
 const PERSONAL_STAGE_START_SOUND_PATH: &str = "personal/sounds/stage_start.ogg";
 const PERSONAL_LEVEL_CLEAR_SOUND_PATH: &str = "personal/sounds/level_clear.ogg";
 const PERSONAL_GAME_OVER_SOUND_PATH: &str = "personal/sounds/game_over.ogg";
+const PERSONAL_BACKGROUND_MUSIC_SOUND_PATH: &str = "personal/sounds/background.ogg";
 #[cfg(test)]
 const PERSONAL_SPRITE_OVERRIDE_PATHS: [&str; 10] = [
     PERSONAL_TANK_ATLAS_PATH,
@@ -52,7 +53,7 @@ const PERSONAL_SPRITE_OVERRIDE_PATHS: [&str; 10] = [
     PERSONAL_GLYPH_ATLAS_PATH,
 ];
 #[cfg(test)]
-const PERSONAL_SOUND_OVERRIDE_PATHS: [&str; 9] = [
+const PERSONAL_SOUND_OVERRIDE_PATHS: [&str; 10] = [
     PERSONAL_FIRE_SOUND_PATH,
     PERSONAL_BRICK_HIT_SOUND_PATH,
     PERSONAL_STEEL_HIT_SOUND_PATH,
@@ -62,6 +63,7 @@ const PERSONAL_SOUND_OVERRIDE_PATHS: [&str; 9] = [
     PERSONAL_STAGE_START_SOUND_PATH,
     PERSONAL_LEVEL_CLEAR_SOUND_PATH,
     PERSONAL_GAME_OVER_SOUND_PATH,
+    PERSONAL_BACKGROUND_MUSIC_SOUND_PATH,
 ];
 const LEVEL_COUNT: usize = 40;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
@@ -90,6 +92,7 @@ const MIN_WINDOW_SCALE: u32 = 2;
 const MAX_WINDOW_SCALE: u32 = 4;
 const WINDOW_SCALE_ENV: &str = "TANK_WINDOW_SCALE";
 static WINDOW_SCALE_CACHE: OnceLock<f32> = OnceLock::new();
+const BACKGROUND_MUSIC_ENV: &str = "TANK_BGM";
 
 const BOARD_ORIGIN_X: f32 = 0.0;
 const BOARD_ORIGIN_Y: f32 = 16.0;
@@ -143,6 +146,8 @@ const SOUND_SAMPLE_RATE: u32 = 22_050;
 const MAX_RETRO_SOUND_SECONDS: f32 = 1.0;
 const MAX_RETRO_SOUND_FREQUENCY: f32 = 4_000.0;
 const MAX_RETRO_SOUND_VOLUME: f32 = 1.0;
+const BACKGROUND_MUSIC_VOLUME: f32 = 0.18;
+const BACKGROUND_MUSIC_STEP_SECONDS: f32 = 0.12;
 const ICE_SPEED_MULTIPLIER: f32 = 1.18;
 const SPAWN_SHIMMER_FRAME_SECONDS: f32 = 0.08;
 
@@ -169,6 +174,17 @@ fn parse_window_scale(value: Option<&str>) -> u32 {
         .unwrap_or(DEFAULT_WINDOW_SCALE)
 }
 
+fn parse_background_music_enabled(value: Option<&str>) -> bool {
+    let Some(raw) = value else {
+        return true;
+    };
+
+    !matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "0" | "false" | "off" | "no" | "mute" | "muted" | "disabled"
+    )
+}
+
 fn virtual_window_size(scale: f32) -> (u32, u32) {
     (
         (VIRTUAL_WIDTH * scale).round() as u32,
@@ -190,6 +206,7 @@ fn main() {
         .insert_resource(VersusPlayerFreeze::default())
         .insert_resource(BaseReinforcement::default())
         .insert_resource(VersusPowerUpDirector::inactive())
+        .insert_resource(MusicSettings::from_env())
         .add_plugins(
             DefaultPlugins
                 .set(ImagePlugin::default_nearest())
@@ -229,6 +246,10 @@ fn main() {
             update_base_reinforcement_visuals
                 .after(tick_powerup_effects)
                 .before(update_powerup_visuals),
+        )
+        .add_systems(
+            FixedUpdate,
+            sync_background_music.after(update_status_panel),
         )
         .add_systems(
             FixedUpdate,
@@ -524,6 +545,7 @@ struct SoundAssets {
     stage_start: SoundHandle,
     level_clear: SoundHandle,
     game_over: SoundHandle,
+    background_music: SoundHandle,
 }
 
 #[derive(Clone)]
@@ -562,6 +584,24 @@ struct RetroSoundDecoder {
     sample_rate: u32,
     cursor: usize,
 }
+
+#[derive(Resource, Clone, Copy, Debug, Eq, PartialEq)]
+struct MusicSettings {
+    enabled: bool,
+}
+
+impl MusicSettings {
+    fn from_env() -> Self {
+        Self {
+            enabled: parse_background_music_enabled(
+                std::env::var(BACKGROUND_MUSIC_ENV).ok().as_deref(),
+            ),
+        }
+    }
+}
+
+#[derive(Component)]
+struct BackgroundMusic;
 
 impl Iterator for RetroSoundDecoder {
     type Item = f32;
@@ -7089,6 +7129,18 @@ fn create_sound_assets(
             PERSONAL_GAME_OVER_SOUND_PATH,
             &manifest.sounds.game_over,
         ),
+        background_music: background_music_handle_or_generated(asset_server, sounds),
+    }
+}
+
+fn background_music_handle_or_generated(
+    asset_server: &AssetServer,
+    sounds: &mut Assets<RetroSound>,
+) -> SoundHandle {
+    if personal_asset_exists(PERSONAL_BACKGROUND_MUSIC_SOUND_PATH) {
+        SoundHandle::File(asset_server.load(PERSONAL_BACKGROUND_MUSIC_SOUND_PATH))
+    } else {
+        SoundHandle::Retro(sounds.add(make_background_music_sound()))
     }
 }
 
@@ -7118,6 +7170,41 @@ fn play_sound(commands: &mut Commands, sounds: &SoundAssets, kind: SoundKind) {
         }
         SoundHandle::File(handle) => {
             commands.spawn((AudioPlayer(handle.clone()), playback));
+        }
+    }
+}
+
+fn sync_background_music(
+    mut commands: Commands,
+    settings: Res<MusicSettings>,
+    sounds: Res<SoundAssets>,
+    game_status: Res<GameStatus>,
+    music: Query<Entity, With<BackgroundMusic>>,
+) {
+    if background_music_should_play(*settings, game_status.phase) {
+        if music.is_empty() {
+            play_background_music(&mut commands, &sounds);
+        }
+        return;
+    }
+
+    for entity in &music {
+        commands.entity(entity).despawn();
+    }
+}
+
+fn background_music_should_play(settings: MusicSettings, phase: GamePhase) -> bool {
+    settings.enabled && matches!(phase, GamePhase::StageIntro | GamePhase::Playing)
+}
+
+fn play_background_music(commands: &mut Commands, sounds: &SoundAssets) {
+    let playback = PlaybackSettings::LOOP.with_volume(Volume::Linear(BACKGROUND_MUSIC_VOLUME));
+    match &sounds.background_music {
+        SoundHandle::Retro(handle) => {
+            commands.spawn((AudioPlayer(handle.clone()), playback, BackgroundMusic));
+        }
+        SoundHandle::File(handle) => {
+            commands.spawn((AudioPlayer(handle.clone()), playback, BackgroundMusic));
         }
     }
 }
@@ -7181,6 +7268,103 @@ fn make_layered_sound(notes: &[SoundNote]) -> RetroSound {
         append_square_note(&mut samples, *note);
     }
     sound_from_samples(samples)
+}
+
+fn make_background_music_sound() -> RetroSound {
+    let melody = [
+        Some(293.66),
+        None,
+        Some(349.23),
+        Some(293.66),
+        None,
+        Some(261.63),
+        Some(293.66),
+        None,
+        Some(392.0),
+        None,
+        Some(349.23),
+        Some(329.63),
+        Some(293.66),
+        None,
+        Some(246.94),
+        None,
+        Some(293.66),
+        Some(293.66),
+        Some(349.23),
+        None,
+        Some(440.0),
+        None,
+        Some(392.0),
+        Some(349.23),
+        Some(329.63),
+        None,
+        Some(293.66),
+        None,
+        Some(246.94),
+        Some(261.63),
+        Some(293.66),
+        None,
+    ];
+    let mut samples = Vec::new();
+
+    for (index, frequency) in melody.into_iter().enumerate() {
+        let bass = if index % 8 < 4 { 73.42 } else { 98.0 };
+        append_background_music_step(&mut samples, frequency, bass, index as u32);
+    }
+
+    sound_from_samples(samples)
+}
+
+fn append_background_music_step(
+    samples: &mut Vec<f32>,
+    melody_frequency: Option<f32>,
+    bass_frequency: f32,
+    step: u32,
+) {
+    let sample_count = sample_count(BACKGROUND_MUSIC_STEP_SECONDS);
+    let mut melody_phase = 0.0_f32;
+    let mut bass_phase = 0.0_f32;
+    let mut noise_state = 0x9e37_79b9_u32 ^ step.wrapping_mul(0x85eb_ca6b);
+
+    for index in 0..sample_count {
+        let t = index as f32 / sample_count as f32;
+        bass_phase = (bass_phase + bass_frequency / SOUND_SAMPLE_RATE as f32) % 1.0;
+        let bass_wave = if bass_phase < 0.5 { 1.0 } else { -1.0 };
+        let melody_wave = if let Some(frequency) = melody_frequency {
+            melody_phase = (melody_phase + frequency / SOUND_SAMPLE_RATE as f32) % 1.0;
+            if melody_phase < 0.5 { 1.0 } else { -1.0 }
+        } else {
+            0.0
+        };
+        noise_state = noise_state
+            .wrapping_mul(1_664_525)
+            .wrapping_add(1_013_904_223);
+        let noise_wave = if noise_state & 0x8000_0000 == 0 {
+            -1.0
+        } else {
+            1.0
+        };
+        let snare = background_music_percussion(step, t, noise_wave);
+        let sample = (melody_wave * 0.075 + bass_wave * 0.055) * music_gate_envelope(t) + snare;
+        samples.push(sample.clamp(-1.0, 1.0));
+    }
+}
+
+fn background_music_percussion(step: u32, t: f32, noise_wave: f32) -> f32 {
+    let decay = (1.0 - t).clamp(0.0, 1.0).powi(4);
+    if step.is_multiple_of(4) {
+        noise_wave * 0.055 * decay
+    } else if step % 4 == 2 {
+        noise_wave * 0.035 * decay
+    } else {
+        0.0
+    }
+}
+
+fn music_gate_envelope(t: f32) -> f32 {
+    let attack = (t / 0.02).clamp(0.0, 1.0);
+    let release = ((1.0 - t) / 0.10).clamp(0.0, 1.0);
+    attack.min(release)
 }
 
 fn append_square_note(samples: &mut Vec<f32>, note: SoundNote) {
@@ -8129,7 +8313,8 @@ mod tests {
             powerup_pickup: sound.clone(),
             stage_start: sound.clone(),
             level_clear: sound.clone(),
-            game_over: sound,
+            game_over: sound.clone(),
+            background_music: sound,
         }
     }
 
@@ -8321,6 +8506,63 @@ mod tests {
     }
 
     #[test]
+    fn background_music_setting_defaults_on_and_accepts_off_values() {
+        assert!(parse_background_music_enabled(None));
+        assert!(parse_background_music_enabled(Some("on")));
+        assert!(parse_background_music_enabled(Some("classic")));
+        for value in ["0", "false", "off", "no", "mute", "muted", "disabled"] {
+            assert!(!parse_background_music_enabled(Some(value)));
+        }
+        assert!(!parse_background_music_enabled(Some(" OFF ")));
+    }
+
+    #[test]
+    fn background_music_only_plays_during_active_rounds() {
+        let enabled = MusicSettings { enabled: true };
+        let disabled = MusicSettings { enabled: false };
+
+        assert!(background_music_should_play(enabled, GamePhase::StageIntro));
+        assert!(background_music_should_play(enabled, GamePhase::Playing));
+        assert!(!background_music_should_play(
+            enabled,
+            GamePhase::ModeSelect
+        ));
+        assert!(!background_music_should_play(enabled, GamePhase::Paused));
+        assert!(!background_music_should_play(
+            enabled,
+            GamePhase::LevelClear
+        ));
+        assert!(!background_music_should_play(enabled, GamePhase::GameOver));
+        assert!(!background_music_should_play(disabled, GamePhase::Playing));
+    }
+
+    #[test]
+    fn background_music_sync_spawns_and_stops_with_game_phase() {
+        let mut app = App::new();
+        app.insert_resource(MusicSettings { enabled: true });
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.add_systems(Update, sync_background_music);
+
+        app.update();
+        assert_eq!(background_music_entity_count(&mut app), 1);
+
+        app.world_mut().resource_mut::<GameStatus>().phase = GamePhase::Paused;
+        app.update();
+        assert_eq!(background_music_entity_count(&mut app), 0);
+    }
+
+    fn background_music_entity_count(app: &mut App) -> usize {
+        let mut query = app
+            .world_mut()
+            .query_filtered::<Entity, With<BackgroundMusic>>();
+        query.iter(app.world()).count()
+    }
+
+    #[test]
     fn virtual_window_size_uses_integer_scale() {
         assert_eq!(virtual_window_size(2.0), (512, 480));
         assert_eq!(virtual_window_size(3.0), (768, 720));
@@ -8344,7 +8586,8 @@ mod tests {
 
     #[test]
     fn personal_sound_override_paths_are_asset_root_relative_ogg_files() {
-        assert_eq!(PERSONAL_SOUND_OVERRIDE_PATHS.len(), 9);
+        assert_eq!(PERSONAL_SOUND_OVERRIDE_PATHS.len(), 10);
+        assert!(PERSONAL_SOUND_OVERRIDE_PATHS.contains(&PERSONAL_BACKGROUND_MUSIC_SOUND_PATH));
         for asset_path in PERSONAL_SOUND_OVERRIDE_PATHS {
             assert!(asset_path.starts_with("personal/sounds/"));
             assert!(asset_path.ends_with(".ogg"));
@@ -12086,6 +12329,15 @@ mod tests {
             assert!(sound.samples.len() <= SOUND_SAMPLE_RATE as usize);
             assert!(sound.samples.iter().all(|sample| sample.abs() <= 1.0));
         }
+    }
+
+    #[test]
+    fn generated_background_music_is_longer_loop_and_bounded() {
+        let music = make_background_music_sound();
+        assert_eq!(music.sample_rate, SOUND_SAMPLE_RATE);
+        assert!(music.samples.len() > SOUND_SAMPLE_RATE as usize);
+        assert!(music.samples.len() <= (SOUND_SAMPLE_RATE as usize * 5));
+        assert!(music.samples.iter().all(|sample| sample.abs() <= 1.0));
     }
 
     #[test]

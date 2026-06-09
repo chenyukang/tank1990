@@ -89,7 +89,13 @@ assets/personal/sounds/powerup_pickup.ogg
 assets/personal/sounds/stage_start.ogg
 assets/personal/sounds/level_clear.ogg
 assets/personal/sounds/game_over.ogg
+assets/personal/sounds/background.ogg
 ```
+
+Set `TANK_BGM=off` to disable the generated or personal background music loop.
+To use an original soundtrack for private local play, provide your own lawful
+copy converted to OGG at `assets/personal/sounds/background.ogg`; this
+repository intentionally does not include or distribute original game music.
 
 Supported personal map override paths:
 

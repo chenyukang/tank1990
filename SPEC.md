@@ -38,6 +38,7 @@ Legal and asset boundary:
 - Do not copy original Tank 1990, Battle City, or ROM-extracted sprites, sounds, maps, or music into this repository.
 - Original or permissively licensed assets may imitate the era and constraints.
 - Public repositories without a clear license may be used only as gameplay or structure references, not as asset sources.
+- Original soundtrack files may be used only as user-supplied, gitignored personal overrides for private local play.
 
 ## 3. Target Platform
 
@@ -568,6 +569,7 @@ assets/personal/sounds/powerup_pickup.ogg
 assets/personal/sounds/stage_start.ogg
 assets/personal/sounds/level_clear.ogg
 assets/personal/sounds/game_over.ogg
+assets/personal/sounds/background.ogg
 ```
 
 ### 10.1 Asset Manifest
@@ -614,6 +616,13 @@ Audio should be simple and era-appropriate:
 - Base destroyed sound.
 - Power-up pickup sound.
 - Stage start and game over jingles.
+- Low-volume background music loop during active stage or arena play.
+
+Background music configuration:
+
+- `TANK_BGM=off` disables background music for capture or quiet play.
+- `assets/personal/sounds/background.ogg` overrides the generated loop.
+- A personally supplied original soundtrack should be converted outside the project and placed at that path; do not commit or redistribute it.
 
 No original Tank 1990/Battle City audio should be copied.
 

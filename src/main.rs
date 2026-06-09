@@ -13142,6 +13142,58 @@ mod tests {
     }
 
     #[test]
+    fn steel_breaking_bullet_hit_destroys_tile_and_sprite() {
+        let mut app = App::new();
+        let bullet_top_left = Vec2::new(24.0, 8.0);
+        let mut grid = TileGrid::empty();
+        grid.set(3, 1, TileKind::Steel);
+
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(grid);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ScoreBoard::campaign(20));
+        app.world_mut()
+            .spawn((GridTile { x: 3, y: 1 }, Sprite::default()));
+        app.world_mut().spawn((
+            Bullet {
+                previous_top_left: bullet_top_left,
+                top_left: bullet_top_left,
+                facing: Direction::Right,
+                owner: Team::Player1,
+                speed: BULLET_SPEED,
+                breaks_steel: true,
+                resolved: false,
+            },
+            Transform::from_translation(board_object_center(
+                bullet_top_left.x,
+                bullet_top_left.y,
+                Vec2::splat(BULLET_SIZE),
+                7.0,
+            )),
+        ));
+        app.add_systems(Update, move_bullets);
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<TileGrid>().get(3, 1),
+            Some(TileKind::Empty)
+        );
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 0);
+        let mut tiles = app.world_mut().query::<&GridTile>();
+        assert_eq!(tiles.iter(app.world()).count(), 0);
+        let mut animations = app.world_mut().query::<&SpriteAnimation>();
+        assert_eq!(animations.iter(app.world()).count(), 1);
+    }
+
+    #[test]
     fn bullet_tile_hit_uses_end_tile_for_normal_steps() {
         let mut grid = TileGrid::empty();
         grid.set(3, 1, TileKind::Steel);

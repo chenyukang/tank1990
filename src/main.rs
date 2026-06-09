@@ -12155,6 +12155,68 @@ mod tests {
     }
 
     #[test]
+    fn deathmatch_hit_reaching_target_score_ends_round_for_shooter() {
+        let mut app = App::new();
+        let p2_top_left = Vec2::new(64.0, 80.0);
+        let bullet_top_left = p2_top_left + Vec2::splat(4.0);
+
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::VersusDeathmatch);
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ScoreBoard::versus(3, 1, 2.0));
+        spawn_test_player(app.world_mut(), PlayerId::Two, p2_top_left, 3);
+        app.world_mut().spawn((
+            Bullet {
+                previous_top_left: bullet_top_left,
+                top_left: bullet_top_left,
+                facing: Direction::Right,
+                owner: Team::Player1,
+                speed: BULLET_SPEED,
+                breaks_steel: false,
+                resolved: false,
+            },
+            Transform::from_translation(board_object_center(
+                bullet_top_left.x,
+                bullet_top_left.y,
+                Vec2::splat(BULLET_SIZE),
+                7.0,
+            )),
+        ));
+        app.add_systems(Update, move_bullets);
+
+        app.update();
+
+        let status = app.world().resource::<GameStatus>();
+        assert_eq!(status.phase, GamePhase::RoundOver);
+        assert_eq!(status.winner, Some(PlayerId::One));
+        let score_board = app.world().resource::<ScoreBoard>();
+        assert_eq!(score_board.p1_score, 1);
+        assert_eq!(score_board.p2_score, 0);
+        assert_eq!(score_board.p2_lives, 2);
+
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 0);
+        let mut players =
+            app.world_mut()
+                .query::<(&Player, &PlayerLives, Option<&Tank>, Option<&DestroyedTank>)>();
+        let p2 = players
+            .iter(app.world())
+            .find(|(player, _, _, _)| player.id == PlayerId::Two)
+            .expect("P2 should still exist as a destroyed player");
+        assert_eq!(p2.1.current, 2);
+        assert!(p2.2.is_none());
+        assert!(p2.3.is_some());
+        let mut animations = app.world_mut().query::<&SpriteAnimation>();
+        assert_eq!(animations.iter(app.world()).count(), 1);
+    }
+
+    #[test]
     fn enemy_scores_match_spec() {
         assert_eq!(enemy_score(EnemyKind::Basic), 100);
         assert_eq!(enemy_score(EnemyKind::Fast), 200);

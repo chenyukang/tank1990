@@ -12,11 +12,11 @@ cargo run
 ```
 
 The default window scale is 3x. For capture or small displays, force a crisp
-integer scale:
+integer scale with `2`, `3`, `4`, or the matching `x` suffix:
 
 ```bash
 TANK_WINDOW_SCALE=2 cargo run
-TANK_WINDOW_SCALE=4 cargo run
+TANK_WINDOW_SCALE=4x cargo run
 ```
 
 ## Controls

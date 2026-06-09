@@ -156,7 +156,14 @@ fn configured_window_scale() -> f32 {
 
 fn parse_window_scale(value: Option<&str>) -> u32 {
     value
-        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .and_then(|raw| {
+            let trimmed = raw.trim();
+            let numeric = trimmed
+                .strip_suffix('x')
+                .or_else(|| trimmed.strip_suffix('X'))
+                .unwrap_or(trimmed);
+            numeric.parse::<u32>().ok()
+        })
         .filter(|scale| (MIN_WINDOW_SCALE..=MAX_WINDOW_SCALE).contains(scale))
         .unwrap_or(DEFAULT_WINDOW_SCALE)
 }
@@ -8068,11 +8075,14 @@ mod tests {
         assert_eq!(parse_window_scale(Some("3")), 3);
         assert_eq!(parse_window_scale(Some("4")), 4);
         assert_eq!(parse_window_scale(Some(" 4 ")), 4);
+        assert_eq!(parse_window_scale(Some("2x")), 2);
+        assert_eq!(parse_window_scale(Some("3X")), 3);
+        assert_eq!(parse_window_scale(Some(" 4x ")), 4);
     }
 
     #[test]
     fn window_scale_rejects_non_crisp_or_out_of_range_values() {
-        for value in ["", "1", "5", "3.5", "abc"] {
+        for value in ["", "1", "5", "1x", "5x", "3.5", "abc", "3xx", "4 x"] {
             assert_eq!(parse_window_scale(Some(value)), DEFAULT_WINDOW_SCALE);
         }
     }

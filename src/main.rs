@@ -14477,6 +14477,102 @@ mod tests {
     }
 
     #[test]
+    fn versus_clock_pickup_freezes_opponent_movement_and_fire() {
+        let mut app = App::new();
+        let p1_top_left = Vec2::new(32.0, 32.0);
+        let p2_top_left = Vec2::new(96.0, 32.0);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(TILE_SIZE / PLAYER_SPEED));
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::ArrowDown);
+        keys.press(KeyCode::Enter);
+
+        app.insert_resource(time);
+        app.insert_resource(keys);
+        app.insert_resource(PlayerControl::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(GameMode::VersusDeathmatch);
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(StageRules::default());
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.insert_resource(BaseReinforcement::default());
+        app.insert_resource(ScoreBoard::versus(3, 5, 2.0));
+        app.world_mut().spawn((
+            Tank {
+                top_left: p1_top_left,
+                facing: Direction::Up,
+                speed: PLAYER_SPEED,
+            },
+            TankSpriteState::new(TankSpriteSet::Player1),
+            Player { id: PlayerId::One },
+            PlayerUpgrade { level: 0 },
+            PlayerLives { current: 3 },
+            Health { current: 1 },
+            Transform::from_translation(board_object_center(
+                p1_top_left.x,
+                p1_top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0,
+            )),
+            Sprite::default(),
+        ));
+        app.world_mut().spawn((
+            Tank {
+                top_left: p2_top_left,
+                facing: Direction::Left,
+                speed: PLAYER_SPEED,
+            },
+            TankSpriteState::new(TankSpriteSet::Player2),
+            Player { id: PlayerId::Two },
+            PlayerUpgrade { level: 0 },
+            PlayerLives { current: 3 },
+            Health { current: 1 },
+            Transform::from_translation(board_object_center(
+                p2_top_left.x,
+                p2_top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0,
+            )),
+            Sprite::default(),
+        ));
+        spawn_test_powerup(app.world_mut(), PowerUpKind::Clock, p1_top_left);
+        app.add_systems(
+            Update,
+            (
+                pickup_powerups,
+                update_player_control,
+                move_player_tank,
+                fire_player_bullet,
+            )
+                .chain(),
+        );
+
+        app.update();
+
+        assert!(
+            app.world()
+                .resource::<VersusPlayerFreeze>()
+                .is_player_frozen(PlayerId::Two)
+        );
+        let mut players = app.world_mut().query::<(&Player, &Tank)>();
+        let p2 = players
+            .iter(app.world())
+            .find(|(player, _)| player.id == PlayerId::Two)
+            .map(|(_, tank)| (tank.top_left, tank.facing))
+            .expect("P2 should remain spawned");
+        assert_eq!(p2.0, p2_top_left);
+        assert_eq!(p2.1, Direction::Left);
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 0);
+    }
+
+    #[test]
     fn grenade_targets_opponent_only_in_versus() {
         assert_eq!(
             grenade_player_target(GameMode::Campaign, PlayerId::One),

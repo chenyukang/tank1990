@@ -3676,7 +3676,7 @@ fn move_bullets(
     mut grid: ResMut<TileGrid>,
     mut game_status: ResMut<GameStatus>,
     mut score_board: ResMut<ScoreBoard>,
-    mut bullets: Query<(Entity, &mut Bullet, &mut Transform)>,
+    mut bullets: Query<(Entity, &mut Bullet, &mut Transform), With<Bullet>>,
     tile_sprites: Query<(Entity, &GridTile)>,
     active_powerups: Query<Entity, With<PowerUp>>,
     active_sparkles: Query<Entity, With<PowerUpSparkle>>,
@@ -3695,6 +3695,7 @@ fn move_bullets(
         (
             Entity,
             &mut Tank,
+            &mut Transform,
             &mut PlayerLives,
             &mut Health,
             &mut PlayerUpgrade,
@@ -3706,6 +3707,7 @@ fn move_bullets(
             Without<BaseSprite>,
             Without<EnemyTank>,
             Without<Bullet>,
+            Without<PowerUp>,
         ),
     >,
 ) {
@@ -3785,6 +3787,7 @@ fn move_bullets(
             for (
                 player_entity,
                 mut player_tank,
+                mut player_transform,
                 mut lives,
                 mut player_health,
                 mut upgrade,
@@ -3814,6 +3817,7 @@ fn move_bullets(
                         &mut score_board,
                         player_entity,
                         &mut player_tank,
+                        &mut player_transform,
                         &mut lives,
                         &mut player_health,
                         &mut upgrade,
@@ -3839,6 +3843,7 @@ fn move_bullets(
             for (
                 player_entity,
                 mut player_tank,
+                mut player_transform,
                 mut lives,
                 mut player_health,
                 mut upgrade,
@@ -3873,6 +3878,7 @@ fn move_bullets(
                     &mut score_board,
                     player_entity,
                     &mut player_tank,
+                    &mut player_transform,
                     &mut lives,
                     &mut player_health,
                     &mut upgrade,
@@ -3984,6 +3990,7 @@ fn resolve_player_destroyed(
     score_board: &mut ScoreBoard,
     player_entity: Entity,
     tank: &mut Tank,
+    transform: &mut Transform,
     lives: &mut PlayerLives,
     health: &mut Health,
     upgrade: &mut PlayerUpgrade,
@@ -4000,7 +4007,13 @@ fn resolve_player_destroyed(
             if lives.current <= 0 {
                 game_status.phase = GamePhase::GameOver;
                 play_sound(commands, sounds, SoundKind::GameOver);
-                mark_player_tank_destroyed_terminal(commands, assets, player_entity, tank);
+                mark_player_tank_destroyed_terminal(
+                    commands,
+                    assets,
+                    player_entity,
+                    tank,
+                    transform,
+                );
                 return;
             }
         }
@@ -4017,7 +4030,13 @@ fn resolve_player_destroyed(
                     game_status.phase = GamePhase::RoundOver;
                     game_status.winner = Some(winner);
                     play_sound(commands, sounds, SoundKind::LevelClear);
-                    mark_player_tank_destroyed_terminal(commands, assets, player_entity, tank);
+                    mark_player_tank_destroyed_terminal(
+                        commands,
+                        assets,
+                        player_entity,
+                        tank,
+                        transform,
+                    );
                     return;
                 }
             }
@@ -4030,14 +4049,27 @@ fn resolve_player_destroyed(
                     game_status.phase = GamePhase::RoundOver;
                     game_status.winner = Some(shooter);
                     play_sound(commands, sounds, SoundKind::LevelClear);
-                    mark_player_tank_destroyed_terminal(commands, assets, player_entity, tank);
+                    mark_player_tank_destroyed_terminal(
+                        commands,
+                        assets,
+                        player_entity,
+                        tank,
+                        transform,
+                    );
                     return;
                 }
             }
         }
     }
 
-    mark_player_tank_destroyed_for_respawn(commands, assets, player_entity, tank, upgrade);
+    mark_player_tank_destroyed_for_respawn(
+        commands,
+        assets,
+        player_entity,
+        tank,
+        transform,
+        upgrade,
+    );
 }
 
 fn reset_player_upgrade(upgrade: &mut PlayerUpgrade, sprite: &mut Sprite) {
@@ -4182,7 +4214,7 @@ fn pickup_powerups(
     mut enemy_freeze: ResMut<EnemyFreeze>,
     mut versus_freeze: ResMut<VersusPlayerFreeze>,
     mut base_reinforcement: ResMut<BaseReinforcement>,
-    powerups: Query<(Entity, &PowerUp, &Transform)>,
+    powerups: Query<(Entity, &PowerUp, &Transform), (With<PowerUp>, Without<Player>)>,
     active_sparkles: Query<Entity, With<PowerUpSparkle>>,
     tile_sprites: Query<(Entity, &GridTile)>,
     bases: Query<&BaseSprite>,
@@ -4194,9 +4226,10 @@ fn pickup_powerups(
             &mut PlayerUpgrade,
             &mut PlayerLives,
             &mut Health,
+            &mut Transform,
             &mut Sprite,
         ),
-        (With<Player>, Without<EnemyTank>),
+        (With<Player>, Without<EnemyTank>, Without<PowerUp>),
     >,
     enemy_tanks: Query<(Entity, &Tank, &EnemyTank), (With<EnemyTank>, Without<Player>)>,
     mut score_board: ResMut<ScoreBoard>,
@@ -4208,8 +4241,16 @@ fn pickup_powerups(
     for (powerup_entity, powerup, transform) in &powerups {
         let powerup_top_left = board_top_left_from_translation(transform.translation, TANK_SIZE);
         let mut grenade_target = None;
-        for (player_entity, tank, player, mut upgrade, mut lives, _health, mut sprite) in
-            &mut players
+        for (
+            player_entity,
+            tank,
+            player,
+            mut upgrade,
+            mut lives,
+            _health,
+            _transform,
+            mut sprite,
+        ) in &mut players
         {
             if !rects_overlap(
                 tank.top_left,
@@ -4292,6 +4333,7 @@ fn pickup_powerups(
                 mut target_upgrade,
                 mut target_lives,
                 mut target_health,
+                mut target_transform,
                 _target_sprite,
             ) in &mut players
             {
@@ -4309,6 +4351,7 @@ fn pickup_powerups(
                     &mut score_board,
                     target_entity,
                     &mut target_tank,
+                    &mut target_transform,
                     &mut target_lives,
                     &mut target_health,
                     &mut target_upgrade,
@@ -5347,14 +5390,25 @@ fn parked_tank_top_left() -> Vec2 {
     Vec2::new(-TANK_SIZE * 4.0, -TANK_SIZE * 4.0)
 }
 
+fn parked_tank_translation() -> Vec3 {
+    let top_left = parked_tank_top_left();
+    board_object_center(top_left.x, top_left.y, Vec2::splat(TANK_SIZE), 6.0)
+}
+
+fn park_player_tank(tank: &mut Tank, transform: &mut Transform) {
+    tank.top_left = parked_tank_top_left();
+    transform.translation = parked_tank_translation();
+}
+
 fn mark_player_tank_destroyed_for_respawn(
     commands: &mut Commands,
     assets: &SpriteAssets,
     player_entity: Entity,
     tank: &mut Tank,
+    transform: &mut Transform,
     upgrade: &mut PlayerUpgrade,
 ) {
-    tank.top_left = parked_tank_top_left();
+    park_player_tank(tank, transform);
     upgrade.level = 0;
     commands
         .entity(player_entity)
@@ -5369,8 +5423,9 @@ fn mark_player_tank_destroyed_terminal(
     assets: &SpriteAssets,
     player_entity: Entity,
     tank: &mut Tank,
+    transform: &mut Transform,
 ) {
-    tank.top_left = parked_tank_top_left();
+    park_player_tank(tank, transform);
     commands
         .entity(player_entity)
         .remove::<(
@@ -9428,6 +9483,15 @@ mod tests {
             explosion_duration_secs(frames) - 0.01
         )));
         assert!(destroyed_tank.tick(Duration::from_secs_f32(0.02)));
+    }
+
+    #[test]
+    fn parked_player_tank_translation_is_off_board() {
+        let top_left = board_top_left_from_translation(parked_tank_translation(), TANK_SIZE);
+
+        assert_eq!(top_left, parked_tank_top_left());
+        assert!(top_left.x + TANK_SIZE < 0.0);
+        assert!(top_left.y + TANK_SIZE < 0.0);
     }
 
     #[test]

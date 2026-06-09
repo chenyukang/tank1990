@@ -11868,6 +11868,108 @@ mod tests {
     }
 
     #[test]
+    fn shared_control_m_returns_to_mode_select_and_clears_runtime_state() {
+        let mut app = App::new();
+        let level = parse_level(LEVEL_1).expect("level should parse");
+        let arena = parse_arena(ARENA_5).expect("arena should parse");
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyM);
+        let mut grid = TileGrid::empty();
+        grid.set(10, 24, TileKind::Brick);
+        let mut enemy_freeze = EnemyFreeze::default();
+        enemy_freeze.start();
+        let mut versus_freeze = VersusPlayerFreeze::default();
+        versus_freeze.start(PlayerId::Two);
+        let mut base_reinforcement = BaseReinforcement {
+            timer: None,
+            saved_tiles: vec![(10, 24, TileKind::Brick)],
+        };
+        base_reinforcement.start();
+
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::VersusBaseBattle);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            stage: 12,
+            arena: 5,
+            winner: Some(PlayerId::Two),
+            transition_timer: Timer::from_seconds(1.0, TimerMode::Once),
+        });
+        app.insert_resource(grid);
+        app.insert_resource(EnemyDirector::from_level(&level));
+        app.insert_resource(ScoreBoard::versus(3, 5, 2.0));
+        app.insert_resource(StageRules {
+            player_steel_destruction: true,
+        });
+        app.insert_resource(VersusPowerUpDirector::from_arena(&arena));
+        app.insert_resource(ModeSelect {
+            selected: ModeSelectOption::Scale,
+            stage: 1,
+            arena: 1,
+            audio_mode: AudioMode::Classic,
+            sound_enabled: false,
+            window_scale: DEFAULT_WINDOW_SCALE,
+        });
+        app.insert_resource(enemy_freeze);
+        app.insert_resource(versus_freeze);
+        app.insert_resource(base_reinforcement);
+        app.world_mut()
+            .spawn((GameEntity, OldStageEntity, GridTile { x: 10, y: 24 }));
+        app.add_systems(Update, handle_shared_controls);
+
+        app.update();
+
+        let status = app.world().resource::<GameStatus>();
+        assert_eq!(status.phase, GamePhase::ModeSelect);
+        assert_eq!(status.stage, 12);
+        assert_eq!(status.arena, 5);
+        assert_eq!(status.winner, None);
+
+        let mode_select = app.world().resource::<ModeSelect>();
+        assert_eq!(mode_select.selected, ModeSelectOption::Battle);
+        assert_eq!(mode_select.stage, 12);
+        assert_eq!(mode_select.arena, 5);
+        assert_eq!(mode_select.audio_mode, AudioMode::Classic);
+        assert!(!mode_select.sound_enabled);
+
+        assert!(
+            app.world()
+                .resource::<TileGrid>()
+                .tiles
+                .iter()
+                .all(|tile| *tile == TileKind::Empty)
+        );
+        let director = app.world().resource::<EnemyDirector>();
+        assert!(director.roster.is_empty());
+        assert!(director.spawns.is_empty());
+        assert_eq!(director.max_active, 0);
+        assert_eq!(*app.world().resource::<StageRules>(), StageRules::default());
+        assert_eq!(app.world().resource::<ScoreBoard>().total_enemies, 0);
+        assert!(
+            app.world()
+                .resource::<VersusPowerUpDirector>()
+                .spawn_points
+                .is_empty()
+        );
+        assert!(!app.world().resource::<EnemyFreeze>().is_active());
+        assert!(
+            !app.world()
+                .resource::<VersusPlayerFreeze>()
+                .is_player_frozen(PlayerId::Two)
+        );
+        let reinforcement = app.world().resource::<BaseReinforcement>();
+        assert!(reinforcement.timer.is_none());
+        assert!(reinforcement.saved_tiles.is_empty());
+
+        let mut old_entities = app.world_mut().query::<&OldStageEntity>();
+        assert_eq!(old_entities.iter(app.world()).count(), 0);
+        let mut cursors = app.world_mut().query::<&ModeSelectCursor>();
+        assert_eq!(cursors.iter(app.world()).count(), 1);
+    }
+
+    #[test]
     fn paused_phase_freezes_visual_effect_timers_only() {
         assert!(!visual_effects_can_advance(GamePhase::Paused));
         assert!(visual_effects_can_advance(GamePhase::StageIntro));

@@ -8225,72 +8225,99 @@ fn create_powerup_atlas(manifest: GeneratedAtlasManifest) -> Image {
 }
 
 fn draw_star_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
-    let gold = [248, 224, 88, 255];
-    let shadow = [128, 96, 32, 255];
-    for (x, y) in [
-        (8, 2),
-        (7, 5),
-        (8, 5),
-        (9, 5),
-        (4, 6),
-        (5, 6),
-        (6, 6),
-        (7, 6),
-        (8, 6),
-        (9, 6),
-        (10, 6),
-        (11, 6),
-        (12, 6),
-        (6, 8),
-        (7, 8),
-        (8, 8),
-        (9, 8),
-        (10, 8),
-        (6, 11),
-        (10, 11),
-    ] {
-        set_pixel(pixels, width, x_offset + x, y + 1, shadow);
-        set_pixel(pixels, width, x_offset + x, y, gold);
+    let shadow = [128, 88, 24, 255];
+    let gold = [248, 216, 72, 255];
+    let light = [255, 248, 160, 255];
+
+    for (x, y, w) in [(8, 2, 1), (7, 4, 3), (4, 6, 9), (6, 8, 5)] {
+        fill_rect(pixels, width, x_offset + x, y + 1, w, 1, shadow);
+        fill_rect(pixels, width, x_offset + x, y, w, 1, gold);
     }
+    fill_rect(pixels, width, x_offset + 5, 10, 3, 2, gold);
+    fill_rect(pixels, width, x_offset + 10, 10, 3, 2, shadow);
+    fill_rect(pixels, width, x_offset + 7, 4, 2, 1, light);
+    fill_rect(pixels, width, x_offset + 6, 6, 3, 1, light);
+    set_pixel(pixels, width, x_offset + 8, 2, light);
 }
 
 fn draw_helmet_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
-    fill_rect(pixels, width, x_offset + 4, 5, 8, 6, [80, 184, 216, 255]);
-    fill_rect(pixels, width, x_offset + 5, 3, 6, 3, [144, 232, 248, 255]);
-    fill_rect(pixels, width, x_offset + 3, 10, 10, 2, [40, 96, 144, 255]);
-    fill_rect(pixels, width, x_offset + 6, 6, 4, 2, [216, 248, 248, 255]);
+    let dark = [32, 96, 144, 255];
+    let mid = [80, 184, 216, 255];
+    let light = [176, 240, 248, 255];
+    let visor = [216, 248, 248, 255];
+
+    fill_rect(pixels, width, x_offset + 5, 3, 6, 2, light);
+    fill_rect(pixels, width, x_offset + 4, 5, 8, 5, mid);
+    fill_rect(pixels, width, x_offset + 3, 9, 10, 2, dark);
+    fill_rect(pixels, width, x_offset + 5, 6, 6, 2, visor);
+    fill_rect(pixels, width, x_offset + 7, 4, 2, 5, light);
+    set_pixel(pixels, width, x_offset + 4, 4, dark);
+    set_pixel(pixels, width, x_offset + 11, 4, dark);
 }
 
 fn draw_clock_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
-    fill_rect(pixels, width, x_offset + 4, 3, 8, 1, [216, 232, 248, 255]);
-    fill_rect(pixels, width, x_offset + 3, 4, 1, 8, [216, 232, 248, 255]);
-    fill_rect(pixels, width, x_offset + 12, 4, 1, 8, [72, 120, 184, 255]);
-    fill_rect(pixels, width, x_offset + 4, 12, 8, 1, [72, 120, 184, 255]);
-    fill_rect(pixels, width, x_offset + 7, 5, 2, 5, [248, 248, 208, 255]);
-    fill_rect(pixels, width, x_offset + 8, 9, 4, 2, [248, 248, 208, 255]);
+    let rim_light = [216, 232, 248, 255];
+    let rim_dark = [72, 120, 184, 255];
+    let face = [248, 248, 208, 255];
+    let hand = [48, 64, 96, 255];
+
+    fill_rect(pixels, width, x_offset + 5, 2, 6, 1, rim_light);
+    fill_rect(pixels, width, x_offset + 3, 4, 2, 8, rim_light);
+    fill_rect(pixels, width, x_offset + 11, 4, 2, 8, rim_dark);
+    fill_rect(pixels, width, x_offset + 5, 12, 6, 1, rim_dark);
+    fill_rect(pixels, width, x_offset + 5, 4, 6, 8, face);
+    fill_rect(pixels, width, x_offset + 7, 6, 2, 4, hand);
+    fill_rect(pixels, width, x_offset + 8, 9, 4, 2, hand);
+    set_pixel(pixels, width, x_offset + 8, 8, rim_dark);
 }
 
 fn draw_grenade_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
-    fill_rect(pixels, width, x_offset + 5, 6, 8, 7, [80, 128, 48, 255]);
-    fill_rect(pixels, width, x_offset + 6, 4, 5, 3, [120, 176, 64, 255]);
-    fill_rect(pixels, width, x_offset + 10, 2, 2, 3, [200, 184, 80, 255]);
-    fill_rect(pixels, width, x_offset + 12, 1, 3, 1, [248, 232, 128, 255]);
-    fill_rect(pixels, width, x_offset + 4, 11, 9, 2, [40, 72, 32, 255]);
+    let dark = [40, 72, 32, 255];
+    let mid = [80, 128, 48, 255];
+    let light = [136, 184, 72, 255];
+    let metal = [200, 184, 80, 255];
+    let spark = [248, 232, 128, 255];
+
+    fill_rect(pixels, width, x_offset + 6, 3, 4, 2, metal);
+    fill_rect(pixels, width, x_offset + 10, 2, 2, 3, metal);
+    fill_rect(pixels, width, x_offset + 12, 1, 3, 1, spark);
+    fill_rect(pixels, width, x_offset + 5, 5, 8, 8, mid);
+    fill_rect(pixels, width, x_offset + 4, 8, 10, 4, mid);
+    fill_rect(pixels, width, x_offset + 5, 11, 8, 2, dark);
+    fill_rect(pixels, width, x_offset + 6, 6, 2, 2, light);
+    fill_rect(pixels, width, x_offset + 9, 6, 1, 7, dark);
+    fill_rect(pixels, width, x_offset + 5, 9, 8, 1, dark);
 }
 
 fn draw_shovel_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
-    fill_rect(pixels, width, x_offset + 8, 2, 2, 9, [176, 112, 56, 255]);
-    fill_rect(pixels, width, x_offset + 6, 10, 6, 2, [176, 112, 56, 255]);
-    fill_rect(pixels, width, x_offset + 4, 11, 10, 3, [160, 168, 176, 255]);
-    fill_rect(pixels, width, x_offset + 5, 12, 8, 1, [232, 240, 240, 255]);
+    let handle_dark = [120, 72, 32, 255];
+    let handle = [184, 112, 48, 255];
+    let blade = [160, 168, 176, 255];
+    let shine = [232, 240, 240, 255];
+    let shadow = [72, 88, 96, 255];
+
+    fill_rect(pixels, width, x_offset + 7, 2, 2, 8, handle);
+    fill_rect(pixels, width, x_offset + 8, 2, 1, 8, handle_dark);
+    fill_rect(pixels, width, x_offset + 5, 9, 6, 2, handle);
+    fill_rect(pixels, width, x_offset + 4, 11, 10, 3, blade);
+    fill_rect(pixels, width, x_offset + 5, 12, 8, 1, shine);
+    fill_rect(pixels, width, x_offset + 6, 14, 6, 1, shadow);
 }
 
 fn draw_tank_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
-    fill_rect(pixels, width, x_offset + 3, 5, 4, 8, [88, 88, 88, 255]);
-    fill_rect(pixels, width, x_offset + 9, 5, 4, 8, [88, 88, 88, 255]);
-    fill_rect(pixels, width, x_offset + 5, 6, 6, 6, [224, 88, 72, 255]);
-    fill_rect(pixels, width, x_offset + 7, 3, 2, 6, [248, 176, 96, 255]);
-    fill_rect(pixels, width, x_offset + 6, 8, 4, 3, [248, 176, 96, 255]);
+    let tread = [56, 56, 56, 255];
+    let body = [216, 72, 64, 255];
+    let light = [248, 160, 88, 255];
+    let shadow = [128, 40, 40, 255];
+
+    fill_rect(pixels, width, x_offset + 3, 5, 4, 8, tread);
+    fill_rect(pixels, width, x_offset + 9, 5, 4, 8, tread);
+    fill_rect(pixels, width, x_offset + 5, 6, 6, 6, body);
+    fill_rect(pixels, width, x_offset + 7, 3, 2, 6, light);
+    fill_rect(pixels, width, x_offset + 6, 8, 4, 3, light);
+    fill_rect(pixels, width, x_offset + 5, 11, 6, 1, shadow);
+    set_pixel(pixels, width, x_offset + 4, 6, [96, 96, 96, 255]);
+    set_pixel(pixels, width, x_offset + 12, 11, [32, 32, 32, 255]);
 }
 
 fn create_glyph_atlas(manifest: &GlyphManifest) -> Image {
@@ -9759,6 +9786,37 @@ mod tests {
         assert_eq!(image_pixel(&image, ice, 0), [224, 248, 255, 255]);
         assert_eq!(image_pixel(&image, ice + 2, 2), [64, 128, 176, 255]);
         assert_eq!(image_pixel(&image, ice + 5, 1), [160, 216, 232, 255]);
+    }
+
+    #[test]
+    fn generated_powerup_atlas_uses_readable_classic_icons() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let image = create_powerup_atlas(manifest.atlases.powerups);
+        let tile_width = manifest.atlases.powerups.tile_width;
+
+        assert_eq!(image_pixel(&image, 8, 2), [255, 248, 160, 255]);
+        assert_eq!(image_pixel(&image, 10, 10), [128, 88, 24, 255]);
+
+        let helmet = tile_width;
+        assert_eq!(image_pixel(&image, helmet + 6, 6), [216, 248, 248, 255]);
+        assert_eq!(image_pixel(&image, helmet + 3, 9), [32, 96, 144, 255]);
+
+        let clock = tile_width * 2;
+        assert_eq!(image_pixel(&image, clock + 5, 2), [216, 232, 248, 255]);
+        assert_eq!(image_pixel(&image, clock + 8, 9), [48, 64, 96, 255]);
+
+        let grenade = tile_width * 3;
+        assert_eq!(image_pixel(&image, grenade + 13, 1), [248, 232, 128, 255]);
+        assert_eq!(image_pixel(&image, grenade + 9, 9), [40, 72, 32, 255]);
+
+        let shovel = tile_width * 4;
+        assert_eq!(image_pixel(&image, shovel + 8, 2), [120, 72, 32, 255]);
+        assert_eq!(image_pixel(&image, shovel + 5, 12), [232, 240, 240, 255]);
+
+        let tank = tile_width * 5;
+        assert_eq!(image_pixel(&image, tank + 3, 5), [56, 56, 56, 255]);
+        assert_eq!(image_pixel(&image, tank + 7, 3), [248, 160, 88, 255]);
+        assert_eq!(image_pixel(&image, tank + 5, 11), [128, 40, 40, 255]);
     }
 
     #[test]

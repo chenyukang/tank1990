@@ -4497,8 +4497,18 @@ fn reinforce_base_walls(
     positions: Vec<(usize, usize)>,
 ) {
     if !base_reinforcement.saved_tiles.is_empty() {
-        base_reinforcement.start();
-        return;
+        if reinforcement_matches_positions(&base_reinforcement.saved_tiles, &positions) {
+            base_reinforcement.start();
+            return;
+        }
+
+        restore_base_walls(
+            commands,
+            assets,
+            tile_grid,
+            tile_sprites,
+            base_reinforcement,
+        );
     }
 
     if positions.is_empty() {
@@ -4522,6 +4532,16 @@ fn reinforce_base_walls(
         );
     }
     base_reinforcement.start();
+}
+
+fn reinforcement_matches_positions(
+    saved_tiles: &[(usize, usize, TileKind)],
+    positions: &[(usize, usize)],
+) -> bool {
+    saved_tiles.len() == positions.len()
+        && positions
+            .iter()
+            .all(|position| saved_tiles.iter().any(|(x, y, _)| (*x, *y) == *position))
 }
 
 fn restore_base_walls(
@@ -7580,6 +7600,23 @@ mod tests {
         );
     }
 
+    fn switch_base_reinforcement_for_test(
+        mut commands: Commands,
+        assets: Res<SpriteAssets>,
+        mut tile_grid: ResMut<TileGrid>,
+        tile_sprites: Query<(Entity, &GridTile)>,
+        mut base_reinforcement: ResMut<BaseReinforcement>,
+    ) {
+        reinforce_base_walls(
+            &mut commands,
+            &assets,
+            &mut tile_grid,
+            &tile_sprites,
+            &mut base_reinforcement,
+            vec![(22, 0)],
+        );
+    }
+
     #[test]
     fn window_scale_defaults_and_accepts_integer_scales() {
         assert_eq!(parse_window_scale(None), DEFAULT_WINDOW_SCALE);
@@ -10193,6 +10230,48 @@ mod tests {
             SHOVEL_SECONDS - SHOVEL_WARNING_SECONDS + 0.01
         )));
         assert!(reinforcement.warning_elapsed_secs().is_some());
+    }
+
+    #[test]
+    fn shovel_reinforcement_can_switch_to_a_different_base() {
+        let mut app = App::new();
+        let mut grid = TileGrid::empty();
+        grid.set(2, 24, TileKind::Steel);
+        grid.set(22, 0, TileKind::Brick);
+        let mut reinforcement = BaseReinforcement {
+            timer: None,
+            saved_tiles: vec![(2, 24, TileKind::Brick)],
+        };
+        reinforcement.start();
+
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(grid);
+        app.insert_resource(reinforcement);
+        app.add_systems(Update, switch_base_reinforcement_for_test);
+
+        app.update();
+
+        let grid = app.world().resource::<TileGrid>();
+        assert_eq!(grid.get(2, 24), Some(TileKind::Brick));
+        assert_eq!(grid.get(22, 0), Some(TileKind::Steel));
+
+        let reinforcement = app.world().resource::<BaseReinforcement>();
+        assert_eq!(reinforcement.saved_tiles, [(22, 0, TileKind::Brick)]);
+        assert!(reinforcement.timer.is_some());
+    }
+
+    #[test]
+    fn repeated_shovel_on_same_base_only_refreshes_timer() {
+        let saved_tiles = [(2, 24, TileKind::Brick), (3, 24, TileKind::Steel)];
+
+        assert!(reinforcement_matches_positions(
+            &saved_tiles,
+            &[(3, 24), (2, 24)]
+        ));
+        assert!(!reinforcement_matches_positions(
+            &saved_tiles,
+            &[(22, 0), (2, 24)]
+        ));
     }
 
     #[test]

@@ -7609,14 +7609,15 @@ fn create_sound_assets(
     }
 }
 
+fn personal_background_music_path_if_available(
+    exists: impl Fn(&str) -> bool,
+) -> Option<&'static str> {
+    exists(PERSONAL_BACKGROUND_MUSIC_SOUND_PATH).then_some(PERSONAL_BACKGROUND_MUSIC_SOUND_PATH)
+}
+
 fn custom_background_music_handle(asset_server: &AssetServer) -> Option<SoundHandle> {
-    if personal_asset_exists(PERSONAL_BACKGROUND_MUSIC_SOUND_PATH) {
-        Some(SoundHandle::File(
-            asset_server.load(PERSONAL_BACKGROUND_MUSIC_SOUND_PATH),
-        ))
-    } else {
-        None
-    }
+    personal_background_music_path_if_available(personal_asset_exists)
+        .map(|path| SoundHandle::File(asset_server.load(path)))
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
@@ -9578,6 +9579,21 @@ mod tests {
                 Path::new(ASSET_ROOT_DIR).join(asset_path)
             );
         }
+    }
+
+    #[test]
+    fn custom_music_is_available_only_from_personal_background_file() {
+        assert_eq!(
+            personal_background_music_path_if_available(|path| {
+                path == PERSONAL_BACKGROUND_MUSIC_SOUND_PATH
+            }),
+            Some(PERSONAL_BACKGROUND_MUSIC_SOUND_PATH)
+        );
+        assert_eq!(
+            personal_background_music_path_if_available(|path| path == PERSONAL_FIRE_SOUND_PATH),
+            None
+        );
+        assert_eq!(personal_background_music_path_if_available(|_| false), None);
     }
 
     #[test]

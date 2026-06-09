@@ -13822,6 +13822,69 @@ mod tests {
     }
 
     #[test]
+    fn base_battle_opponent_base_hit_ends_round_for_shooter() {
+        let mut app = App::new();
+        let base_top_left = Vec2::new(96.0, 192.0);
+        let mut grid = TileGrid::empty();
+        grid.set(12, 24, TileKind::Base);
+        grid.set(13, 24, TileKind::Base);
+        grid.set(12, 25, TileKind::Base);
+        grid.set(13, 25, TileKind::Base);
+
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::VersusBaseBattle);
+        app.insert_resource(grid);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ScoreBoard::versus(3, 5, 2.0));
+        app.world_mut().spawn((
+            BaseSprite {
+                owner: Some(PlayerId::Two),
+                top_left: base_top_left,
+            },
+            Sprite::default(),
+        ));
+        app.world_mut().spawn((
+            Bullet {
+                previous_top_left: base_top_left,
+                top_left: base_top_left,
+                facing: Direction::Right,
+                owner: Team::Player1,
+                speed: BULLET_SPEED,
+                breaks_steel: false,
+                resolved: false,
+            },
+            Transform::from_translation(board_object_center(
+                base_top_left.x,
+                base_top_left.y,
+                Vec2::splat(BULLET_SIZE),
+                7.0,
+            )),
+        ));
+        app.add_systems(Update, move_bullets);
+
+        app.update();
+
+        let status = app.world().resource::<GameStatus>();
+        assert_eq!(status.phase, GamePhase::RoundOver);
+        assert_eq!(status.winner, Some(PlayerId::One));
+        let score_board = app.world().resource::<ScoreBoard>();
+        assert_eq!(score_board.p1_score, 0);
+        assert_eq!(score_board.p2_score, 0);
+
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 0);
+        let mut bases = app.world_mut().query::<&BaseSprite>();
+        assert_eq!(bases.iter(app.world()).count(), 1);
+        let mut animations = app.world_mut().query::<&SpriteAnimation>();
+        assert_eq!(animations.iter(app.world()).count(), 2);
+    }
+
+    #[test]
     fn enemy_bullet_destroying_campaign_base_enters_game_over() {
         let mut app = App::new();
         let base_top_left = Vec2::new(96.0, 192.0);

@@ -13822,6 +13822,65 @@ mod tests {
     }
 
     #[test]
+    fn enemy_bullet_destroying_campaign_base_enters_game_over() {
+        let mut app = App::new();
+        let base_top_left = Vec2::new(96.0, 192.0);
+        let mut grid = TileGrid::empty();
+        grid.set(12, 24, TileKind::Base);
+        grid.set(13, 24, TileKind::Base);
+        grid.set(12, 25, TileKind::Base);
+        grid.set(13, 25, TileKind::Base);
+
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(grid);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ScoreBoard::campaign(20));
+        app.world_mut().spawn((
+            BaseSprite {
+                owner: None,
+                top_left: base_top_left,
+            },
+            Sprite::default(),
+        ));
+        app.world_mut().spawn((
+            Bullet {
+                previous_top_left: base_top_left,
+                top_left: base_top_left,
+                facing: Direction::Right,
+                owner: Team::Enemy,
+                speed: BULLET_SPEED,
+                breaks_steel: false,
+                resolved: false,
+            },
+            Transform::from_translation(board_object_center(
+                base_top_left.x,
+                base_top_left.y,
+                Vec2::splat(BULLET_SIZE),
+                7.0,
+            )),
+        ));
+        app.add_systems(Update, move_bullets);
+
+        app.update();
+
+        let status = app.world().resource::<GameStatus>();
+        assert_eq!(status.phase, GamePhase::GameOver);
+        assert_eq!(status.winner, None);
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 0);
+        let mut bases = app.world_mut().query::<&BaseSprite>();
+        assert_eq!(bases.iter(app.world()).count(), 1);
+        let mut animations = app.world_mut().query::<&SpriteAnimation>();
+        assert_eq!(animations.iter(app.world()).count(), 2);
+    }
+
+    #[test]
     fn campaign_base_can_be_destroyed_by_player_or_enemy_bullets() {
         assert!(base_can_be_destroyed_by_bullet(
             GameMode::Campaign,

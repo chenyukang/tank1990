@@ -9168,6 +9168,39 @@ mod tests {
         ));
     }
 
+    fn spawn_test_enemy_tank(
+        world: &mut World,
+        kind: EnemyKind,
+        top_left: Vec2,
+        facing: Direction,
+    ) -> Entity {
+        world
+            .spawn((
+                Tank {
+                    top_left,
+                    facing,
+                    speed: enemy_speed(kind),
+                },
+                EnemyTank {
+                    kind,
+                    carried_powerup: None,
+                },
+                EnemyAi {
+                    turn_timer: Timer::from_seconds(
+                        enemy_turn_interval(kind),
+                        TimerMode::Repeating,
+                    ),
+                    fire_timer: Timer::from_seconds(
+                        enemy_fire_interval(kind),
+                        TimerMode::Repeating,
+                    ),
+                },
+                TankSpriteState::new(TankSpriteSet::enemy(kind)),
+                Sprite::default(),
+            ))
+            .id()
+    }
+
     fn powerup_pickup_app(game_mode: GameMode, score_board: ScoreBoard) -> App {
         let mut app = App::new();
         app.insert_resource(test_sprite_assets());
@@ -15024,6 +15057,99 @@ mod tests {
         assert!(enemy_fire_slot_available(ENEMY_BULLET_LIMIT - 1, 0));
         assert!(!enemy_fire_slot_available(ENEMY_BULLET_LIMIT, 0));
         assert!(!enemy_fire_slot_available(1, ENEMY_BULLET_LIMIT_PER_TANK));
+    }
+
+    #[test]
+    fn enemy_fire_system_respects_per_tank_bullet_limit() {
+        let mut app = App::new();
+        let enemy_one_top_left = Vec2::new(64.0, 32.0);
+        let enemy_two_top_left = Vec2::new(112.0, 32.0);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(enemy_fire_interval(
+            EnemyKind::Basic,
+        )));
+
+        app.insert_resource(time);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(TileGrid::empty());
+        spawn_test_player(
+            app.world_mut(),
+            PlayerId::One,
+            enemy_one_top_left + Vec2::new(0.0, 64.0),
+            3,
+        );
+        spawn_test_player(
+            app.world_mut(),
+            PlayerId::Two,
+            enemy_two_top_left + Vec2::new(0.0, 64.0),
+            3,
+        );
+        let enemy_one = spawn_test_enemy_tank(
+            app.world_mut(),
+            EnemyKind::Basic,
+            enemy_one_top_left,
+            Direction::Up,
+        );
+        let enemy_two = spawn_test_enemy_tank(
+            app.world_mut(),
+            EnemyKind::Basic,
+            enemy_two_top_left,
+            Direction::Up,
+        );
+        app.world_mut().spawn((
+            Bullet {
+                previous_top_left: Vec2::new(8.0, 8.0),
+                top_left: Vec2::new(8.0, 8.0),
+                facing: Direction::Down,
+                owner: Team::Enemy,
+                speed: BULLET_SPEED,
+                breaks_steel: false,
+                resolved: false,
+            },
+            EnemyBulletSource { shooter: enemy_one },
+        ));
+        app.add_systems(Update, fire_enemy_bullets);
+
+        app.update();
+
+        let mut sources = app.world_mut().query::<&EnemyBulletSource>();
+        let shooters: Vec<Entity> = sources
+            .iter(app.world())
+            .map(|source| source.shooter)
+            .collect();
+        assert_eq!(
+            shooters
+                .iter()
+                .filter(|shooter| **shooter == enemy_one)
+                .count(),
+            1
+        );
+        assert_eq!(
+            shooters
+                .iter()
+                .filter(|shooter| **shooter == enemy_two)
+                .count(),
+            1
+        );
+
+        let expected_enemy_two_bullet = spawn_bullet_position(enemy_two_top_left, Direction::Down);
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        let bullets: Vec<_> = bullets.iter(app.world()).collect();
+        assert_eq!(bullets.len(), 2);
+        let spawned = bullets
+            .iter()
+            .find(|bullet| bullet.top_left == expected_enemy_two_bullet)
+            .expect("second enemy should fire when its own slot is free");
+        assert_eq!(spawned.previous_top_left, expected_enemy_two_bullet);
+        assert_eq!(spawned.facing, Direction::Down);
+        assert_eq!(spawned.owner, Team::Enemy);
+        assert_eq!(spawned.speed, BULLET_SPEED);
     }
 
     #[test]

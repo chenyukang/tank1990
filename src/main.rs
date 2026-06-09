@@ -1378,6 +1378,12 @@ struct BulletTileHit {
     impact_top_left: Vec2,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BulletPathClash {
+    impact_top_left: Vec2,
+    time: f32,
+}
+
 #[derive(Component)]
 struct EnemyBulletSource {
     shooter: Entity,
@@ -4208,20 +4214,33 @@ fn cancel_colliding_bullets(
         .map(|(entity, bullet)| (entity, bullet.previous_top_left, bullet.top_left))
         .collect();
     let mut destroyed = HashSet::new();
+    let mut clashes = Vec::new();
 
     for i in 0..bullets.len() {
         for j in (i + 1)..bullets.len() {
-            if let Some(impact_top_left) =
+            if let Some(clash) =
                 bullet_paths_clash(bullets[i].1, bullets[i].2, bullets[j].1, bullets[j].2)
             {
-                let first_was_live = destroyed.insert(bullets[i].0);
-                let second_was_live = destroyed.insert(bullets[j].0);
-                if first_was_live && second_was_live {
-                    spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
-                    play_sound(&mut commands, &sounds, SoundKind::SteelHit);
-                }
+                clashes.push((
+                    clash.time,
+                    bullets[i].0,
+                    bullets[j].0,
+                    clash.impact_top_left,
+                ));
             }
         }
+    }
+
+    clashes.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for (_, first, second, impact_top_left) in clashes {
+        if destroyed.contains(&first) || destroyed.contains(&second) {
+            continue;
+        }
+
+        destroyed.insert(first);
+        destroyed.insert(second);
+        spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
+        play_sound(&mut commands, &sounds, SoundKind::SteelHit);
     }
 
     for entity in destroyed {
@@ -6427,9 +6446,17 @@ fn bullet_positions_overlap(a: Vec2, b: Vec2) -> bool {
     rects_overlap(a, Vec2::splat(BULLET_SIZE), b, Vec2::splat(BULLET_SIZE))
 }
 
-fn bullet_paths_clash(a_start: Vec2, a_end: Vec2, b_start: Vec2, b_end: Vec2) -> Option<Vec2> {
+fn bullet_paths_clash(
+    a_start: Vec2,
+    a_end: Vec2,
+    b_start: Vec2,
+    b_end: Vec2,
+) -> Option<BulletPathClash> {
     if bullet_positions_overlap(a_start, b_start) {
-        return Some(bullet_clash_impact_top_left(a_start, b_start));
+        return Some(BulletPathClash {
+            impact_top_left: bullet_clash_impact_top_left(a_start, b_start),
+            time: 0.0,
+        });
     }
 
     let a_delta = a_end - a_start;
@@ -6449,10 +6476,13 @@ fn bullet_paths_clash(a_start: Vec2, a_end: Vec2, b_start: Vec2, b_end: Vec2) ->
         return None;
     }
 
-    Some(round_vec2(bullet_clash_impact_top_left(
-        a_start + a_delta * entry_time,
-        b_start + b_delta * entry_time,
-    )))
+    Some(BulletPathClash {
+        impact_top_left: round_vec2(bullet_clash_impact_top_left(
+            a_start + a_delta * entry_time,
+            b_start + b_delta * entry_time,
+        )),
+        time: entry_time,
+    })
 }
 
 fn swept_axis_times(
@@ -7790,6 +7820,15 @@ mod tests {
             breaks_steel: false,
             resolved,
         }
+    }
+
+    fn bullet_paths_clash_impact(
+        a_start: Vec2,
+        a_end: Vec2,
+        b_start: Vec2,
+        b_end: Vec2,
+    ) -> Option<Vec2> {
+        bullet_paths_clash(a_start, a_end, b_start, b_end).map(|clash| clash.impact_top_left)
     }
 
     fn spawn_player_with_initial_shield_for_test(
@@ -11129,7 +11168,7 @@ mod tests {
     #[test]
     fn bullet_paths_clash_detects_fast_head_on_crossing() {
         assert_eq!(
-            bullet_paths_clash(
+            bullet_paths_clash_impact(
                 Vec2::new(8.0, 8.0),
                 Vec2::new(36.0, 8.0),
                 Vec2::new(36.0, 8.0),
@@ -11142,7 +11181,7 @@ mod tests {
     #[test]
     fn bullet_paths_clash_ignores_missed_lanes() {
         assert_eq!(
-            bullet_paths_clash(
+            bullet_paths_clash_impact(
                 Vec2::new(8.0, 8.0),
                 Vec2::new(36.0, 8.0),
                 Vec2::new(36.0, 16.0),
@@ -11155,7 +11194,7 @@ mod tests {
     #[test]
     fn bullet_paths_clash_ignores_edge_touch_moving_apart() {
         assert_eq!(
-            bullet_paths_clash(
+            bullet_paths_clash_impact(
                 Vec2::new(8.0, 8.0),
                 Vec2::new(8.0, 8.0),
                 Vec2::new(12.0, 8.0),
@@ -11214,6 +11253,42 @@ mod tests {
 
         let mut bullets = app.world_mut().query::<&Bullet>();
         assert_eq!(bullets.iter(app.world()).count(), 2);
+    }
+
+    #[test]
+    fn cancel_colliding_bullets_keeps_third_bullet_after_earliest_pair_clashes() {
+        let mut app = App::new();
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.world_mut().spawn(test_bullet(
+            Vec2::new(8.0, 8.0),
+            Vec2::new(44.0, 8.0),
+            false,
+        ));
+        app.world_mut().spawn(test_bullet(
+            Vec2::new(44.0, 8.0),
+            Vec2::new(8.0, 8.0),
+            false,
+        ));
+        app.world_mut().spawn(test_bullet(
+            Vec2::new(24.0, 24.0),
+            Vec2::new(24.0, -12.0),
+            false,
+        ));
+        app.add_systems(Update, cancel_colliding_bullets);
+
+        app.update();
+
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        let remaining: Vec<(Vec2, Vec2)> = bullets
+            .iter(app.world())
+            .map(|bullet| (bullet.previous_top_left, bullet.top_left))
+            .collect();
+        assert_eq!(remaining, [(Vec2::new(44.0, 8.0), Vec2::new(8.0, 8.0))]);
     }
 
     #[test]

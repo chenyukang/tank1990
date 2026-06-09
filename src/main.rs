@@ -12099,6 +12099,120 @@ mod tests {
     }
 
     #[test]
+    fn shared_control_r_restarts_current_versus_round() {
+        let mut app = App::new();
+        let arena_index = 5;
+        let (expected_arena, expected_grid) = load_arena_bundle_or_panic(arena_index);
+        let previous_level = parse_level(LEVEL_1).expect("level should parse");
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyR);
+        let mut grid = TileGrid::empty();
+        grid.set(10, 24, TileKind::Brick);
+        let mut score_board = ScoreBoard::versus(1, 7, 0.5);
+        score_board.p1_score = 4;
+        score_board.p2_score = 3;
+        score_board.p1_lives = 0;
+        score_board.p2_lives = 1;
+        let mut enemy_freeze = EnemyFreeze::default();
+        enemy_freeze.start();
+        let mut versus_freeze = VersusPlayerFreeze::default();
+        versus_freeze.start(PlayerId::One);
+        let mut base_reinforcement = BaseReinforcement {
+            timer: None,
+            saved_tiles: vec![(10, 24, TileKind::Steel)],
+        };
+        base_reinforcement.start();
+
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::VersusDeathmatch);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::RoundOver,
+            stage: 12,
+            arena: arena_index,
+            winner: Some(PlayerId::Two),
+            transition_timer: Timer::from_seconds(1.0, TimerMode::Once),
+        });
+        app.insert_resource(grid);
+        app.insert_resource(EnemyDirector::from_level(&previous_level));
+        app.insert_resource(score_board);
+        app.insert_resource(StageRules {
+            player_steel_destruction: true,
+        });
+        app.insert_resource(VersusPowerUpDirector::inactive());
+        app.insert_resource(ModeSelect::default());
+        app.insert_resource(enemy_freeze);
+        app.insert_resource(versus_freeze);
+        app.insert_resource(base_reinforcement);
+        app.world_mut()
+            .spawn((GameEntity, OldStageEntity, GridTile { x: 10, y: 24 }));
+        app.add_systems(Update, handle_shared_controls);
+
+        app.update();
+
+        let status = app.world().resource::<GameStatus>();
+        assert_eq!(status.phase, GamePhase::StageIntro);
+        assert_eq!(status.arena, arena_index);
+        assert_eq!(status.winner, None);
+        assert_eq!(
+            app.world().resource::<GameMode>(),
+            &GameMode::VersusBaseBattle
+        );
+        assert_eq!(
+            app.world().resource::<TileGrid>().tiles,
+            expected_grid.tiles
+        );
+
+        let BattleRules::BaseBattle {
+            lives,
+            respawn_invulnerability_secs,
+            ..
+        } = expected_arena.battle_rules
+        else {
+            panic!("arena five should restart as base battle");
+        };
+        let score_board = app.world().resource::<ScoreBoard>();
+        assert_eq!(score_board.p1_score, 0);
+        assert_eq!(score_board.p2_score, 0);
+        assert_eq!(score_board.p1_lives, lives);
+        assert_eq!(score_board.p2_lives, lives);
+        assert_eq!(score_board.target_score, 0);
+        assert_eq!(
+            score_board.respawn_invulnerability_secs,
+            respawn_invulnerability_secs
+        );
+
+        let director = app.world().resource::<EnemyDirector>();
+        assert!(director.roster.is_empty());
+        assert!(director.spawns.is_empty());
+        assert_eq!(director.max_active, 0);
+        assert_eq!(*app.world().resource::<StageRules>(), StageRules::default());
+        assert_eq!(
+            app.world().resource::<VersusPowerUpDirector>().spawn_points,
+            expected_arena
+                .powerup_spawns
+                .iter()
+                .map(grid_point_top_left)
+                .collect::<Vec<_>>()
+        );
+        assert!(!app.world().resource::<EnemyFreeze>().is_active());
+        assert!(
+            !app.world()
+                .resource::<VersusPlayerFreeze>()
+                .is_player_frozen(PlayerId::One)
+        );
+        let reinforcement = app.world().resource::<BaseReinforcement>();
+        assert!(reinforcement.timer.is_none());
+        assert!(reinforcement.saved_tiles.is_empty());
+
+        let mut old_entities = app.world_mut().query::<&OldStageEntity>();
+        assert_eq!(old_entities.iter(app.world()).count(), 0);
+        let mut game_entities = app.world_mut().query::<&GameEntity>();
+        assert!(game_entities.iter(app.world()).count() > 0);
+    }
+
+    #[test]
     fn paused_phase_freezes_visual_effect_timers_only() {
         assert!(!visual_effects_can_advance(GamePhase::Paused));
         assert!(visual_effects_can_advance(GamePhase::StageIntro));

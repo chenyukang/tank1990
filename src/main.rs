@@ -7725,45 +7725,91 @@ fn create_terrain_atlas(manifest: GeneratedAtlasManifest) -> Image {
 }
 
 fn draw_brick(pixels: &mut [u8], width: usize, x_offset: usize) {
-    fill_rect(pixels, width, x_offset, 0, 8, 8, [128, 56, 32, 255]);
-    fill_rect(pixels, width, x_offset, 3, 8, 1, [48, 24, 16, 255]);
-    fill_rect(pixels, width, x_offset + 3, 0, 1, 3, [48, 24, 16, 255]);
-    fill_rect(pixels, width, x_offset + 5, 4, 1, 4, [48, 24, 16, 255]);
-    fill_rect(pixels, width, x_offset, 0, 8, 1, [184, 88, 48, 255]);
+    let mortar = [48, 24, 16, 255];
+    let brick_dark = [112, 44, 24, 255];
+    let brick_mid = [160, 64, 32, 255];
+    let brick_light = [200, 96, 48, 255];
+
+    fill_rect(pixels, width, x_offset, 0, 8, 8, mortar);
+    fill_rect(pixels, width, x_offset, 0, 3, 2, brick_mid);
+    fill_rect(pixels, width, x_offset + 4, 0, 4, 2, brick_mid);
+    fill_rect(pixels, width, x_offset, 3, 5, 2, brick_dark);
+    fill_rect(pixels, width, x_offset + 6, 3, 2, 2, brick_mid);
+    fill_rect(pixels, width, x_offset, 6, 3, 2, brick_mid);
+    fill_rect(pixels, width, x_offset + 4, 6, 4, 2, brick_dark);
+    fill_rect(pixels, width, x_offset, 0, 3, 1, brick_light);
+    fill_rect(pixels, width, x_offset + 4, 0, 4, 1, brick_light);
+    fill_rect(pixels, width, x_offset, 3, 5, 1, brick_light);
+    fill_rect(pixels, width, x_offset + 6, 3, 2, 1, brick_light);
+    fill_rect(pixels, width, x_offset, 6, 3, 1, brick_light);
 }
 
 fn draw_steel(pixels: &mut [u8], width: usize, x_offset: usize) {
-    fill_rect(pixels, width, x_offset, 0, 8, 8, [112, 120, 128, 255]);
-    fill_rect(pixels, width, x_offset, 0, 8, 1, [200, 208, 208, 255]);
-    fill_rect(pixels, width, x_offset, 0, 1, 8, [200, 208, 208, 255]);
-    fill_rect(pixels, width, x_offset + 7, 0, 1, 8, [40, 48, 56, 255]);
-    fill_rect(pixels, width, x_offset, 7, 8, 1, [40, 48, 56, 255]);
-    fill_rect(pixels, width, x_offset + 3, 3, 2, 2, [64, 72, 80, 255]);
-}
+    let mid = [104, 112, 120, 255];
+    let light = [208, 216, 216, 255];
+    let shadow = [40, 48, 56, 255];
+    let rivet = [72, 80, 88, 255];
 
-fn draw_water(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
-    fill_rect(pixels, width, x_offset, 0, 8, 8, [24, 64, 144, 255]);
-    for y in [1, 4, 6] {
-        for x in 0..8 {
-            if !(x + y + frame).is_multiple_of(3) {
-                set_pixel(pixels, width, x_offset + x, y, [80, 144, 224, 255]);
-            }
-        }
+    fill_rect(pixels, width, x_offset, 0, 8, 8, mid);
+    fill_rect(pixels, width, x_offset, 0, 8, 1, light);
+    fill_rect(pixels, width, x_offset, 0, 1, 8, light);
+    fill_rect(pixels, width, x_offset + 7, 0, 1, 8, shadow);
+    fill_rect(pixels, width, x_offset, 7, 8, 1, shadow);
+    fill_rect(pixels, width, x_offset + 2, 2, 4, 1, [144, 152, 160, 255]);
+    fill_rect(pixels, width, x_offset + 2, 5, 4, 1, shadow);
+    for (x, y) in [(2, 2), (5, 2), (2, 5), (5, 5)] {
+        set_pixel(pixels, width, x_offset + x, y, rivet);
     }
 }
 
+fn draw_water(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
+    let deep = [16, 48, 120, 255];
+    let mid = [32, 88, 168, 255];
+    let foam = [104, 176, 232, 255];
+    let shadow = [8, 32, 88, 255];
+
+    fill_rect(pixels, width, x_offset, 0, 8, 8, deep);
+    for y in [1, 4, 6] {
+        let offset = (frame + y) % 3;
+        for x in 0..8 {
+            if (x + offset).is_multiple_of(3) {
+                set_pixel(pixels, width, x_offset + x, y, foam);
+            } else if (x + offset).is_multiple_of(2) {
+                set_pixel(pixels, width, x_offset + x, y, mid);
+            }
+        }
+    }
+    fill_rect(pixels, width, x_offset, 7, 8, 1, shadow);
+}
+
 fn draw_forest(pixels: &mut [u8], width: usize, x_offset: usize) {
-    fill_rect(pixels, width, x_offset, 0, 8, 8, [24, 96, 40, 230]);
-    for (x, y) in [(1, 1), (4, 0), (6, 2), (2, 5), (5, 6), (7, 5)] {
-        fill_rect(pixels, width, x_offset + x, y, 1, 2, [80, 160, 72, 240]);
+    let dark = [16, 72, 32, 225];
+    let mid = [32, 120, 48, 235];
+    let light = [88, 176, 80, 240];
+
+    fill_rect(pixels, width, x_offset, 0, 8, 8, dark);
+    for (x, y) in [(1, 0), (4, 0), (6, 1), (0, 3), (3, 3), (5, 5), (2, 6)] {
+        fill_rect(pixels, width, x_offset + x, y, 2, 2, mid);
+    }
+    for (x, y) in [(1, 1), (5, 1), (3, 4), (6, 6)] {
+        set_pixel(pixels, width, x_offset + x, y, light);
     }
 }
 
 fn draw_ice(pixels: &mut [u8], width: usize, x_offset: usize) {
-    fill_rect(pixels, width, x_offset, 0, 8, 8, [128, 184, 208, 255]);
-    for i in 0..8 {
-        set_pixel(pixels, width, x_offset + i, i, [216, 240, 248, 255]);
-        set_pixel(pixels, width, x_offset + 7 - i, i, [72, 128, 168, 255]);
+    let base = [120, 184, 216, 255];
+    let light = [224, 248, 255, 255];
+    let mid = [160, 216, 232, 255];
+    let crack = [64, 128, 176, 255];
+
+    fill_rect(pixels, width, x_offset, 0, 8, 8, base);
+    fill_rect(pixels, width, x_offset, 0, 8, 1, light);
+    fill_rect(pixels, width, x_offset, 0, 1, 8, light);
+    for (x, y) in [(2, 2), (3, 2), (4, 3), (5, 4), (2, 5), (1, 6)] {
+        set_pixel(pixels, width, x_offset + x, y, crack);
+    }
+    for (x, y) in [(5, 1), (6, 2), (1, 4), (4, 6)] {
+        set_pixel(pixels, width, x_offset + x, y, mid);
     }
 }
 
@@ -9680,6 +9726,39 @@ mod tests {
         let right_offset = manifest.atlases.bullets.tile_width * 3;
         assert_eq!(image_pixel(&image, right_offset, 1), dark);
         assert_eq!(image_pixel(&image, right_offset + 3, 1), light);
+    }
+
+    #[test]
+    fn generated_terrain_atlas_uses_distinct_material_patterns() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let image = create_terrain_atlas(manifest.atlases.terrain);
+        let tile_width = manifest.atlases.terrain.tile_width;
+
+        assert_eq!(image_pixel(&image, 0, 0), [200, 96, 48, 255]);
+        assert_eq!(image_pixel(&image, 3, 0), [48, 24, 16, 255]);
+
+        let steel = tile_width;
+        assert_eq!(image_pixel(&image, steel, 0), [208, 216, 216, 255]);
+        assert_eq!(image_pixel(&image, steel + 2, 2), [72, 80, 88, 255]);
+        assert_eq!(image_pixel(&image, steel + 7, 7), [40, 48, 56, 255]);
+
+        let water_a = tile_width * 2;
+        let water_b = tile_width * 3;
+        assert_eq!(image_pixel(&image, water_a + 2, 1), [104, 176, 232, 255]);
+        assert_eq!(image_pixel(&image, water_b + 2, 1), [32, 88, 168, 255]);
+        assert_ne!(
+            image_pixel(&image, water_a + 2, 1),
+            image_pixel(&image, water_b + 2, 1)
+        );
+
+        let forest = tile_width * 4;
+        assert_eq!(image_pixel(&image, forest, 0), [16, 72, 32, 225]);
+        assert_eq!(image_pixel(&image, forest + 1, 1), [88, 176, 80, 240]);
+
+        let ice = tile_width * 5;
+        assert_eq!(image_pixel(&image, ice, 0), [224, 248, 255, 255]);
+        assert_eq!(image_pixel(&image, ice + 2, 2), [64, 128, 176, 255]);
+        assert_eq!(image_pixel(&image, ice + 5, 1), [160, 216, 232, 255]);
     }
 
     #[test]

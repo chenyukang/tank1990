@@ -598,7 +598,7 @@ Current implementation note:
 - Tank manifest entries include separate two-frame directional groups for P1, P2, Basic, Fast, Power, and Armor tanks.
 - Generated tank atlas frames use direction-specific tread and body silhouettes, so horizontal tanks do not reuse the vertical tank outline.
 - Bullet manifest entries include four directional atlas indices, and generated bullet sprites use vertical or horizontal silhouettes that match their travel direction.
-- Terrain manifest entries include a two-frame water animation range plus static brick, steel, forest, and ice entries.
+- Terrain manifest entries include a two-frame water animation range plus static brick, steel, forest, and ice entries; the generated terrain fallback uses distinct brickwork, metal, wave, foliage, and cracked-ice patterns.
 - Effect manifest entries include explosion, spawn shimmer, base destruction, and power-up sparkle frame ranges.
 - Base and standalone UI icon manifest entries include generated sprite dimensions; the generated base fallback distinguishes an intact emblem from destroyed rubble.
 - Glyphs use generated placeholder pixels, but their atlas character order and tile dimensions live in `assets/manifest.ron`.

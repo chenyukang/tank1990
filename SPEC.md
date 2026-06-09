@@ -531,11 +531,12 @@ Suggested contents:
 
 Current implementation note:
 
-- `assets/manifest.ron` maps generated tank, bullet, terrain, power-up, effect, glyph, and sound entries to semantic names, directional indices, frame ranges, or generated-asset parameters.
+- `assets/manifest.ron` maps generated tank, bullet, terrain, power-up, base, UI, effect, glyph, and sound entries to semantic names, directional indices, frame ranges, dimensions, or generated-asset parameters.
 - Tank manifest entries include separate two-frame directional groups for P1, P2, Basic, Fast, Power, and Armor tanks.
 - Bullet manifest entries include four directional atlas indices.
 - Terrain manifest entries include a two-frame water animation range plus static brick, steel, forest, and ice entries.
 - Effect manifest entries include explosion, spawn shimmer, base destruction, and power-up sparkle frame ranges.
+- Base and standalone UI icon manifest entries include generated sprite dimensions.
 - Glyphs use generated placeholder pixels, but their atlas character order and tile dimensions live in `assets/manifest.ron`.
 - Sounds use generated placeholder waveforms, but their retro sweep/noise/note definitions now live in `assets/manifest.ron`.
 - `assets/arenas/arena_05.ron` is the first playable `BaseBattle` arena; destroying a player's base ends the round for the opponent.

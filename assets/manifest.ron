@@ -50,6 +50,14 @@
     shovel: 4,
     tank: 5,
   ),
+  base: (
+    intact: (width: 16, height: 16),
+    destroyed: (width: 16, height: 16),
+  ),
+  ui: (
+    score_badge: (width: 8, height: 8),
+    stage_flag: (width: 8, height: 8),
+  ),
   glyphs: (
     characters: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
     tile_width: 5,

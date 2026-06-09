@@ -25,6 +25,8 @@ const BULLET_ATLAS_TILES: usize = 4;
 const TERRAIN_ATLAS_TILES: usize = 6;
 const EFFECT_ATLAS_TILES: usize = 20;
 const POWERUP_ATLAS_TILES: usize = 6;
+const GENERATED_BASE_SIZE: usize = 16;
+const GENERATED_UI_ICON_SIZE: usize = 8;
 
 const VIRTUAL_WIDTH: f32 = 256.0;
 const VIRTUAL_HEIGHT: f32 = 240.0;
@@ -49,9 +51,7 @@ const CLASSIC_BASE_Y: usize = 24;
 const ENEMY_MARKER_COUNT: usize = 20;
 const ENEMY_MARKER_COLUMNS: usize = 4;
 const ENEMY_MARKER_SIZE: f32 = 8.0;
-const SCORE_ICON_SIZE: f32 = 8.0;
 const PLAYER_LIFE_ICON_SIZE: f32 = 8.0;
-const STAGE_ICON_SIZE: f32 = 8.0;
 const ENEMY_MARKER_LEFT: f32 = 216.0;
 const ENEMY_MARKER_TOP: f32 = 159.0;
 const ENEMY_MARKER_CELL_X: f32 = 9.0;
@@ -198,6 +198,8 @@ struct AssetManifest {
     terrain: TerrainSpriteManifest,
     effects: EffectSpriteManifest,
     powerups: PowerUpSpriteManifest,
+    base: BaseSpriteManifest,
+    ui: UiSpriteManifest,
     glyphs: GlyphManifest,
     sounds: SoundManifest,
 }
@@ -340,6 +342,24 @@ struct PowerUpSpriteManifest {
     grenade: usize,
     shovel: usize,
     tank: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+struct GeneratedSpriteManifest {
+    width: usize,
+    height: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+struct BaseSpriteManifest {
+    intact: GeneratedSpriteManifest,
+    destroyed: GeneratedSpriteManifest,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+struct UiSpriteManifest {
+    score_badge: GeneratedSpriteManifest,
+    stage_flag: GeneratedSpriteManifest,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -1894,9 +1914,48 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
         }
     }
 
+    validate_generated_sprite(
+        "base.intact",
+        manifest.base.intact,
+        GENERATED_BASE_SIZE,
+        GENERATED_BASE_SIZE,
+    )?;
+    validate_generated_sprite(
+        "base.destroyed",
+        manifest.base.destroyed,
+        GENERATED_BASE_SIZE,
+        GENERATED_BASE_SIZE,
+    )?;
+    validate_generated_sprite(
+        "ui.score_badge",
+        manifest.ui.score_badge,
+        GENERATED_UI_ICON_SIZE,
+        GENERATED_UI_ICON_SIZE,
+    )?;
+    validate_generated_sprite(
+        "ui.stage_flag",
+        manifest.ui.stage_flag,
+        GENERATED_UI_ICON_SIZE,
+        GENERATED_UI_ICON_SIZE,
+    )?;
     validate_glyph_manifest(&manifest.glyphs)?;
     validate_sound_manifest(&manifest.sounds)?;
 
+    Ok(())
+}
+
+fn validate_generated_sprite(
+    name: &str,
+    manifest: GeneratedSpriteManifest,
+    expected_width: usize,
+    expected_height: usize,
+) -> Result<(), String> {
+    if manifest.width != expected_width || manifest.height != expected_height {
+        return Err(format!(
+            "{name} must be {expected_width}x{expected_height}, got {}x{}",
+            manifest.width, manifest.height
+        ));
+    }
     Ok(())
 }
 
@@ -2461,7 +2520,7 @@ fn spawn_stage_flag_icon(commands: &mut Commands, assets: &SpriteAssets) {
         Sprite::from_image(assets.stage_flag_icon.clone()),
         Transform::from_translation(virtual_center_scaled(
             stage_flag_icon_top_left(),
-            Vec2::splat(STAGE_ICON_SIZE),
+            generated_sprite_size(assets.manifest.ui.stage_flag),
             0.3,
         ))
         .with_scale(Vec3::splat(WINDOW_SCALE)),
@@ -2474,7 +2533,7 @@ fn spawn_score_badge_icon(commands: &mut Commands, assets: &SpriteAssets) {
         Sprite::from_image(assets.score_badge_icon.clone()),
         Transform::from_translation(virtual_center_scaled(
             score_badge_icon_top_left(),
-            Vec2::splat(SCORE_ICON_SIZE),
+            generated_sprite_size(assets.manifest.ui.score_badge),
             0.3,
         ))
         .with_scale(Vec3::splat(WINDOW_SCALE)),
@@ -2721,7 +2780,7 @@ fn spawn_base_sprite(
         Transform::from_translation(board_object_center(
             top_left.x,
             top_left.y,
-            Vec2::splat(TANK_SIZE),
+            generated_sprite_size(assets.manifest.base.intact),
             4.0,
         ))
         .with_scale(Vec3::splat(WINDOW_SCALE)),
@@ -5874,10 +5933,10 @@ fn create_sprite_assets(
         None,
     ));
 
-    let base_intact = images.add(create_base_image(false));
-    let base_destroyed = images.add(create_base_image(true));
-    let score_badge_icon = images.add(create_score_badge_icon());
-    let stage_flag_icon = images.add(create_stage_flag_icon());
+    let base_intact = images.add(create_base_image(manifest.base.intact, false));
+    let base_destroyed = images.add(create_base_image(manifest.base.destroyed, true));
+    let score_badge_icon = images.add(create_score_badge_icon(manifest.ui.score_badge));
+    let stage_flag_icon = images.add(create_stage_flag_icon(manifest.ui.stage_flag));
 
     SpriteAssets {
         manifest,
@@ -6628,43 +6687,79 @@ fn glyph_pattern(ch: char) -> [&'static str; 7] {
     }
 }
 
-fn create_base_image(destroyed: bool) -> Image {
-    let mut pixels = vec![0; 16 * 16 * 4];
+fn generated_sprite_size(manifest: GeneratedSpriteManifest) -> Vec2 {
+    Vec2::new(manifest.width as f32, manifest.height as f32)
+}
+
+fn create_base_image(manifest: GeneratedSpriteManifest, destroyed: bool) -> Image {
+    let mut pixels = vec![0; manifest.width * manifest.height * 4];
     if destroyed {
-        fill_rect(&mut pixels, 16, 3, 9, 10, 4, [96, 72, 48, 255]);
-        fill_rect(&mut pixels, 16, 5, 5, 3, 4, [160, 48, 24, 255]);
-        fill_rect(&mut pixels, 16, 9, 4, 2, 6, [184, 88, 32, 255]);
-        fill_rect(&mut pixels, 16, 2, 12, 12, 2, [48, 40, 32, 255]);
+        fill_rect(&mut pixels, manifest.width, 3, 9, 10, 4, [96, 72, 48, 255]);
+        fill_rect(&mut pixels, manifest.width, 5, 5, 3, 4, [160, 48, 24, 255]);
+        fill_rect(&mut pixels, manifest.width, 9, 4, 2, 6, [184, 88, 32, 255]);
+        fill_rect(&mut pixels, manifest.width, 2, 12, 12, 2, [48, 40, 32, 255]);
     } else {
-        fill_rect(&mut pixels, 16, 4, 9, 8, 4, [160, 120, 72, 255]);
-        fill_rect(&mut pixels, 16, 5, 6, 6, 4, [192, 152, 88, 255]);
-        fill_rect(&mut pixels, 16, 7, 3, 2, 4, [224, 192, 112, 255]);
-        fill_rect(&mut pixels, 16, 3, 13, 10, 1, [72, 56, 32, 255]);
+        fill_rect(&mut pixels, manifest.width, 4, 9, 8, 4, [160, 120, 72, 255]);
+        fill_rect(&mut pixels, manifest.width, 5, 6, 6, 4, [192, 152, 88, 255]);
+        fill_rect(
+            &mut pixels,
+            manifest.width,
+            7,
+            3,
+            2,
+            4,
+            [224, 192, 112, 255],
+        );
+        fill_rect(&mut pixels, manifest.width, 3, 13, 10, 1, [72, 56, 32, 255]);
     }
-    image_from_pixels(16, 16, pixels)
+    image_from_pixels(manifest.width, manifest.height, pixels)
 }
 
-fn create_score_badge_icon() -> Image {
-    let mut pixels = vec![0; 8 * 8 * 4];
-    fill_rect(&mut pixels, 8, 2, 1, 4, 1, [248, 232, 128, 255]);
-    fill_rect(&mut pixels, 8, 1, 2, 6, 4, [216, 160, 56, 255]);
-    fill_rect(&mut pixels, 8, 2, 6, 4, 1, [136, 88, 40, 255]);
-    fill_rect(&mut pixels, 8, 3, 3, 2, 2, [255, 248, 184, 255]);
-    set_pixel(&mut pixels, 8, 1, 2, [248, 216, 96, 255]);
-    set_pixel(&mut pixels, 8, 6, 2, [248, 216, 96, 255]);
-    set_pixel(&mut pixels, 8, 1, 5, [136, 88, 40, 255]);
-    set_pixel(&mut pixels, 8, 6, 5, [136, 88, 40, 255]);
-    image_from_pixels(8, 8, pixels)
+fn create_score_badge_icon(manifest: GeneratedSpriteManifest) -> Image {
+    let mut pixels = vec![0; manifest.width * manifest.height * 4];
+    fill_rect(
+        &mut pixels,
+        manifest.width,
+        2,
+        1,
+        4,
+        1,
+        [248, 232, 128, 255],
+    );
+    fill_rect(&mut pixels, manifest.width, 1, 2, 6, 4, [216, 160, 56, 255]);
+    fill_rect(&mut pixels, manifest.width, 2, 6, 4, 1, [136, 88, 40, 255]);
+    fill_rect(
+        &mut pixels,
+        manifest.width,
+        3,
+        3,
+        2,
+        2,
+        [255, 248, 184, 255],
+    );
+    set_pixel(&mut pixels, manifest.width, 1, 2, [248, 216, 96, 255]);
+    set_pixel(&mut pixels, manifest.width, 6, 2, [248, 216, 96, 255]);
+    set_pixel(&mut pixels, manifest.width, 1, 5, [136, 88, 40, 255]);
+    set_pixel(&mut pixels, manifest.width, 6, 5, [136, 88, 40, 255]);
+    image_from_pixels(manifest.width, manifest.height, pixels)
 }
 
-fn create_stage_flag_icon() -> Image {
-    let mut pixels = vec![0; 8 * 8 * 4];
-    fill_rect(&mut pixels, 8, 1, 1, 1, 6, [232, 232, 208, 255]);
-    fill_rect(&mut pixels, 8, 2, 1, 5, 3, [248, 216, 72, 255]);
-    fill_rect(&mut pixels, 8, 2, 4, 3, 1, [176, 112, 40, 255]);
-    fill_rect(&mut pixels, 8, 0, 7, 4, 1, [120, 120, 96, 255]);
-    set_pixel(&mut pixels, 8, 6, 3, [248, 168, 56, 255]);
-    image_from_pixels(8, 8, pixels)
+fn create_stage_flag_icon(manifest: GeneratedSpriteManifest) -> Image {
+    let mut pixels = vec![0; manifest.width * manifest.height * 4];
+    fill_rect(
+        &mut pixels,
+        manifest.width,
+        1,
+        1,
+        1,
+        6,
+        [232, 232, 208, 255],
+    );
+    fill_rect(&mut pixels, manifest.width, 2, 1, 5, 3, [248, 216, 72, 255]);
+    fill_rect(&mut pixels, manifest.width, 2, 4, 3, 1, [176, 112, 40, 255]);
+    fill_rect(&mut pixels, manifest.width, 0, 7, 4, 1, [120, 120, 96, 255]);
+    set_pixel(&mut pixels, manifest.width, 6, 3, [248, 168, 56, 255]);
+    image_from_pixels(manifest.width, manifest.height, pixels)
 }
 
 fn image_from_pixels(width: usize, height: usize, pixels: Vec<u8>) -> Image {
@@ -7036,6 +7131,35 @@ mod tests {
         assert_eq!(manifest.powerup_index(PowerUpKind::Shovel), 4);
         assert_eq!(manifest.powerup_index(PowerUpKind::Tank), 5);
 
+        assert_eq!(
+            manifest.base.intact,
+            GeneratedSpriteManifest {
+                width: GENERATED_BASE_SIZE,
+                height: GENERATED_BASE_SIZE
+            }
+        );
+        assert_eq!(
+            manifest.base.destroyed,
+            GeneratedSpriteManifest {
+                width: GENERATED_BASE_SIZE,
+                height: GENERATED_BASE_SIZE
+            }
+        );
+        assert_eq!(
+            manifest.ui.score_badge,
+            GeneratedSpriteManifest {
+                width: GENERATED_UI_ICON_SIZE,
+                height: GENERATED_UI_ICON_SIZE
+            }
+        );
+        assert_eq!(
+            manifest.ui.stage_flag,
+            GeneratedSpriteManifest {
+                width: GENERATED_UI_ICON_SIZE,
+                height: GENERATED_UI_ICON_SIZE
+            }
+        );
+
         assert_eq!(manifest.glyphs.characters, REQUIRED_GLYPHS);
         assert_eq!(manifest.glyphs.tile_width, GENERATED_GLYPH_WIDTH);
         assert_eq!(manifest.glyphs.tile_height, GENERATED_GLYPH_HEIGHT);
@@ -7148,6 +7272,31 @@ mod tests {
             parse_asset_manifest(&invalid)
                 .expect_err("invalid power-up index should fail")
                 .contains("outside the generated power-up atlas")
+        );
+    }
+
+    #[test]
+    fn asset_manifest_rejects_invalid_generated_sprite_sizes() {
+        let invalid = MANIFEST.replacen(
+            "intact: (width: 16, height: 16)",
+            "intact: (width: 15, height: 16)",
+            1,
+        );
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("invalid base sprite size should fail")
+                .contains("base.intact must be 16x16, got 15x16")
+        );
+
+        let invalid = MANIFEST.replacen(
+            "score_badge: (width: 8, height: 8)",
+            "score_badge: (width: 8, height: 9)",
+            1,
+        );
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("invalid UI icon size should fail")
+                .contains("ui.score_badge must be 8x8, got 8x9")
         );
     }
 
@@ -7960,15 +8109,22 @@ mod tests {
         let score_label_right = 214.0 + phase_text_width("SCORE");
         assert_eq!(icon, Vec2::new(244.0, 38.0));
         assert!(icon.x > score_label_right);
-        assert!(icon.x + SCORE_ICON_SIZE <= VIRTUAL_WIDTH - 4.0);
-        assert!(icon.y + SCORE_ICON_SIZE < 49.0);
+        assert!(icon.x + (GENERATED_UI_ICON_SIZE as f32) <= VIRTUAL_WIDTH - 4.0);
+        assert!(icon.y + (GENERATED_UI_ICON_SIZE as f32) < 49.0);
     }
 
     #[test]
     fn score_badge_icon_uses_transparent_pixel_art() {
-        let image = create_score_badge_icon();
-        assert_eq!(image.texture_descriptor.size.width, 8);
-        assert_eq!(image.texture_descriptor.size.height, 8);
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let image = create_score_badge_icon(manifest.ui.score_badge);
+        assert_eq!(
+            image.texture_descriptor.size.width,
+            manifest.ui.score_badge.width as u32
+        );
+        assert_eq!(
+            image.texture_descriptor.size.height,
+            manifest.ui.score_badge.height as u32
+        );
         let pixels = image.data.as_ref().expect("score icon should have pixels");
         assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] == 0));
         assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] == 255));
@@ -7981,18 +8137,40 @@ mod tests {
         assert_eq!(icon, Vec2::new(216.0, 87.0));
         assert_eq!(number, Vec2::new(230.0, 87.0));
         assert!(icon.x >= 212.0);
-        assert!(icon.x + STAGE_ICON_SIZE < number.x);
+        assert!(icon.x + (GENERATED_UI_ICON_SIZE as f32) < number.x);
         assert!(number.x + phase_text_width("99") <= VIRTUAL_WIDTH - 8.0);
     }
 
     #[test]
     fn stage_flag_icon_uses_transparent_pixel_art() {
-        let image = create_stage_flag_icon();
-        assert_eq!(image.texture_descriptor.size.width, 8);
-        assert_eq!(image.texture_descriptor.size.height, 8);
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let image = create_stage_flag_icon(manifest.ui.stage_flag);
+        assert_eq!(
+            image.texture_descriptor.size.width,
+            manifest.ui.stage_flag.width as u32
+        );
+        assert_eq!(
+            image.texture_descriptor.size.height,
+            manifest.ui.stage_flag.height as u32
+        );
         let pixels = image.data.as_ref().expect("stage icon should have pixels");
         assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] == 0));
         assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] == 255));
+    }
+
+    #[test]
+    fn base_sprites_use_manifest_dimensions() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        for (sprite, destroyed) in [
+            (manifest.base.intact, false),
+            (manifest.base.destroyed, true),
+        ] {
+            let image = create_base_image(sprite, destroyed);
+            assert_eq!(image.texture_descriptor.size.width, sprite.width as u32);
+            assert_eq!(image.texture_descriptor.size.height, sprite.height as u32);
+            let pixels = image.data.as_ref().expect("base sprite should have pixels");
+            assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] == 255));
+        }
     }
 
     #[test]

@@ -42,6 +42,7 @@ const PLAYER_FAST_BULLET_SPEED: f32 = 300.0;
 const POWER_ENEMY_BULLET_SPEED: f32 = 300.0;
 const ENEMY_BULLET_LIMIT: usize = 4;
 const ENEMY_BULLET_LIMIT_PER_TANK: usize = 1;
+const CLASSIC_MAX_ACTIVE_ENEMIES: usize = 4;
 const ENEMY_MARKER_COUNT: usize = 20;
 const ENEMY_MARKER_COLUMNS: usize = 4;
 const ENEMY_MARKER_SIZE: f32 = 8.0;
@@ -1916,6 +1917,12 @@ fn parse_level(contents: &str) -> Result<LevelDefinition, String> {
     validate_classic_enemy_spawns(&level.enemy_spawns)?;
     if level.max_enemies_on_screen == 0 {
         return Err("max_enemies_on_screen must be greater than zero".to_string());
+    }
+    if level.max_enemies_on_screen > CLASSIC_MAX_ACTIVE_ENEMIES {
+        return Err(format!(
+            "max_enemies_on_screen must be at most {CLASSIC_MAX_ACTIVE_ENEMIES}, got {}",
+            level.max_enemies_on_screen
+        ));
     }
     if level.spawn_interval_secs <= 0.0 {
         return Err("spawn_interval_secs must be positive".to_string());
@@ -6903,6 +6910,7 @@ mod tests {
                 ]
             );
             assert!(!level.powerup_carriers.is_empty());
+            assert_eq!(level.max_enemies_on_screen, CLASSIC_MAX_ACTIVE_ENEMIES);
         }
     }
 
@@ -7088,6 +7096,19 @@ mod tests {
                 .contains(
                     "enemy spawn 2 must be classic top spawn (12, 0, Down), got (8, 0, Down)"
                 )
+        );
+    }
+
+    #[test]
+    fn level_rejects_more_than_four_active_enemies() {
+        let too_many_active =
+            LEVEL_1.replacen("max_enemies_on_screen: 4", "max_enemies_on_screen: 5", 1);
+
+        assert!(
+            parse_level(&too_many_active)
+                .err()
+                .expect("too many active enemies should fail")
+                .contains("max_enemies_on_screen must be at most 4, got 5")
         );
     }
 

@@ -120,7 +120,7 @@ const REQUIRED_GLYPHS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const GENERATED_GLYPH_WIDTH: usize = 5;
 const GENERATED_GLYPH_HEIGHT: usize = 7;
 const GLYPH_ADVANCE: f32 = 6.0;
-static PAUSED_BANNER_LINES: [&str; 2] = ["PAUSED", "PRESS ESC"];
+static PAUSED_BANNER_LINES: [&str; 4] = ["PAUSED", "ESC RESUME", "R RESTART", "M MENU"];
 static GAME_OVER_BANNER_LINES: [&str; 2] = ["GAME OVER", "PRESS R OR M"];
 static LEVEL_CLEAR_BANNER_LINES: [&str; 1] = ["LEVEL CLEAR"];
 static P1_WIN_BANNER_LINES: [&str; 2] = ["P1 WIN", "PRESS R OR M"];
@@ -9884,9 +9884,11 @@ mod tests {
     }
 
     #[test]
-    fn paused_banner_shows_resume_hint() {
+    fn paused_banner_shows_resume_restart_and_menu_hints() {
         let lines = phase_banner_lines(GamePhase::Paused, None).expect("paused should show banner");
-        assert!(lines.contains(&"PRESS ESC"));
+        assert!(lines.contains(&"ESC RESUME"));
+        assert!(lines.contains(&"R RESTART"));
+        assert!(lines.contains(&"M MENU"));
     }
 
     #[test]

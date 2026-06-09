@@ -525,11 +525,13 @@ Personal sprite overrides:
 - Runtime may load local-only PNG sheets from `assets/personal/` before falling back to generated placeholder sprites.
 - `assets/personal/` is gitignored and is meant for personal playtesting with copied or ROM-extracted assets.
 - Personal sheets must match the manifest atlas dimensions and index order, for example `personal/tanks.png` is a 48-frame `16x16` horizontal atlas.
+- If personal sheets use a different atlas order, `assets/personal/manifest.ron` may override the committed manifest locally.
 - Do not commit original Tank 1990, Battle City, or ROM-extracted assets to this repository.
 
 Supported personal override paths:
 
 ```text
+assets/personal/manifest.ron
 assets/personal/tanks.png
 assets/personal/terrain.png
 assets/personal/bullets.png
@@ -583,6 +585,7 @@ Suggested contents:
 Current implementation note:
 
 - `assets/manifest.ron` maps generated tank, bullet, terrain, power-up, base, UI, effect, glyph, and sound entries to semantic names, directional indices, frame ranges, dimensions, or generated-asset parameters.
+- Runtime uses `assets/personal/manifest.ron` first when that gitignored local file exists, then falls back to `assets/manifest.ron`.
 - Atlas manifest entries define tile size and tile count for generated tank, terrain, bullet, effect, and power-up atlases.
 - Tank manifest entries include separate two-frame directional groups for P1, P2, Basic, Fast, Power, and Armor tanks.
 - Bullet manifest entries include four directional atlas indices.

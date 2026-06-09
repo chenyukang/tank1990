@@ -16,6 +16,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 const ASSET_MANIFEST_PATH: &str = "assets/manifest.ron";
+const PERSONAL_ASSET_MANIFEST_PATH: &str = "assets/personal/manifest.ron";
 const ASSET_ROOT_DIR: &str = "assets";
 const PERSONAL_TANK_ATLAS_PATH: &str = "personal/tanks.png";
 const PERSONAL_TERRAIN_ATLAS_PATH: &str = "personal/terrain.png";
@@ -1956,6 +1957,12 @@ fn load_arena_bundle_or_panic(arena: usize) -> (ArenaDefinition, TileGrid) {
 
 fn versus_arena_load_error(arena: usize, path: &str, err: &str) -> String {
     format!("failed to load versus arena {arena} from {path}: {err}")
+}
+
+fn runtime_asset_manifest_path() -> String {
+    preferred_existing_path(PERSONAL_ASSET_MANIFEST_PATH, ASSET_MANIFEST_PATH, |path| {
+        Path::new(path).is_file()
+    })
 }
 
 fn load_level(path: &str) -> Result<LevelDefinition, String> {
@@ -6095,7 +6102,8 @@ fn create_sprite_assets(
     images: &mut Assets<Image>,
     atlas_layouts: &mut Assets<TextureAtlasLayout>,
 ) -> SpriteAssets {
-    let manifest = load_asset_manifest(ASSET_MANIFEST_PATH).expect("asset manifest should load");
+    let manifest =
+        load_asset_manifest(&runtime_asset_manifest_path()).expect("asset manifest should load");
     let terrain_image =
         image_handle_or_generated(asset_server, images, PERSONAL_TERRAIN_ATLAS_PATH, || {
             create_terrain_atlas(manifest.atlases.terrain)
@@ -7319,6 +7327,30 @@ mod tests {
                 Path::new(ASSET_ROOT_DIR).join(asset_path)
             );
         }
+    }
+
+    #[test]
+    fn personal_manifest_override_path_is_gitignored_and_runtime_selectable() {
+        assert_eq!(PERSONAL_ASSET_MANIFEST_PATH, "assets/personal/manifest.ron");
+        assert!(
+            GITIGNORE
+                .lines()
+                .any(|line| line.trim() == "assets/personal/")
+        );
+
+        let selected =
+            preferred_existing_path(PERSONAL_ASSET_MANIFEST_PATH, ASSET_MANIFEST_PATH, |path| {
+                path == PERSONAL_ASSET_MANIFEST_PATH
+            });
+        assert_eq!(selected, PERSONAL_ASSET_MANIFEST_PATH);
+    }
+
+    #[test]
+    fn manifest_path_selection_falls_back_to_committed_manifest() {
+        let selected =
+            preferred_existing_path(PERSONAL_ASSET_MANIFEST_PATH, ASSET_MANIFEST_PATH, |_| false);
+
+        assert_eq!(selected, ASSET_MANIFEST_PATH);
     }
 
     #[test]

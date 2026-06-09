@@ -11399,6 +11399,41 @@ mod tests {
     }
 
     #[test]
+    fn level_clear_transition_awards_remaining_life_bonus_once() {
+        let mut app = App::new();
+        let mut score_board = ScoreBoard::campaign(1);
+        score_board.score = 500;
+        score_board.lives = 2;
+        score_board.enemies_destroyed = 1;
+
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(score_board);
+        app.insert_resource(EnemyDirector::inactive());
+        app.add_systems(Update, check_game_phase);
+
+        app.update();
+
+        let status = app.world().resource::<GameStatus>();
+        assert_eq!(status.phase, GamePhase::LevelClear);
+        assert_eq!(
+            app.world().resource::<ScoreBoard>().score,
+            500 + stage_clear_bonus(2)
+        );
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ScoreBoard>().score,
+            500 + stage_clear_bonus(2)
+        );
+    }
+
+    #[test]
     fn score_board_tracks_enemy_kill_breakdown() {
         let mut score_board = ScoreBoard::campaign(20);
 

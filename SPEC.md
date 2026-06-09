@@ -812,7 +812,7 @@ Solo scoring:
 - Fast enemy: 200
 - Power enemy: 300
 - Armor enemy: 400
-- Stage clear bonus: optional later
+- Stage clear bonus: 1000 per remaining player life, shown on the level clear scorecard.
 
 Versus scoring:
 

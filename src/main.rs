@@ -43,6 +43,8 @@ const POWER_ENEMY_BULLET_SPEED: f32 = 300.0;
 const ENEMY_BULLET_LIMIT: usize = 4;
 const ENEMY_BULLET_LIMIT_PER_TANK: usize = 1;
 const CLASSIC_MAX_ACTIVE_ENEMIES: usize = 4;
+const CLASSIC_BASE_X: usize = 12;
+const CLASSIC_BASE_Y: usize = 24;
 const ENEMY_MARKER_COUNT: usize = 20;
 const ENEMY_MARKER_COLUMNS: usize = 4;
 const ENEMY_MARKER_SIZE: f32 = 8.0;
@@ -5343,7 +5345,8 @@ fn validate_level_positions(level: &LevelDefinition, grid: &TileGrid) -> Result<
         validate_tank_spawn(grid, &label, spawn)?;
     }
 
-    validate_base_position(grid, "base position", &level.base_position)
+    validate_base_position(grid, "base position", &level.base_position)?;
+    validate_classic_campaign_base_position(&level.base_position)
 }
 
 fn validate_tank_spawn(grid: &TileGrid, label: &str, spawn: &SpawnPoint) -> Result<(), String> {
@@ -5378,6 +5381,17 @@ fn validate_base_position(grid: &TileGrid, label: &str, point: &GridPoint) -> Re
     }
 
     Ok(())
+}
+
+fn validate_classic_campaign_base_position(point: &GridPoint) -> Result<(), String> {
+    if point.x == CLASSIC_BASE_X && point.y == CLASSIC_BASE_Y {
+        return Ok(());
+    }
+
+    Err(format!(
+        "base position ({}, {}) must use classic campaign base ({CLASSIC_BASE_X}, {CLASSIC_BASE_Y})",
+        point.x, point.y
+    ))
 }
 
 fn validate_powerup_spawn(grid: &TileGrid, index: usize, point: &GridPoint) -> Result<(), String> {
@@ -6911,6 +6925,13 @@ mod tests {
             );
             assert!(!level.powerup_carriers.is_empty());
             assert_eq!(level.max_enemies_on_screen, CLASSIC_MAX_ACTIVE_ENEMIES);
+            assert_eq!(
+                level.base_position,
+                GridPoint {
+                    x: CLASSIC_BASE_X,
+                    y: CLASSIC_BASE_Y
+                }
+            );
         }
     }
 
@@ -7124,6 +7145,28 @@ mod tests {
                 .err()
                 .expect("shifted base should fail")
                 .contains("base position (11, 24) must cover a 2x2 base tile area")
+        );
+    }
+
+    #[test]
+    fn level_rejects_campaign_base_outside_classic_bottom_center() {
+        let shifted_base = LEVEL_1
+            .replacen(
+                "\"..........BBEEBB..........\",",
+                "\"............BBEEBB........\",",
+                2,
+            )
+            .replacen(
+                "base_position: (x: 12, y: 24)",
+                "base_position: (x: 14, y: 24)",
+                1,
+            );
+
+        assert!(
+            parse_level(&shifted_base)
+                .err()
+                .expect("shifted campaign base should fail")
+                .contains("base position (14, 24) must use classic campaign base (12, 24)")
         );
     }
 

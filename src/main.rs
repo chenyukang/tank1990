@@ -3775,7 +3775,7 @@ fn move_bullets(
                                 &assets,
                                 powerup_kind,
                                 enemy_top_left,
-                                &active_powerups,
+                                active_powerups.iter(),
                                 &active_sparkles,
                             );
                         }
@@ -4254,6 +4254,11 @@ fn pickup_powerups(
         return;
     }
 
+    let active_powerup_entities: Vec<Entity> = powerups
+        .iter()
+        .map(|(powerup_entity, _, _)| powerup_entity)
+        .collect();
+
     for (powerup_entity, powerup, transform) in &powerups {
         let powerup_top_left = board_top_left_from_translation(transform.translation, TANK_SIZE);
         let mut grenade_target = None;
@@ -4303,6 +4308,11 @@ fn pickup_powerups(
                             &assets,
                             &sounds,
                             &mut score_board,
+                            active_powerup_entities
+                                .iter()
+                                .copied()
+                                .filter(|active| *active != powerup_entity),
+                            &active_sparkles,
                             &mut enemy_tanks,
                         );
                     }
@@ -4451,11 +4461,19 @@ fn destroy_visible_enemies<F: QueryFilter>(
     assets: &SpriteAssets,
     sounds: &SoundAssets,
     score_board: &mut ScoreBoard,
+    active_powerups: impl IntoIterator<Item = Entity>,
+    active_sparkles: &Query<Entity, With<PowerUpSparkle>>,
     enemy_tanks: &mut Query<(Entity, &Tank, &mut Transform, &EnemyTank), F>,
 ) {
     let mut destroyed_any = false;
+    let mut powerup_drop = None;
     for (enemy_entity, enemy_tank, mut transform, enemy) in enemy_tanks {
         score_board.record_enemy_destroyed(enemy.kind);
+        if powerup_drop.is_none()
+            && let Some(powerup) = enemy.carried_powerup
+        {
+            powerup_drop = Some((enemy_tank.top_left, powerup));
+        }
         mark_enemy_tank_destroyed(
             commands,
             assets,
@@ -4468,6 +4486,16 @@ fn destroy_visible_enemies<F: QueryFilter>(
 
     if destroyed_any {
         play_sound(commands, sounds, SoundKind::TankExplosion);
+    }
+    if let Some((top_left, powerup)) = powerup_drop {
+        spawn_powerup(
+            commands,
+            assets,
+            powerup,
+            top_left,
+            active_powerups,
+            active_sparkles,
+        );
     }
 }
 
@@ -5611,7 +5639,7 @@ fn spawn_powerup(
     assets: &SpriteAssets,
     kind: PowerUpKind,
     top_left: Vec2,
-    active_powerups: &Query<Entity, With<PowerUp>>,
+    active_powerups: impl IntoIterator<Item = Entity>,
     active_sparkles: &Query<Entity, With<PowerUpSparkle>>,
 ) {
     for active_powerup in active_powerups {
@@ -7559,6 +7587,22 @@ mod tests {
         }
     }
 
+    fn test_sound_assets() -> SoundAssets {
+        let sound = SoundHandle::Retro(Handle::<RetroSound>::default());
+
+        SoundAssets {
+            fire: sound.clone(),
+            brick_hit: sound.clone(),
+            steel_hit: sound.clone(),
+            tank_explosion: sound.clone(),
+            base_destroyed: sound.clone(),
+            powerup_pickup: sound.clone(),
+            stage_start: sound.clone(),
+            level_clear: sound.clone(),
+            game_over: sound,
+        }
+    }
+
     fn refresh_same_kind_steel_tile_for_test(
         mut commands: Commands,
         assets: Res<SpriteAssets>,
@@ -7614,6 +7658,26 @@ mod tests {
             &tile_sprites,
             &mut base_reinforcement,
             vec![(22, 0)],
+        );
+    }
+
+    fn grenade_visible_enemies_for_test(
+        mut commands: Commands,
+        assets: Res<SpriteAssets>,
+        sounds: Res<SoundAssets>,
+        mut score_board: ResMut<ScoreBoard>,
+        active_powerups: Query<Entity, With<PowerUp>>,
+        active_sparkles: Query<Entity, With<PowerUpSparkle>>,
+        mut enemy_tanks: Query<(Entity, &Tank, &mut Transform, &EnemyTank)>,
+    ) {
+        destroy_visible_enemies(
+            &mut commands,
+            &assets,
+            &sounds,
+            &mut score_board,
+            active_powerups.iter(),
+            &active_sparkles,
+            &mut enemy_tanks,
         );
     }
 
@@ -9959,6 +10023,60 @@ mod tests {
         assert_eq!(powerup_for_cycle(4), PowerUpKind::Shovel);
         assert_eq!(powerup_for_cycle(5), PowerUpKind::Tank);
         assert_eq!(powerup_for_cycle(6), PowerUpKind::Star);
+    }
+
+    #[test]
+    fn grenade_drops_powerup_from_destroyed_visible_carrier() {
+        let mut app = App::new();
+        let carrier_top_left = Vec2::new(64.0, 64.0);
+
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(ScoreBoard::campaign(20));
+        app.world_mut().spawn((
+            Tank {
+                top_left: Vec2::new(32.0, 32.0),
+                facing: Direction::Down,
+                speed: 0.0,
+            },
+            Transform::default(),
+            EnemyTank {
+                kind: EnemyKind::Basic,
+                carried_powerup: None,
+            },
+        ));
+        app.world_mut().spawn((
+            Tank {
+                top_left: carrier_top_left,
+                facing: Direction::Down,
+                speed: 0.0,
+            },
+            Transform::default(),
+            EnemyTank {
+                kind: EnemyKind::Power,
+                carried_powerup: Some(PowerUpKind::Helmet),
+            },
+        ));
+        app.add_systems(Update, grenade_visible_enemies_for_test);
+
+        app.update();
+
+        let score_board = app.world().resource::<ScoreBoard>();
+        assert_eq!(score_board.enemies_destroyed, 2);
+        assert_eq!(score_board.score, 400);
+
+        let mut powerups = app.world_mut().query::<(&PowerUp, &Transform)>();
+        let drops: Vec<(PowerUpKind, Vec2)> = powerups
+            .iter(app.world())
+            .map(|(powerup, transform)| {
+                (
+                    powerup.kind,
+                    board_top_left_from_translation(transform.translation, TANK_SIZE),
+                )
+            })
+            .collect();
+
+        assert_eq!(drops, [(PowerUpKind::Helmet, carrier_top_left)]);
     }
 
     #[test]

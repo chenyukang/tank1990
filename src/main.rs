@@ -2241,13 +2241,9 @@ fn preferred_existing_path(
     }
 }
 
-fn load_stage_definition(stage: usize) -> Result<LevelDefinition, String> {
-    load_level(&runtime_stage_path(stage))
-}
-
 fn load_stage_bundle(stage: usize) -> Result<(LevelDefinition, TileGrid), String> {
     let path = runtime_stage_path(stage);
-    let level = load_stage_definition(stage)?;
+    let level = load_level(&path)?;
     let grid = TileGrid::from_level(&level)
         .map_err(|err| format!("failed to build level grid {path}: {err}"))?;
     Ok((level, grid))
@@ -2284,7 +2280,7 @@ fn load_arena_definition(arena: usize) -> Result<ArenaDefinition, String> {
 
 fn load_arena_bundle(arena: usize) -> Result<(ArenaDefinition, TileGrid), String> {
     let path = runtime_arena_path(arena);
-    let arena_definition = load_arena_definition(arena)?;
+    let arena_definition = load_arena(&path)?;
     let grid = TileGrid::from_arena(&arena_definition)
         .map_err(|err| format!("failed to build arena grid {path}: {err}"))?;
     Ok((arena_definition, grid))

@@ -3917,38 +3917,47 @@ fn move_bullets(
                 let mut hit_base = None;
                 for (base, mut sprite) in &mut base_sprites {
                     if base_contains_tile(base.top_left, tile_x, tile_y) {
-                        sprite.image = assets.base_destroyed.clone();
-                        hit_base = Some((base.owner, base.top_left));
+                        let can_destroy =
+                            base_can_be_destroyed_by_bullet(*game_mode, bullet.owner, base.owner);
+                        if can_destroy {
+                            sprite.image = assets.base_destroyed.clone();
+                        }
+                        hit_base = Some((base.owner, base.top_left, can_destroy));
                         break;
                     }
                 }
 
-                let (base_owner, base_top_left) = hit_base.unwrap_or((
+                let (base_owner, base_top_left, can_destroy_base) = hit_base.unwrap_or((
                     None,
                     base_top_left_from_grid(&grid).unwrap_or(Vec2::new(
                         tile_x as f32 * TILE_SIZE,
                         tile_y as f32 * TILE_SIZE,
                     )),
+                    base_can_be_destroyed_by_bullet(*game_mode, bullet.owner, None),
                 ));
 
-                let sound_sequence = base_destroyed_sounds(*game_mode, base_owner);
-                match *game_mode {
-                    GameMode::Campaign => {
-                        game_status.phase = GamePhase::GameOver;
-                    }
-                    GameMode::VersusBaseBattle => {
-                        if let Some(owner) = base_owner {
-                            game_status.phase = GamePhase::RoundOver;
-                            game_status.winner = Some(base_battle_winner_for_base(owner));
+                if can_destroy_base {
+                    let sound_sequence = base_destroyed_sounds(*game_mode, base_owner);
+                    match *game_mode {
+                        GameMode::Campaign => {
+                            game_status.phase = GamePhase::GameOver;
                         }
+                        GameMode::VersusBaseBattle => {
+                            if let Some(owner) = base_owner {
+                                game_status.phase = GamePhase::RoundOver;
+                                game_status.winner = Some(base_battle_winner_for_base(owner));
+                            }
+                        }
+                        GameMode::VersusDeathmatch => {}
                     }
-                    GameMode::VersusDeathmatch => {}
-                }
 
-                for sound in sound_sequence {
-                    play_sound(&mut commands, &sounds, *sound);
+                    for sound in sound_sequence {
+                        play_sound(&mut commands, &sounds, *sound);
+                    }
+                    spawn_base_destruction_effect(&mut commands, &assets, base_top_left);
+                } else {
+                    play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                 }
-                spawn_base_destruction_effect(&mut commands, &assets, base_top_left);
             } else if tile == TileKind::Steel && !bullet.breaks_steel {
                 play_sound(&mut commands, &sounds, SoundKind::SteelHit);
             }
@@ -4050,6 +4059,20 @@ fn deathmatch_winner_after_hit(
 
 fn base_battle_winner_for_base(base_owner: PlayerId) -> PlayerId {
     base_owner.opponent()
+}
+
+fn base_can_be_destroyed_by_bullet(
+    game_mode: GameMode,
+    bullet_owner: Team,
+    base_owner: Option<PlayerId>,
+) -> bool {
+    match game_mode {
+        GameMode::Campaign => true,
+        GameMode::VersusBaseBattle => {
+            matches!((bullet_owner.player_id(), base_owner), (Some(shooter), Some(owner)) if shooter != owner)
+        }
+        GameMode::VersusDeathmatch => false,
+    }
 }
 
 fn base_destroyed_sounds(
@@ -9674,6 +9697,39 @@ mod tests {
     fn base_battle_winner_is_the_destroyed_base_opponent() {
         assert_eq!(base_battle_winner_for_base(PlayerId::One), PlayerId::Two);
         assert_eq!(base_battle_winner_for_base(PlayerId::Two), PlayerId::One);
+    }
+
+    #[test]
+    fn base_battle_bullets_only_destroy_opponent_base() {
+        assert!(base_can_be_destroyed_by_bullet(
+            GameMode::VersusBaseBattle,
+            Team::Player1,
+            Some(PlayerId::Two)
+        ));
+        assert!(!base_can_be_destroyed_by_bullet(
+            GameMode::VersusBaseBattle,
+            Team::Player1,
+            Some(PlayerId::One)
+        ));
+        assert!(!base_can_be_destroyed_by_bullet(
+            GameMode::VersusBaseBattle,
+            Team::Player1,
+            None
+        ));
+    }
+
+    #[test]
+    fn campaign_base_can_be_destroyed_by_player_or_enemy_bullets() {
+        assert!(base_can_be_destroyed_by_bullet(
+            GameMode::Campaign,
+            Team::Player1,
+            None
+        ));
+        assert!(base_can_be_destroyed_by_bullet(
+            GameMode::Campaign,
+            Team::Enemy,
+            None
+        ));
     }
 
     #[test]

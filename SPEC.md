@@ -142,6 +142,7 @@ Supported battle variants:
 
 - `Deathmatch`: P1 and P2 fight until one reaches the target score or the other runs out of lives.
 - `BaseBattle`: P1 and P2 each defend a base while trying to destroy the opponent's base.
+- In `BaseBattle`, a player's own bullet should not destroy that player's own base.
 
 Initial implementation target:
 

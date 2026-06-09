@@ -27,6 +27,7 @@ const PERSONAL_BASE_INTACT_PATH: &str = "personal/base_intact.png";
 const PERSONAL_BASE_DESTROYED_PATH: &str = "personal/base_destroyed.png";
 const PERSONAL_SCORE_BADGE_PATH: &str = "personal/score_badge.png";
 const PERSONAL_STAGE_FLAG_PATH: &str = "personal/stage_flag.png";
+const PERSONAL_GLYPH_ATLAS_PATH: &str = "personal/glyphs.png";
 const PERSONAL_FIRE_SOUND_PATH: &str = "personal/sounds/fire.ogg";
 const PERSONAL_BRICK_HIT_SOUND_PATH: &str = "personal/sounds/brick_hit.ogg";
 const PERSONAL_STEEL_HIT_SOUND_PATH: &str = "personal/sounds/steel_hit.ogg";
@@ -37,7 +38,7 @@ const PERSONAL_STAGE_START_SOUND_PATH: &str = "personal/sounds/stage_start.ogg";
 const PERSONAL_LEVEL_CLEAR_SOUND_PATH: &str = "personal/sounds/level_clear.ogg";
 const PERSONAL_GAME_OVER_SOUND_PATH: &str = "personal/sounds/game_over.ogg";
 #[cfg(test)]
-const PERSONAL_SPRITE_OVERRIDE_PATHS: [&str; 9] = [
+const PERSONAL_SPRITE_OVERRIDE_PATHS: [&str; 10] = [
     PERSONAL_TANK_ATLAS_PATH,
     PERSONAL_TERRAIN_ATLAS_PATH,
     PERSONAL_BULLET_ATLAS_PATH,
@@ -47,6 +48,7 @@ const PERSONAL_SPRITE_OVERRIDE_PATHS: [&str; 9] = [
     PERSONAL_BASE_DESTROYED_PATH,
     PERSONAL_SCORE_BADGE_PATH,
     PERSONAL_STAGE_FLAG_PATH,
+    PERSONAL_GLYPH_ATLAS_PATH,
 ];
 #[cfg(test)]
 const PERSONAL_SOUND_OVERRIDE_PATHS: [&str; 9] = [
@@ -6164,7 +6166,10 @@ fn create_sprite_assets(
         None,
     ));
 
-    let glyph_image = images.add(create_glyph_atlas(&manifest.glyphs));
+    let glyph_image =
+        image_handle_or_generated(asset_server, images, PERSONAL_GLYPH_ATLAS_PATH, || {
+            create_glyph_atlas(&manifest.glyphs)
+        });
     let glyph_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::new(
             manifest.glyphs.tile_width as u32,
@@ -7301,7 +7306,7 @@ mod tests {
 
     #[test]
     fn personal_sprite_override_paths_are_asset_root_relative_pngs() {
-        assert_eq!(PERSONAL_SPRITE_OVERRIDE_PATHS.len(), 9);
+        assert_eq!(PERSONAL_SPRITE_OVERRIDE_PATHS.len(), 10);
         for asset_path in PERSONAL_SPRITE_OVERRIDE_PATHS {
             assert!(asset_path.starts_with("personal/"));
             assert!(asset_path.ends_with(".png"));

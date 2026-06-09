@@ -526,6 +526,7 @@ Personal sprite overrides:
 - `assets/personal/` is gitignored and is meant for personal playtesting with copied or ROM-extracted assets.
 - Personal sheets must match the manifest atlas dimensions and index order, for example `personal/tanks.png` is a 48-frame `16x16` horizontal atlas.
 - If personal sheets use a different atlas order, `assets/personal/manifest.ron` may override the committed manifest locally.
+- `personal/glyphs.png` may replace the generated pixel font; glyph order and dimensions still come from the active manifest.
 - Do not commit original Tank 1990, Battle City, or ROM-extracted assets to this repository.
 
 Supported personal override paths:
@@ -541,6 +542,7 @@ assets/personal/base_intact.png
 assets/personal/base_destroyed.png
 assets/personal/score_badge.png
 assets/personal/stage_flag.png
+assets/personal/glyphs.png
 ```
 
 Personal sound overrides:

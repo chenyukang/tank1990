@@ -49,6 +49,11 @@
     shovel: 4,
     tank: 5,
   ),
+  glyphs: (
+    characters: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    tile_width: 5,
+    tile_height: 7,
+  ),
   sounds: (
     fire: Sweep(duration_secs: 0.08, start_frequency: 920.0, end_frequency: 420.0, volume: 0.22),
     brick_hit: Noise(duration_secs: 0.07, volume: 0.18, seed: 305419896),

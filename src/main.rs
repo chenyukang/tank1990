@@ -56,7 +56,10 @@ const ENEMY_MARKER_TOP: f32 = 159.0;
 const ENEMY_MARKER_CELL_X: f32 = 9.0;
 const ENEMY_MARKER_CELL_Y: f32 = 9.0;
 const SNAP_DISTANCE: f32 = 2.0;
-const GLYPHS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const REQUIRED_GLYPHS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const GENERATED_GLYPH_WIDTH: usize = 5;
+const GENERATED_GLYPH_HEIGHT: usize = 7;
+const GLYPH_ADVANCE: f32 = 6.0;
 static PAUSED_BANNER_LINES: [&str; 2] = ["PAUSED", "PRESS ESC"];
 static GAME_OVER_BANNER_LINES: [&str; 2] = ["GAME OVER", "PRESS R OR M"];
 static LEVEL_CLEAR_BANNER_LINES: [&str; 1] = ["LEVEL CLEAR"];
@@ -193,6 +196,7 @@ struct AssetManifest {
     terrain: TerrainSpriteManifest,
     effects: EffectSpriteManifest,
     powerups: PowerUpSpriteManifest,
+    glyphs: GlyphManifest,
     sounds: SoundManifest,
 }
 
@@ -330,6 +334,13 @@ struct PowerUpSpriteManifest {
     grenade: usize,
     shovel: usize,
     tank: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct GlyphManifest {
+    characters: String,
+    tile_width: usize,
+    tile_height: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -1469,16 +1480,32 @@ fn handle_shared_controls(
             && (keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft))
         {
             mode_select.arena = previous_arena(mode_select.arena);
-            update_mode_select_arena_digits(&mut menu_queries.p2(), mode_select.arena);
-            update_mode_select_battle_kind(&mut menu_queries.p3(), mode_select.arena);
+            update_mode_select_arena_digits(
+                &mut menu_queries.p2(),
+                &assets.manifest.glyphs,
+                mode_select.arena,
+            );
+            update_mode_select_battle_kind(
+                &mut menu_queries.p3(),
+                &assets.manifest.glyphs,
+                mode_select.arena,
+            );
         }
 
         if mode_select.selected.is_versus()
             && (keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight))
         {
             mode_select.arena = next_arena(mode_select.arena);
-            update_mode_select_arena_digits(&mut menu_queries.p2(), mode_select.arena);
-            update_mode_select_battle_kind(&mut menu_queries.p3(), mode_select.arena);
+            update_mode_select_arena_digits(
+                &mut menu_queries.p2(),
+                &assets.manifest.glyphs,
+                mode_select.arena,
+            );
+            update_mode_select_battle_kind(
+                &mut menu_queries.p3(),
+                &assets.manifest.glyphs,
+                mode_select.arena,
+            );
         }
 
         if keys.just_pressed(KeyCode::Space)
@@ -1873,7 +1900,57 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
         }
     }
 
+    validate_glyph_manifest(&manifest.glyphs)?;
     validate_sound_manifest(&manifest.sounds)?;
+
+    Ok(())
+}
+
+fn validate_glyph_manifest(manifest: &GlyphManifest) -> Result<(), String> {
+    if manifest.tile_width != GENERATED_GLYPH_WIDTH {
+        return Err(format!(
+            "glyphs.tile_width {} must match generated glyph width {GENERATED_GLYPH_WIDTH}",
+            manifest.tile_width
+        ));
+    }
+    if manifest.tile_height != GENERATED_GLYPH_HEIGHT {
+        return Err(format!(
+            "glyphs.tile_height {} must match generated glyph height {GENERATED_GLYPH_HEIGHT}",
+            manifest.tile_height
+        ));
+    }
+
+    let mut seen = HashSet::new();
+    for ch in manifest.characters.chars() {
+        if !seen.insert(ch) {
+            return Err(format!("glyphs.characters includes duplicate glyph '{ch}'"));
+        }
+
+        let pattern = glyph_pattern(ch);
+        if pattern.len() != manifest.tile_height
+            || pattern
+                .iter()
+                .any(|row| row.chars().count() != manifest.tile_width)
+        {
+            return Err(format!(
+                "glyphs.characters glyph '{ch}' must use a {}x{} pattern",
+                manifest.tile_width, manifest.tile_height
+            ));
+        }
+        if !glyph_pattern_has_pixels(pattern) {
+            return Err(format!(
+                "glyphs.characters includes unsupported blank glyph '{ch}'"
+            ));
+        }
+    }
+
+    for required in REQUIRED_GLYPHS.chars() {
+        if !seen.contains(&required) {
+            return Err(format!(
+                "glyphs.characters must include required glyph '{required}'"
+            ));
+        }
+    }
 
     Ok(())
 }
@@ -2185,12 +2262,12 @@ fn spawn_mode_select_arena_digits(
                 assets.glyph_image.clone(),
                 TextureAtlas {
                     layout: assets.glyph_layout.clone(),
-                    index: glyph_index(ch),
+                    index: glyph_index(ch, &assets.manifest.glyphs),
                 },
             ),
             Transform::from_translation(virtual_center_scaled(
-                Vec2::new(top_left.x + digit as f32 * 6.0, top_left.y),
-                Vec2::new(5.0, 7.0),
+                Vec2::new(top_left.x + digit as f32 * GLYPH_ADVANCE, top_left.y),
+                glyph_size(&assets.manifest.glyphs),
                 z,
             ))
             .with_scale(Vec3::splat(WINDOW_SCALE)),
@@ -2215,12 +2292,12 @@ fn spawn_mode_select_battle_kind(
                 assets.glyph_image.clone(),
                 TextureAtlas {
                     layout: assets.glyph_layout.clone(),
-                    index: glyph_index(ch),
+                    index: glyph_index(ch, &assets.manifest.glyphs),
                 },
             ),
             Transform::from_translation(virtual_center_scaled(
-                Vec2::new(top_left.x + digit as f32 * 6.0, top_left.y),
-                Vec2::new(5.0, 7.0),
+                Vec2::new(top_left.x + digit as f32 * GLYPH_ADVANCE, top_left.y),
+                glyph_size(&assets.manifest.glyphs),
                 z,
             ))
             .with_scale(Vec3::splat(WINDOW_SCALE)),
@@ -2464,12 +2541,12 @@ fn spawn_status_digits(
                 assets.glyph_image.clone(),
                 TextureAtlas {
                     layout: assets.glyph_layout.clone(),
-                    index: glyph_index('0'),
+                    index: glyph_index('0', &assets.manifest.glyphs),
                 },
             ),
             Transform::from_translation(virtual_center_scaled(
-                Vec2::new(top_left.x + digit as f32 * 6.0, top_left.y),
-                Vec2::new(5.0, 7.0),
+                Vec2::new(top_left.x + digit as f32 * GLYPH_ADVANCE, top_left.y),
+                glyph_size(&assets.manifest.glyphs),
                 z,
             ))
             .with_scale(Vec3::splat(WINDOW_SCALE)),
@@ -2552,12 +2629,12 @@ fn spawn_pixel_text_inner(
                 assets.glyph_image.clone(),
                 TextureAtlas {
                     layout: assets.glyph_layout.clone(),
-                    index: glyph_index(ch),
+                    index: glyph_index(ch, &assets.manifest.glyphs),
                 },
             ),
             Transform::from_translation(virtual_center_scaled(
-                Vec2::new(top_left.x + index as f32 * 6.0, top_left.y),
-                Vec2::new(5.0, 7.0),
+                Vec2::new(top_left.x + index as f32 * GLYPH_ADVANCE, top_left.y),
+                glyph_size(&assets.manifest.glyphs),
                 z,
             ))
             .with_scale(Vec3::splat(WINDOW_SCALE)),
@@ -4423,7 +4500,7 @@ fn update_status_panel(
         if let Some(ch) = text.chars().nth(glyph.digit)
             && let Some(atlas) = &mut sprite.texture_atlas
         {
-            atlas.index = glyph_index(ch);
+            atlas.index = glyph_index(ch, &assets.manifest.glyphs);
         }
     }
 
@@ -4489,7 +4566,7 @@ fn stage_number_top_left() -> Vec2 {
 }
 
 fn phase_text_width(text: &str) -> f32 {
-    text.chars().count() as f32 * 6.0 - 1.0
+    text.chars().count() as f32 * GLYPH_ADVANCE - 1.0
 }
 
 fn phase_banner_lines(
@@ -4682,6 +4759,7 @@ fn update_mode_select_cursor(
 
 fn update_mode_select_arena_digits(
     glyphs: &mut Query<(&ModeSelectArenaGlyph, &mut Sprite)>,
+    glyph_manifest: &GlyphManifest,
     arena: usize,
 ) {
     let text = format!("{:02}", arena.min(99));
@@ -4689,20 +4767,21 @@ fn update_mode_select_arena_digits(
         if let Some(ch) = text.chars().nth(glyph.digit)
             && let Some(atlas) = &mut sprite.texture_atlas
         {
-            atlas.index = glyph_index(ch);
+            atlas.index = glyph_index(ch, glyph_manifest);
         }
     }
 }
 
 fn update_mode_select_battle_kind(
     glyphs: &mut Query<(&ModeSelectBattleKindGlyph, &mut Sprite)>,
+    glyph_manifest: &GlyphManifest,
     arena: usize,
 ) {
     let text = battle_kind_label_for_arena(arena);
     for (glyph, mut sprite) in glyphs {
         let ch = text.chars().nth(glyph.digit).unwrap_or(' ');
         if let Some(atlas) = &mut sprite.texture_atlas {
-            atlas.index = glyph_index(ch);
+            atlas.index = glyph_index(ch, glyph_manifest);
         }
     }
 }
@@ -5772,10 +5851,13 @@ fn create_sprite_assets(
         None,
     ));
 
-    let glyph_image = images.add(create_glyph_atlas());
+    let glyph_image = images.add(create_glyph_atlas(&manifest.glyphs));
     let glyph_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
-        UVec2::new(5, 7),
-        36,
+        UVec2::new(
+            manifest.glyphs.tile_width as u32,
+            manifest.glyphs.tile_height as u32,
+        ),
+        manifest.glyphs.characters.chars().count() as u32,
         1,
         None,
         None,
@@ -6360,13 +6442,14 @@ fn draw_tank_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
     fill_rect(pixels, width, x_offset + 6, 8, 4, 3, [248, 176, 96, 255]);
 }
 
-fn create_glyph_atlas() -> Image {
-    let glyph_width = 5;
-    let glyph_height = 7;
-    let width = glyph_width * GLYPHS.len();
+fn create_glyph_atlas(manifest: &GlyphManifest) -> Image {
+    let glyph_width = manifest.tile_width;
+    let glyph_height = manifest.tile_height;
+    let glyph_count = manifest.characters.chars().count();
+    let width = glyph_width * glyph_count;
     let mut pixels = vec![0; width * glyph_height * 4];
 
-    for (glyph, ch) in GLYPHS.chars().enumerate() {
+    for (glyph, ch) in manifest.characters.chars().enumerate() {
         let pattern = glyph_pattern(ch);
         for (y, row) in pattern.iter().enumerate() {
             for (x, pixel) in row.chars().enumerate() {
@@ -6386,8 +6469,20 @@ fn create_glyph_atlas() -> Image {
     image_from_pixels(width, glyph_height, pixels)
 }
 
-fn glyph_index(ch: char) -> usize {
-    GLYPHS.find(ch).unwrap_or(0)
+fn glyph_index(ch: char, manifest: &GlyphManifest) -> usize {
+    manifest
+        .characters
+        .chars()
+        .position(|glyph| glyph == ch)
+        .unwrap_or(0)
+}
+
+fn glyph_size(manifest: &GlyphManifest) -> Vec2 {
+    Vec2::new(manifest.tile_width as f32, manifest.tile_height as f32)
+}
+
+fn glyph_pattern_has_pixels(pattern: [&str; GENERATED_GLYPH_HEIGHT]) -> bool {
+    pattern.iter().any(|row| row.contains('#'))
 }
 
 fn glyph_pattern(ch: char) -> [&'static str; 7] {
@@ -6443,8 +6538,17 @@ fn glyph_pattern(ch: char) -> [&'static str; 7] {
         'G' => [
             "#####", "#....", "#....", "#.###", "#...#", "#...#", "#####",
         ],
+        'H' => [
+            "#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#",
+        ],
         'I' => [
             "#####", "..#..", "..#..", "..#..", "..#..", "..#..", "#####",
+        ],
+        'J' => [
+            "#####", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##..",
+        ],
+        'K' => [
+            "#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#",
         ],
         'L' => [
             "#....", "#....", "#....", "#....", "#....", "#....", "#####",
@@ -6460,6 +6564,9 @@ fn glyph_pattern(ch: char) -> [&'static str; 7] {
         ],
         'P' => [
             "####.", "#...#", "#...#", "####.", "#....", "#....", "#....",
+        ],
+        'Q' => [
+            "#####", "#...#", "#...#", "#...#", "#.#.#", "#..#.", "####.",
         ],
         'R' => [
             "####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#",
@@ -6484,6 +6591,9 @@ fn glyph_pattern(ch: char) -> [&'static str; 7] {
         ],
         'Y' => [
             "#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#..",
+        ],
+        'Z' => [
+            "#####", "....#", "...#.", "..#..", ".#...", "#....", "#####",
         ],
         _ => [
             ".....", ".....", ".....", ".....", ".....", ".....", ".....",
@@ -6700,6 +6810,17 @@ mod tests {
         )
     }
 
+    fn assert_manifest_glyph_is_visible(manifest: &AssetManifest, ch: char) {
+        assert!(
+            manifest.glyphs.characters.contains(ch),
+            "manifest should include glyph {ch}"
+        );
+        assert!(
+            glyph_pattern_has_pixels(glyph_pattern(ch)),
+            "glyph {ch} should render"
+        );
+    }
+
     #[test]
     fn stage_paths_use_three_digit_level_numbers() {
         assert_eq!(stage_path(1), "assets/levels/001.level.ron");
@@ -6883,6 +7004,13 @@ mod tests {
         assert_eq!(manifest.powerup_index(PowerUpKind::Shovel), 4);
         assert_eq!(manifest.powerup_index(PowerUpKind::Tank), 5);
 
+        assert_eq!(manifest.glyphs.characters, REQUIRED_GLYPHS);
+        assert_eq!(manifest.glyphs.tile_width, GENERATED_GLYPH_WIDTH);
+        assert_eq!(manifest.glyphs.tile_height, GENERATED_GLYPH_HEIGHT);
+        assert_eq!(glyph_index('0', &manifest.glyphs), 0);
+        assert_eq!(glyph_index('A', &manifest.glyphs), 10);
+        assert_eq!(glyph_index('Z', &manifest.glyphs), 35);
+
         assert!(matches!(
             manifest.sounds.fire,
             RetroSoundSpec::Sweep {
@@ -6977,6 +7105,49 @@ mod tests {
             parse_asset_manifest(&invalid)
                 .expect_err("invalid power-up index should fail")
                 .contains("outside the generated power-up atlas")
+        );
+    }
+
+    #[test]
+    fn asset_manifest_rejects_invalid_glyph_specs() {
+        let invalid = MANIFEST.replacen("tile_width: 5", "tile_width: 6", 1);
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("wrong glyph width should fail")
+                .contains("glyphs.tile_width 6 must match generated glyph width 5")
+        );
+
+        let invalid = MANIFEST.replacen(
+            "characters: \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"",
+            "characters: \"00123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"",
+            1,
+        );
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("duplicate glyph should fail")
+                .contains("glyphs.characters includes duplicate glyph '0'")
+        );
+
+        let invalid = MANIFEST.replacen(
+            "characters: \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"",
+            "characters: \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXY?\"",
+            1,
+        );
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("unsupported glyph should fail")
+                .contains("glyphs.characters includes unsupported blank glyph '?'")
+        );
+
+        let invalid = MANIFEST.replacen(
+            "characters: \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"",
+            "characters: \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXY\"",
+            1,
+        );
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("missing required glyph should fail")
+                .contains("glyphs.characters must include required glyph 'Z'")
         );
     }
 
@@ -8037,6 +8208,7 @@ mod tests {
 
     #[test]
     fn phase_banner_text_uses_available_pixel_glyphs() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
         let statuses = [
             (
                 GameStatus {
@@ -8115,10 +8287,7 @@ mod tests {
             for line in lines {
                 assert!(phase_text_width(&line) > 0.0);
                 for ch in line.chars().filter(|ch| *ch != ' ') {
-                    assert!(
-                        glyph_pattern(ch).iter().any(|row| row.contains('#')),
-                        "glyph {ch} should render"
-                    );
+                    assert_manifest_glyph_is_visible(&manifest, ch);
                 }
             }
         }
@@ -8166,16 +8335,14 @@ mod tests {
 
     #[test]
     fn mode_select_hints_fit_and_use_available_pixel_glyphs() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
         for line in MODE_SELECT_HINT_LINES {
             assert!(
                 phase_text_width(line) <= 208.0,
                 "mode select hint should fit in the playfield"
             );
             for ch in line.chars().filter(|ch| *ch != ' ') {
-                assert!(
-                    glyph_pattern(ch).iter().any(|row| row.contains('#')),
-                    "glyph {ch} should render"
-                );
+                assert_manifest_glyph_is_visible(&manifest, ch);
             }
         }
     }

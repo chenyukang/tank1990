@@ -13398,6 +13398,46 @@ mod tests {
     }
 
     #[test]
+    fn player_two_can_fire_with_right_shift() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(112.0, 48.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::ShiftRight);
+
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.world_mut().spawn((
+            Tank {
+                top_left: tank_top_left,
+                facing: Direction::Down,
+                speed: PLAYER_SPEED,
+            },
+            PlayerUpgrade { level: 0 },
+            Player { id: PlayerId::Two },
+        ));
+        app.add_systems(Update, fire_player_bullet);
+
+        app.update();
+
+        let expected_top_left = spawn_bullet_position(tank_top_left, Direction::Down);
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        let bullets: Vec<_> = bullets.iter(app.world()).collect();
+        assert_eq!(bullets.len(), 1);
+        assert_eq!(bullets[0].owner, Team::Player2);
+        assert_eq!(bullets[0].previous_top_left, expected_top_left);
+        assert_eq!(bullets[0].top_left, expected_top_left);
+        assert_eq!(bullets[0].facing, Direction::Down);
+        assert_eq!(bullets[0].speed, BULLET_SPEED);
+    }
+
+    #[test]
     fn player_fire_system_treats_held_fire_as_ready_input() {
         let mut app = App::new();
         let tank_top_left = Vec2::new(64.0, 80.0);

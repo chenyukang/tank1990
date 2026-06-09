@@ -1913,6 +1913,7 @@ fn parse_level(contents: &str) -> Result<LevelDefinition, String> {
             level.enemy_spawns.len()
         ));
     }
+    validate_classic_enemy_spawns(&level.enemy_spawns)?;
     if level.max_enemies_on_screen == 0 {
         return Err("max_enemies_on_screen must be greater than zero".to_string());
     }
@@ -5405,6 +5406,28 @@ fn validate_powerup_carriers(level: &LevelDefinition) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_classic_enemy_spawns(spawns: &[SpawnPoint]) -> Result<(), String> {
+    let expected = [
+        (0, 0, Direction::Down),
+        (12, 0, Direction::Down),
+        (24, 0, Direction::Down),
+    ];
+
+    for (index, (spawn, (x, y, facing))) in spawns.iter().zip(expected).enumerate() {
+        if spawn.x != x || spawn.y != y || spawn.facing != facing {
+            return Err(format!(
+                "enemy spawn {} must be classic top spawn ({x}, {y}, {facing:?}), got ({}, {}, {:?})",
+                index + 1,
+                spawn.x,
+                spawn.y,
+                spawn.facing
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn carrier_powerup_for_spawn(
     spawn_number: usize,
     carriers: &[PowerUpCarrier],
@@ -6559,6 +6582,10 @@ mod tests {
         ]
     }
 
+    fn spawn_signature(spawn: &SpawnPoint) -> (usize, usize, Direction) {
+        (spawn.x, spawn.y, spawn.facing)
+    }
+
     fn base_battle_arena_text() -> String {
         let mut rows = vec![".........................."; BOARD_TILES];
         rows[0] = "EE........................";
@@ -6863,6 +6890,18 @@ mod tests {
             );
             assert_eq!(level.enemies.len(), 20);
             assert_eq!(level.enemy_spawns.len(), 3);
+            assert_eq!(
+                level
+                    .enemy_spawns
+                    .iter()
+                    .map(spawn_signature)
+                    .collect::<Vec<_>>(),
+                [
+                    (0, 0, Direction::Down),
+                    (12, 0, Direction::Down),
+                    (24, 0, Direction::Down)
+                ]
+            );
             assert!(!level.powerup_carriers.is_empty());
         }
     }
@@ -7022,15 +7061,33 @@ mod tests {
         );
 
         let blocked_enemy = LEVEL_1.replacen(
-            "(x: 12, y: 0, facing: Down)",
-            "(x: 12, y: 24, facing: Down)",
+            "\"..........................\",",
+            "\"............BB............\",",
             1,
         );
         assert!(
             parse_level(&blocked_enemy)
                 .err()
                 .expect("blocked enemy spawn should fail")
-                .contains("enemy spawn 2 (12, 24) must fit a tank on passable tiles")
+                .contains("enemy spawn 2 (12, 0) must fit a tank on passable tiles")
+        );
+    }
+
+    #[test]
+    fn level_rejects_enemy_spawns_outside_classic_top_slots() {
+        let shifted_enemy = LEVEL_1.replacen(
+            "(x: 12, y: 0, facing: Down)",
+            "(x: 8, y: 0, facing: Down)",
+            1,
+        );
+
+        assert!(
+            parse_level(&shifted_enemy)
+                .err()
+                .expect("shifted enemy spawn should fail")
+                .contains(
+                    "enemy spawn 2 must be classic top spawn (12, 0, Down), got (8, 0, Down)"
+                )
         );
     }
 

@@ -21,10 +21,15 @@ const ARENA_COUNT: usize = 5;
 const DEFAULT_VERSUS_ARENA: usize = 1;
 const TANK_ATLAS_TILES: usize = 48;
 const TANK_ANIMATION_FRAMES: usize = 2;
+const TANK_ATLAS_TILE_SIZE: usize = 16;
 const BULLET_ATLAS_TILES: usize = 4;
+const BULLET_ATLAS_TILE_SIZE: usize = 4;
 const TERRAIN_ATLAS_TILES: usize = 6;
+const TERRAIN_ATLAS_TILE_SIZE: usize = 8;
 const EFFECT_ATLAS_TILES: usize = 20;
+const EFFECT_ATLAS_TILE_SIZE: usize = 16;
 const POWERUP_ATLAS_TILES: usize = 6;
+const POWERUP_ATLAS_TILE_SIZE: usize = 16;
 const GENERATED_BASE_SIZE: usize = 16;
 const GENERATED_UI_ICON_SIZE: usize = 8;
 
@@ -195,6 +200,7 @@ struct SpriteAssets {
 struct AssetManifest {
     tanks: TankSpriteManifest,
     bullets: DirectionalSpriteManifest,
+    atlases: GeneratedAtlasesManifest,
     terrain: TerrainSpriteManifest,
     effects: EffectSpriteManifest,
     powerups: PowerUpSpriteManifest,
@@ -342,6 +348,22 @@ struct PowerUpSpriteManifest {
     grenade: usize,
     shovel: usize,
     tank: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+struct GeneratedAtlasManifest {
+    tile_width: usize,
+    tile_height: usize,
+    tiles: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+struct GeneratedAtlasesManifest {
+    tanks: GeneratedAtlasManifest,
+    terrain: GeneratedAtlasManifest,
+    bullets: GeneratedAtlasManifest,
+    effects: GeneratedAtlasManifest,
+    powerups: GeneratedAtlasManifest,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
@@ -1864,6 +1886,7 @@ fn parse_asset_manifest(contents: &str) -> Result<AssetManifest, String> {
 }
 
 fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
+    validate_generated_atlases(&manifest.atlases)?;
     validate_tank_frames(&manifest.tanks)?;
     validate_bullet_manifest(manifest.bullets)?;
 
@@ -1941,6 +1964,66 @@ fn validate_asset_manifest(manifest: &AssetManifest) -> Result<(), String> {
     validate_glyph_manifest(&manifest.glyphs)?;
     validate_sound_manifest(&manifest.sounds)?;
 
+    Ok(())
+}
+
+fn validate_generated_atlases(manifest: &GeneratedAtlasesManifest) -> Result<(), String> {
+    validate_generated_atlas(
+        "atlases.tanks",
+        manifest.tanks,
+        TANK_ATLAS_TILE_SIZE,
+        TANK_ATLAS_TILE_SIZE,
+        TANK_ATLAS_TILES,
+    )?;
+    validate_generated_atlas(
+        "atlases.terrain",
+        manifest.terrain,
+        TERRAIN_ATLAS_TILE_SIZE,
+        TERRAIN_ATLAS_TILE_SIZE,
+        TERRAIN_ATLAS_TILES,
+    )?;
+    validate_generated_atlas(
+        "atlases.bullets",
+        manifest.bullets,
+        BULLET_ATLAS_TILE_SIZE,
+        BULLET_ATLAS_TILE_SIZE,
+        BULLET_ATLAS_TILES,
+    )?;
+    validate_generated_atlas(
+        "atlases.effects",
+        manifest.effects,
+        EFFECT_ATLAS_TILE_SIZE,
+        EFFECT_ATLAS_TILE_SIZE,
+        EFFECT_ATLAS_TILES,
+    )?;
+    validate_generated_atlas(
+        "atlases.powerups",
+        manifest.powerups,
+        POWERUP_ATLAS_TILE_SIZE,
+        POWERUP_ATLAS_TILE_SIZE,
+        POWERUP_ATLAS_TILES,
+    )
+}
+
+fn validate_generated_atlas(
+    name: &str,
+    manifest: GeneratedAtlasManifest,
+    expected_tile_width: usize,
+    expected_tile_height: usize,
+    expected_tiles: usize,
+) -> Result<(), String> {
+    if manifest.tile_width != expected_tile_width || manifest.tile_height != expected_tile_height {
+        return Err(format!(
+            "{name} tiles must be {expected_tile_width}x{expected_tile_height}, got {}x{}",
+            manifest.tile_width, manifest.tile_height
+        ));
+    }
+    if manifest.tiles != expected_tiles {
+        return Err(format!(
+            "{name} must contain {expected_tiles} tiles, got {}",
+            manifest.tiles
+        ));
+    }
     Ok(())
 }
 
@@ -5871,51 +5954,55 @@ fn terrain_z(tile: TileKind) -> f32 {
     }
 }
 
+fn atlas_tile_size(manifest: GeneratedAtlasManifest) -> UVec2 {
+    UVec2::new(manifest.tile_width as u32, manifest.tile_height as u32)
+}
+
 fn create_sprite_assets(
     images: &mut Assets<Image>,
     atlas_layouts: &mut Assets<TextureAtlasLayout>,
 ) -> SpriteAssets {
     let manifest = load_asset_manifest(ASSET_MANIFEST_PATH).expect("asset manifest should load");
-    let terrain_image = images.add(create_terrain_atlas());
+    let terrain_image = images.add(create_terrain_atlas(manifest.atlases.terrain));
     let terrain_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
-        UVec2::splat(8),
-        TERRAIN_ATLAS_TILES as u32,
+        atlas_tile_size(manifest.atlases.terrain),
+        manifest.atlases.terrain.tiles as u32,
         1,
         None,
         None,
     ));
 
-    let tank_image = images.add(create_tank_atlas());
+    let tank_image = images.add(create_tank_atlas(manifest.atlases.tanks));
     let tank_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
-        UVec2::splat(16),
-        TANK_ATLAS_TILES as u32,
+        atlas_tile_size(manifest.atlases.tanks),
+        manifest.atlases.tanks.tiles as u32,
         1,
         None,
         None,
     ));
 
-    let bullet_image = images.add(create_bullet_atlas());
+    let bullet_image = images.add(create_bullet_atlas(manifest.atlases.bullets));
     let bullet_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
-        UVec2::splat(4),
-        BULLET_ATLAS_TILES as u32,
+        atlas_tile_size(manifest.atlases.bullets),
+        manifest.atlases.bullets.tiles as u32,
         1,
         None,
         None,
     ));
 
-    let effect_image = images.add(create_effect_atlas());
+    let effect_image = images.add(create_effect_atlas(manifest.atlases.effects));
     let effect_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
-        UVec2::splat(16),
-        EFFECT_ATLAS_TILES as u32,
+        atlas_tile_size(manifest.atlases.effects),
+        manifest.atlases.effects.tiles as u32,
         1,
         None,
         None,
     ));
 
-    let powerup_image = images.add(create_powerup_atlas());
+    let powerup_image = images.add(create_powerup_atlas(manifest.atlases.powerups));
     let powerup_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
-        UVec2::splat(16),
-        POWERUP_ATLAS_TILES as u32,
+        atlas_tile_size(manifest.atlases.powerups),
+        manifest.atlases.powerups.tiles as u32,
         1,
         None,
         None,
@@ -6087,18 +6174,18 @@ fn sound_from_samples(samples: Vec<f32>) -> RetroSound {
     }
 }
 
-fn create_terrain_atlas() -> Image {
-    let width = 8 * TERRAIN_ATLAS_TILES;
-    let mut pixels = vec![0; width * 8 * 4];
+fn create_terrain_atlas(manifest: GeneratedAtlasManifest) -> Image {
+    let width = manifest.tile_width * manifest.tiles;
+    let mut pixels = vec![0; width * manifest.tile_height * 4];
 
     draw_brick(&mut pixels, width, 0);
-    draw_steel(&mut pixels, width, 8);
-    draw_water(&mut pixels, width, 16, 0);
-    draw_water(&mut pixels, width, 24, 1);
-    draw_forest(&mut pixels, width, 32);
-    draw_ice(&mut pixels, width, 40);
+    draw_steel(&mut pixels, width, manifest.tile_width);
+    draw_water(&mut pixels, width, manifest.tile_width * 2, 0);
+    draw_water(&mut pixels, width, manifest.tile_width * 3, 1);
+    draw_forest(&mut pixels, width, manifest.tile_width * 4);
+    draw_ice(&mut pixels, width, manifest.tile_width * 5);
 
-    image_from_pixels(width, 8, pixels)
+    image_from_pixels(width, manifest.tile_height, pixels)
 }
 
 fn draw_brick(pixels: &mut [u8], width: usize, x_offset: usize) {
@@ -6144,10 +6231,10 @@ fn draw_ice(pixels: &mut [u8], width: usize, x_offset: usize) {
     }
 }
 
-fn create_tank_atlas() -> Image {
-    let width = 16 * TANK_ATLAS_TILES;
-    let group_stride = 16 * TANK_ANIMATION_FRAMES * 4;
-    let mut pixels = vec![0; width * 16 * 4];
+fn create_tank_atlas(manifest: GeneratedAtlasManifest) -> Image {
+    let width = manifest.tile_width * manifest.tiles;
+    let group_stride = manifest.tile_width * TANK_ANIMATION_FRAMES * 4;
+    let mut pixels = vec![0; width * manifest.tile_height * 4];
     let player1_palette = TankPalette {
         dark: [48, 56, 24, 255],
         body: [184, 160, 64, 255],
@@ -6191,7 +6278,7 @@ fn create_tank_atlas() -> Image {
     draw_tank_group(&mut pixels, width, group_stride * 3, fast_enemy_palette);
     draw_tank_group(&mut pixels, width, group_stride * 4, power_enemy_palette);
     draw_tank_group(&mut pixels, width, group_stride * 5, armor_enemy_palette);
-    image_from_pixels(width, 16, pixels)
+    image_from_pixels(width, manifest.tile_height, pixels)
 }
 
 #[derive(Clone, Copy)]
@@ -6259,11 +6346,11 @@ fn draw_tank_group(pixels: &mut [u8], width: usize, x_offset: usize, palette: Ta
     }
 }
 
-fn create_bullet_atlas() -> Image {
-    let atlas_width = BULLET_SIZE as usize * BULLET_ATLAS_TILES;
-    let mut pixels = vec![0; atlas_width * BULLET_SIZE as usize * 4];
-    for index in 0..BULLET_ATLAS_TILES {
-        let x_offset = index * BULLET_SIZE as usize;
+fn create_bullet_atlas(manifest: GeneratedAtlasManifest) -> Image {
+    let atlas_width = manifest.tile_width * manifest.tiles;
+    let mut pixels = vec![0; atlas_width * manifest.tile_height * 4];
+    for index in 0..manifest.tiles {
+        let x_offset = index * manifest.tile_width;
         fill_rect(
             &mut pixels,
             atlas_width,
@@ -6282,28 +6369,48 @@ fn create_bullet_atlas() -> Image {
             [128, 112, 64, 255],
         );
     }
-    image_from_pixels(atlas_width, BULLET_SIZE as usize, pixels)
+    image_from_pixels(atlas_width, manifest.tile_height, pixels)
 }
 
-fn create_effect_atlas() -> Image {
-    let width = 16 * EFFECT_ATLAS_TILES;
-    let mut pixels = vec![0; width * 16 * 4];
+fn create_effect_atlas(manifest: GeneratedAtlasManifest) -> Image {
+    let width = manifest.tile_width * manifest.tiles;
+    let mut pixels = vec![0; width * manifest.tile_height * 4];
     for frame in 0..4 {
-        draw_explosion_frame(&mut pixels, width, frame * 16, frame);
+        draw_explosion_frame(&mut pixels, width, frame * manifest.tile_width, frame);
     }
     for frame in 0..4 {
-        draw_spawn_frame(&mut pixels, width, 64 + frame * 16, frame);
+        draw_spawn_frame(
+            &mut pixels,
+            width,
+            manifest.tile_width * 4 + frame * manifest.tile_width,
+            frame,
+        );
     }
     for frame in 0..4 {
-        draw_base_destruction_frame(&mut pixels, width, 128 + frame * 16, frame);
+        draw_base_destruction_frame(
+            &mut pixels,
+            width,
+            manifest.tile_width * 8 + frame * manifest.tile_width,
+            frame,
+        );
     }
     for frame in 0..4 {
-        draw_powerup_sparkle_frame(&mut pixels, width, 192 + frame * 16, frame);
+        draw_powerup_sparkle_frame(
+            &mut pixels,
+            width,
+            manifest.tile_width * 12 + frame * manifest.tile_width,
+            frame,
+        );
     }
     for frame in 0..4 {
-        draw_bullet_impact_frame(&mut pixels, width, 256 + frame * 16, frame);
+        draw_bullet_impact_frame(
+            &mut pixels,
+            width,
+            manifest.tile_width * 16 + frame * manifest.tile_width,
+            frame,
+        );
     }
-    image_from_pixels(width, 16, pixels)
+    image_from_pixels(width, manifest.tile_height, pixels)
 }
 
 fn draw_explosion_frame(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
@@ -6448,15 +6555,16 @@ fn draw_bullet_impact_frame(pixels: &mut [u8], width: usize, x_offset: usize, fr
     }
 }
 
-fn create_powerup_atlas() -> Image {
-    let mut pixels = vec![0; 16 * 6 * 16 * 4];
-    draw_star_powerup(&mut pixels, 96, 0);
-    draw_helmet_powerup(&mut pixels, 96, 16);
-    draw_clock_powerup(&mut pixels, 96, 32);
-    draw_grenade_powerup(&mut pixels, 96, 48);
-    draw_shovel_powerup(&mut pixels, 96, 64);
-    draw_tank_powerup(&mut pixels, 96, 80);
-    image_from_pixels(96, 16, pixels)
+fn create_powerup_atlas(manifest: GeneratedAtlasManifest) -> Image {
+    let width = manifest.tile_width * manifest.tiles;
+    let mut pixels = vec![0; width * manifest.tile_height * 4];
+    draw_star_powerup(&mut pixels, width, 0);
+    draw_helmet_powerup(&mut pixels, width, manifest.tile_width);
+    draw_clock_powerup(&mut pixels, width, manifest.tile_width * 2);
+    draw_grenade_powerup(&mut pixels, width, manifest.tile_width * 3);
+    draw_shovel_powerup(&mut pixels, width, manifest.tile_width * 4);
+    draw_tank_powerup(&mut pixels, width, manifest.tile_width * 5);
+    image_from_pixels(width, manifest.tile_height, pixels)
 }
 
 fn draw_star_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
@@ -7051,6 +7159,47 @@ mod tests {
     fn authored_asset_manifest_matches_generated_atlases() {
         let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
         assert_eq!(
+            manifest.atlases.tanks,
+            GeneratedAtlasManifest {
+                tile_width: TANK_ATLAS_TILE_SIZE,
+                tile_height: TANK_ATLAS_TILE_SIZE,
+                tiles: TANK_ATLAS_TILES
+            }
+        );
+        assert_eq!(
+            manifest.atlases.terrain,
+            GeneratedAtlasManifest {
+                tile_width: TERRAIN_ATLAS_TILE_SIZE,
+                tile_height: TERRAIN_ATLAS_TILE_SIZE,
+                tiles: TERRAIN_ATLAS_TILES
+            }
+        );
+        assert_eq!(
+            manifest.atlases.bullets,
+            GeneratedAtlasManifest {
+                tile_width: BULLET_ATLAS_TILE_SIZE,
+                tile_height: BULLET_ATLAS_TILE_SIZE,
+                tiles: BULLET_ATLAS_TILES
+            }
+        );
+        assert_eq!(
+            manifest.atlases.effects,
+            GeneratedAtlasManifest {
+                tile_width: EFFECT_ATLAS_TILE_SIZE,
+                tile_height: EFFECT_ATLAS_TILE_SIZE,
+                tiles: EFFECT_ATLAS_TILES
+            }
+        );
+        assert_eq!(
+            manifest.atlases.powerups,
+            GeneratedAtlasManifest {
+                tile_width: POWERUP_ATLAS_TILE_SIZE,
+                tile_height: POWERUP_ATLAS_TILE_SIZE,
+                tiles: POWERUP_ATLAS_TILES
+            }
+        );
+
+        assert_eq!(
             manifest.tank_index(TankSpriteSet::Player1, Direction::Up, 0),
             0
         );
@@ -7276,6 +7425,31 @@ mod tests {
     }
 
     #[test]
+    fn asset_manifest_rejects_invalid_generated_atlas_geometry() {
+        let invalid = MANIFEST.replacen(
+            "tanks: (tile_width: 16, tile_height: 16, tiles: 48)",
+            "tanks: (tile_width: 15, tile_height: 16, tiles: 48)",
+            1,
+        );
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("invalid tank atlas tile size should fail")
+                .contains("atlases.tanks tiles must be 16x16, got 15x16")
+        );
+
+        let invalid = MANIFEST.replacen(
+            "effects: (tile_width: 16, tile_height: 16, tiles: 20)",
+            "effects: (tile_width: 16, tile_height: 16, tiles: 19)",
+            1,
+        );
+        assert!(
+            parse_asset_manifest(&invalid)
+                .expect_err("invalid effect atlas tile count should fail")
+                .contains("atlases.effects must contain 20 tiles, got 19")
+        );
+    }
+
+    #[test]
     fn asset_manifest_rejects_invalid_generated_sprite_sizes() {
         let invalid = MANIFEST.replacen(
             "intact: (width: 16, height: 16)",
@@ -7298,6 +7472,45 @@ mod tests {
                 .expect_err("invalid UI icon size should fail")
                 .contains("ui.score_badge must be 8x8, got 8x9")
         );
+    }
+
+    #[test]
+    fn generated_atlas_images_use_manifest_geometry() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let atlases = [
+            (
+                create_tank_atlas(manifest.atlases.tanks),
+                manifest.atlases.tanks,
+            ),
+            (
+                create_terrain_atlas(manifest.atlases.terrain),
+                manifest.atlases.terrain,
+            ),
+            (
+                create_bullet_atlas(manifest.atlases.bullets),
+                manifest.atlases.bullets,
+            ),
+            (
+                create_effect_atlas(manifest.atlases.effects),
+                manifest.atlases.effects,
+            ),
+            (
+                create_powerup_atlas(manifest.atlases.powerups),
+                manifest.atlases.powerups,
+            ),
+        ];
+
+        for (image, atlas) in atlases {
+            assert_eq!(
+                image.texture_descriptor.size.width,
+                (atlas.tile_width * atlas.tiles) as u32
+            );
+            assert_eq!(
+                image.texture_descriptor.size.height,
+                atlas.tile_height as u32
+            );
+            assert!(image.data.as_ref().is_some_and(|pixels| !pixels.is_empty()));
+        }
     }
 
     #[test]

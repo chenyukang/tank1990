@@ -532,6 +532,7 @@ Suggested contents:
 Current implementation note:
 
 - `assets/manifest.ron` maps generated tank, bullet, terrain, power-up, base, UI, effect, glyph, and sound entries to semantic names, directional indices, frame ranges, dimensions, or generated-asset parameters.
+- Atlas manifest entries define tile size and tile count for generated tank, terrain, bullet, effect, and power-up atlases.
 - Tank manifest entries include separate two-frame directional groups for P1, P2, Basic, Fast, Power, and Armor tanks.
 - Bullet manifest entries include four directional atlas indices.
 - Terrain manifest entries include a two-frame water animation range plus static brick, steel, forest, and ice entries.

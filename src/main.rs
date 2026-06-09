@@ -1368,6 +1368,14 @@ struct Bullet {
     breaks_steel: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BulletTileHit {
+    x: usize,
+    y: usize,
+    tile: TileKind,
+    impact_top_left: Vec2,
+}
+
 #[derive(Component)]
 struct EnemyBulletSource {
     shooter: Entity,
@@ -3933,33 +3941,32 @@ fn move_bullets(
             }
         }
 
-        if let Some((tile_x, tile_y, tile)) =
-            bullet_blocking_tile_hit(&grid, previous_top_left, bullet.top_left)
+        if let Some(tile_hit) = bullet_blocking_tile_hit(&grid, previous_top_left, bullet.top_left)
         {
-            spawn_bullet_impact_effect(&mut commands, &assets, bullet.top_left);
-            if bullet_destroys_tile(tile, bullet.breaks_steel) {
-                grid.set(tile_x, tile_y, TileKind::Empty);
+            spawn_bullet_impact_effect(&mut commands, &assets, tile_hit.impact_top_left);
+            if bullet_destroys_tile(tile_hit.tile, bullet.breaks_steel) {
+                grid.set(tile_hit.x, tile_hit.y, TileKind::Empty);
                 play_sound(
                     &mut commands,
                     &sounds,
-                    if tile == TileKind::Steel {
+                    if tile_hit.tile == TileKind::Steel {
                         SoundKind::SteelHit
                     } else {
                         SoundKind::BrickHit
                     },
                 );
                 for (tile_entity, grid_tile) in &tile_sprites {
-                    if grid_tile.x == tile_x && grid_tile.y == tile_y {
+                    if grid_tile.x == tile_hit.x && grid_tile.y == tile_hit.y {
                         commands.entity(tile_entity).despawn();
                         break;
                     }
                 }
             }
 
-            if tile == TileKind::Base && game_status.is_playing() {
+            if tile_hit.tile == TileKind::Base && game_status.is_playing() {
                 let mut hit_base = None;
                 for (base, mut sprite) in &mut base_sprites {
-                    if base_contains_tile(base.top_left, tile_x, tile_y) {
+                    if base_contains_tile(base.top_left, tile_hit.x, tile_hit.y) {
                         let can_destroy =
                             base_can_be_destroyed_by_bullet(*game_mode, bullet.owner, base.owner);
                         if can_destroy {
@@ -3973,8 +3980,8 @@ fn move_bullets(
                 let (base_owner, base_top_left, can_destroy_base) = hit_base.unwrap_or((
                     None,
                     base_top_left_from_grid(&grid).unwrap_or(Vec2::new(
-                        tile_x as f32 * TILE_SIZE,
-                        tile_y as f32 * TILE_SIZE,
+                        tile_hit.x as f32 * TILE_SIZE,
+                        tile_hit.y as f32 * TILE_SIZE,
                     )),
                     base_can_be_destroyed_by_bullet(*game_mode, bullet.owner, None),
                 ));
@@ -4001,7 +4008,7 @@ fn move_bullets(
                 } else {
                     play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                 }
-            } else if tile == TileKind::Steel && !bullet.breaks_steel {
+            } else if tile_hit.tile == TileKind::Steel && !bullet.breaks_steel {
                 play_sound(&mut commands, &sounds, SoundKind::SteelHit);
             }
 
@@ -6130,7 +6137,7 @@ fn bullet_blocking_tile_hit(
     grid: &TileGrid,
     start_top_left: Vec2,
     end_top_left: Vec2,
-) -> Option<(usize, usize, TileKind)> {
+) -> Option<BulletTileHit> {
     let start = start_top_left + Vec2::splat(BULLET_SIZE / 2.0);
     let end = end_top_left + Vec2::splat(BULLET_SIZE / 2.0);
     let delta = end - start;
@@ -6147,7 +6154,12 @@ fn bullet_blocking_tile_hit(
         let tile_y = (center.y / TILE_SIZE).floor() as usize;
         let tile = grid.tiles[tile_y * BOARD_TILES + tile_x];
         if tile.bullet_blocks() {
-            return Some((tile_x, tile_y, tile));
+            return Some(BulletTileHit {
+                x: tile_x,
+                y: tile_y,
+                tile,
+                impact_top_left: round_vec2(center - Vec2::splat(BULLET_SIZE / 2.0)),
+            });
         }
     }
 
@@ -10160,10 +10172,13 @@ mod tests {
         let mut grid = TileGrid::empty();
         grid.set(3, 1, TileKind::Steel);
 
-        assert_eq!(
-            bullet_blocking_tile_hit(&grid, Vec2::new(20.0, 8.0), Vec2::new(24.0, 8.0)),
-            Some((3, 1, TileKind::Steel))
-        );
+        let hit = bullet_blocking_tile_hit(&grid, Vec2::new(20.0, 8.0), Vec2::new(24.0, 8.0))
+            .expect("bullet should hit steel at the end tile");
+
+        assert_eq!(hit.x, 3);
+        assert_eq!(hit.y, 1);
+        assert_eq!(hit.tile, TileKind::Steel);
+        assert_eq!(hit.impact_top_left, Vec2::new(24.0, 8.0));
     }
 
     #[test]
@@ -10172,10 +10187,13 @@ mod tests {
         grid.set(3, 1, TileKind::Brick);
         grid.set(4, 1, TileKind::Steel);
 
-        assert_eq!(
-            bullet_blocking_tile_hit(&grid, Vec2::new(8.0, 8.0), Vec2::new(36.0, 8.0)),
-            Some((3, 1, TileKind::Brick))
-        );
+        let hit = bullet_blocking_tile_hit(&grid, Vec2::new(8.0, 8.0), Vec2::new(36.0, 8.0))
+            .expect("bullet should hit the first blocking tile it crosses");
+
+        assert_eq!(hit.x, 3);
+        assert_eq!(hit.y, 1);
+        assert_eq!(hit.tile, TileKind::Brick);
+        assert_eq!(hit.impact_top_left, Vec2::new(24.0, 8.0));
     }
 
     #[test]

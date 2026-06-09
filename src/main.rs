@@ -4,6 +4,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::audio::{
     AddAudioSource, AudioPlayer, AudioSource, Decodable, PlaybackSettings, Source, Volume,
 };
+use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -4093,6 +4094,13 @@ fn clock_freeze_target(game_mode: GameMode, collector: PlayerId) -> Option<Playe
     }
 }
 
+fn grenade_player_target(game_mode: GameMode, collector: PlayerId) -> Option<PlayerId> {
+    match game_mode {
+        GameMode::Campaign => None,
+        GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => Some(collector.opponent()),
+    }
+}
+
 fn cancel_colliding_bullets(
     mut commands: Commands,
     assets: Res<SpriteAssets>,
@@ -4166,7 +4174,7 @@ fn spawn_versus_powerups(
 
 fn pickup_powerups(
     mut commands: Commands,
-    game_status: Res<GameStatus>,
+    mut game_status: ResMut<GameStatus>,
     game_mode: Res<GameMode>,
     assets: Res<SpriteAssets>,
     sounds: Res<SoundAssets>,
@@ -4181,15 +4189,16 @@ fn pickup_powerups(
     mut players: Query<
         (
             Entity,
-            &Tank,
+            &mut Tank,
             &Player,
             &mut PlayerUpgrade,
             &mut PlayerLives,
+            &mut Health,
             &mut Sprite,
         ),
-        With<Player>,
+        (With<Player>, Without<EnemyTank>),
     >,
-    enemy_tanks: Query<(Entity, &Tank, &EnemyTank), With<EnemyTank>>,
+    enemy_tanks: Query<(Entity, &Tank, &EnemyTank), (With<EnemyTank>, Without<Player>)>,
     mut score_board: ResMut<ScoreBoard>,
 ) {
     if !game_status.is_playing() {
@@ -4198,7 +4207,10 @@ fn pickup_powerups(
 
     for (powerup_entity, powerup, transform) in &powerups {
         let powerup_top_left = board_top_left_from_translation(transform.translation, TANK_SIZE);
-        for (player_entity, tank, player, mut upgrade, mut lives, mut sprite) in &mut players {
+        let mut grenade_target = None;
+        for (player_entity, tank, player, mut upgrade, mut lives, _health, mut sprite) in
+            &mut players
+        {
             if !rects_overlap(
                 tank.top_left,
                 Vec2::splat(TANK_SIZE),
@@ -4226,13 +4238,17 @@ fn pickup_powerups(
                     }
                 }
                 PowerUpKind::Grenade => {
-                    destroy_visible_enemies(
-                        &mut commands,
-                        &assets,
-                        &sounds,
-                        &mut score_board,
-                        &enemy_tanks,
-                    );
+                    if let Some(target) = grenade_player_target(*game_mode, player.id) {
+                        grenade_target = Some((player.id, target));
+                    } else {
+                        destroy_visible_enemies(
+                            &mut commands,
+                            &assets,
+                            &sounds,
+                            &mut score_board,
+                            &enemy_tanks,
+                        );
+                    }
                 }
                 PowerUpKind::Shovel => {
                     let positions = shovel_reinforcement_positions(
@@ -4266,6 +4282,42 @@ fn pickup_powerups(
             despawn_powerup_sparkles(&mut commands, &active_sparkles);
             play_sound(&mut commands, &sounds, SoundKind::PowerupPickup);
             break;
+        }
+
+        if let Some((shooter, target)) = grenade_target {
+            for (
+                target_entity,
+                mut target_tank,
+                target_player,
+                mut target_upgrade,
+                mut target_lives,
+                mut target_health,
+                _target_sprite,
+            ) in &mut players
+            {
+                if target_player.id != target {
+                    continue;
+                }
+
+                spawn_explosion(&mut commands, &assets, target_tank.top_left);
+                play_sound(&mut commands, &sounds, SoundKind::TankExplosion);
+                resolve_player_destroyed(
+                    &mut commands,
+                    &assets,
+                    &sounds,
+                    &mut game_status,
+                    &mut score_board,
+                    target_entity,
+                    &mut target_tank,
+                    &mut target_lives,
+                    &mut target_health,
+                    &mut target_upgrade,
+                    target,
+                    Some(shooter),
+                    *game_mode,
+                );
+                break;
+            }
         }
     }
 }
@@ -4335,12 +4387,12 @@ fn update_powerup_visuals(
     }
 }
 
-fn destroy_visible_enemies(
+fn destroy_visible_enemies<F: QueryFilter>(
     commands: &mut Commands,
     assets: &SpriteAssets,
     sounds: &SoundAssets,
     score_board: &mut ScoreBoard,
-    enemy_tanks: &Query<(Entity, &Tank, &EnemyTank), With<EnemyTank>>,
+    enemy_tanks: &Query<(Entity, &Tank, &EnemyTank), F>,
 ) {
     let mut destroyed_any = false;
     for (enemy_entity, enemy_tank, enemy) in enemy_tanks {
@@ -9630,6 +9682,22 @@ mod tests {
         );
         assert_eq!(
             clock_freeze_target(GameMode::VersusBaseBattle, PlayerId::Two),
+            Some(PlayerId::One)
+        );
+    }
+
+    #[test]
+    fn grenade_targets_opponent_only_in_versus() {
+        assert_eq!(
+            grenade_player_target(GameMode::Campaign, PlayerId::One),
+            None
+        );
+        assert_eq!(
+            grenade_player_target(GameMode::VersusDeathmatch, PlayerId::One),
+            Some(PlayerId::Two)
+        );
+        assert_eq!(
+            grenade_player_target(GameMode::VersusBaseBattle, PlayerId::Two),
             Some(PlayerId::One)
         );
     }

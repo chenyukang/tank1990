@@ -9267,6 +9267,22 @@ mod tests {
         );
     }
 
+    fn spawn_campaign_powerup_for_test(
+        mut commands: Commands,
+        assets: Res<SpriteAssets>,
+        active_powerups: Query<Entity, With<PowerUp>>,
+        active_sparkles: Query<Entity, With<PowerUpSparkle>>,
+    ) {
+        spawn_powerup(
+            &mut commands,
+            &assets,
+            PowerUpKind::Helmet,
+            Vec2::new(96.0, 96.0),
+            active_powerups.iter(),
+            &active_sparkles,
+        );
+    }
+
     #[test]
     fn window_scale_menu_defaults_and_cycles_crisp_scales() {
         assert_eq!(ModeSelect::default().window_scale, DEFAULT_WINDOW_SCALE);
@@ -13380,6 +13396,32 @@ mod tests {
             .collect();
 
         assert_eq!(drops, [(PowerUpKind::Helmet, carrier_top_left)]);
+    }
+
+    #[test]
+    fn campaign_powerup_drop_replaces_existing_powerup_and_sparkle() {
+        let mut app = App::new();
+        app.insert_resource(test_sprite_assets());
+        spawn_test_powerup(app.world_mut(), PowerUpKind::Star, Vec2::new(32.0, 32.0));
+        app.world_mut().spawn(PowerUpSparkle);
+        app.add_systems(Update, spawn_campaign_powerup_for_test);
+
+        app.update();
+
+        let mut powerups = app.world_mut().query::<(&PowerUp, &Transform)>();
+        let active: Vec<(PowerUpKind, Vec2)> = powerups
+            .iter(app.world())
+            .map(|(powerup, transform)| {
+                (
+                    powerup.kind,
+                    board_top_left_from_translation(transform.translation, TANK_SIZE),
+                )
+            })
+            .collect();
+        assert_eq!(active, [(PowerUpKind::Helmet, Vec2::new(96.0, 96.0))]);
+
+        let mut sparkles = app.world_mut().query::<&PowerUpSparkle>();
+        assert_eq!(sparkles.iter(app.world()).count(), 1);
     }
 
     #[test]

@@ -4887,6 +4887,7 @@ fn update_status_panel(
     game_mode: Res<GameMode>,
     game_status: Res<GameStatus>,
     score_board: Res<ScoreBoard>,
+    director: Res<EnemyDirector>,
     mut glyphs: Query<(&StatusGlyph, &mut Sprite)>,
     mut markers: Query<(&EnemyMarker, &mut Visibility)>,
     banners: Query<Entity, With<PhaseBanner>>,
@@ -4918,9 +4919,8 @@ fn update_status_panel(
         }
     }
 
-    let enemies_remaining = score_board
-        .total_enemies
-        .saturating_sub(score_board.enemies_destroyed);
+    let enemies_remaining =
+        enemy_markers_remaining(score_board.total_enemies, director.spawned_count);
     for (marker, mut visibility) in &mut markers {
         *visibility = if marker.index < enemies_remaining {
             Visibility::Visible
@@ -4953,6 +4953,10 @@ fn enemy_marker_top_left(index: usize) -> Vec2 {
         ENEMY_MARKER_LEFT + col as f32 * ENEMY_MARKER_CELL_X,
         ENEMY_MARKER_TOP + row as f32 * ENEMY_MARKER_CELL_Y,
     )
+}
+
+fn enemy_markers_remaining(total_enemies: usize, spawned_count: usize) -> usize {
+    total_enemies.saturating_sub(spawned_count)
 }
 
 fn enemy_marker_tank_index(manifest: &AssetManifest) -> usize {
@@ -8817,6 +8821,15 @@ mod tests {
         assert_eq!(last, Vec2::new(243.0, 195.0));
         assert!(last.x + ENEMY_MARKER_SIZE <= VIRTUAL_WIDTH - 4.0);
         assert!(last.y + ENEMY_MARKER_SIZE <= BOARD_ORIGIN_Y + board_size());
+    }
+
+    #[test]
+    fn campaign_enemy_markers_show_unspawned_inventory() {
+        assert_eq!(enemy_markers_remaining(20, 0), 20);
+        assert_eq!(enemy_markers_remaining(20, 1), 19);
+        assert_eq!(enemy_markers_remaining(20, 4), 16);
+        assert_eq!(enemy_markers_remaining(20, 20), 0);
+        assert_eq!(enemy_markers_remaining(20, 25), 0);
     }
 
     #[test]

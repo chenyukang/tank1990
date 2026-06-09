@@ -11970,6 +11970,106 @@ mod tests {
     }
 
     #[test]
+    fn shared_control_r_restarts_current_campaign_stage() {
+        let mut app = App::new();
+        let current_stage = 2;
+        let (expected_level, expected_grid) = load_stage_bundle_or_panic(current_stage);
+        let previous_level = parse_level(LEVEL_1).expect("level should parse");
+        let arena = parse_arena(ARENA_1).expect("arena should parse");
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyR);
+        let mut grid = TileGrid::empty();
+        grid.set(10, 24, TileKind::Brick);
+        let mut score_board = ScoreBoard::campaign(3);
+        score_board.score = 1200;
+        score_board.lives = 1;
+        score_board.enemies_destroyed = 2;
+        score_board.enemy_kills.add(EnemyKind::Fast);
+        let mut enemy_freeze = EnemyFreeze::default();
+        enemy_freeze.start();
+        let mut versus_freeze = VersusPlayerFreeze::default();
+        versus_freeze.start(PlayerId::Two);
+        let mut base_reinforcement = BaseReinforcement {
+            timer: None,
+            saved_tiles: vec![(10, 24, TileKind::Brick)],
+        };
+        base_reinforcement.start();
+
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Paused,
+            stage: current_stage,
+            arena: 5,
+            winner: Some(PlayerId::Two),
+            transition_timer: Timer::from_seconds(1.0, TimerMode::Once),
+        });
+        app.insert_resource(grid);
+        app.insert_resource(EnemyDirector::from_level(&previous_level));
+        app.insert_resource(score_board);
+        app.insert_resource(StageRules {
+            player_steel_destruction: true,
+        });
+        app.insert_resource(VersusPowerUpDirector::from_arena(&arena));
+        app.insert_resource(ModeSelect::default());
+        app.insert_resource(enemy_freeze);
+        app.insert_resource(versus_freeze);
+        app.insert_resource(base_reinforcement);
+        app.world_mut()
+            .spawn((GameEntity, OldStageEntity, GridTile { x: 10, y: 24 }));
+        app.add_systems(Update, handle_shared_controls);
+
+        app.update();
+
+        let status = app.world().resource::<GameStatus>();
+        assert_eq!(status.phase, GamePhase::StageIntro);
+        assert_eq!(status.stage, current_stage);
+        assert_eq!(status.winner, None);
+        assert_eq!(
+            app.world().resource::<TileGrid>().tiles,
+            expected_grid.tiles
+        );
+
+        let score_board = app.world().resource::<ScoreBoard>();
+        assert_eq!(score_board.score, 0);
+        assert_eq!(score_board.lives, 3);
+        assert_eq!(score_board.enemies_destroyed, 0);
+        assert_eq!(score_board.total_enemies, expected_level.enemies.len());
+        assert_eq!(score_board.enemy_kills.total(), 0);
+
+        let director = app.world().resource::<EnemyDirector>();
+        assert_eq!(director.roster.len(), expected_level.enemies.len());
+        assert_eq!(director.spawns.len(), expected_level.enemy_spawns.len());
+        assert_eq!(director.max_active, expected_level.max_enemies_on_screen);
+        assert_eq!(
+            *app.world().resource::<StageRules>(),
+            StageRules::from_level(&expected_level)
+        );
+        assert!(
+            app.world()
+                .resource::<VersusPowerUpDirector>()
+                .spawn_points
+                .is_empty()
+        );
+        assert!(!app.world().resource::<EnemyFreeze>().is_active());
+        assert!(
+            !app.world()
+                .resource::<VersusPlayerFreeze>()
+                .is_player_frozen(PlayerId::Two)
+        );
+        let reinforcement = app.world().resource::<BaseReinforcement>();
+        assert!(reinforcement.timer.is_none());
+        assert!(reinforcement.saved_tiles.is_empty());
+
+        let mut old_entities = app.world_mut().query::<&OldStageEntity>();
+        assert_eq!(old_entities.iter(app.world()).count(), 0);
+        let mut game_entities = app.world_mut().query::<&GameEntity>();
+        assert!(game_entities.iter(app.world()).count() > 0);
+    }
+
+    #[test]
     fn paused_phase_freezes_visual_effect_timers_only() {
         assert!(!visual_effects_can_advance(GamePhase::Paused));
         assert!(visual_effects_can_advance(GamePhase::StageIntro));

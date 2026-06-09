@@ -3765,6 +3765,8 @@ fn move_bullets(
             continue;
         }
 
+        let tile_hit = bullet_blocking_tile_hit(&grid, previous_top_left, bullet.top_left);
+
         if *game_mode == GameMode::Campaign && bullet.owner.is_player() {
             let mut hit_enemy = false;
             for (
@@ -3776,14 +3778,15 @@ fn move_bullets(
                 spawn_protection,
             ) in &mut enemy_tanks
             {
-                if rects_overlap(
-                    bullet.top_left,
-                    Vec2::splat(BULLET_SIZE),
-                    enemy_tank.top_left,
-                    Vec2::splat(TANK_SIZE),
-                ) {
+                if let Some(impact_top_left) =
+                    bullet_tank_hit(previous_top_left, bullet.top_left, enemy_tank.top_left)
+                {
+                    if !bullet_hit_is_before_tile(previous_top_left, impact_top_left, tile_hit) {
+                        continue;
+                    }
+
                     if spawn_protection.is_some() {
-                        spawn_bullet_impact_effect(&mut commands, &assets, bullet.top_left);
+                        spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
                         commands.entity(entity).despawn();
                         play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                         hit_enemy = true;
@@ -3813,7 +3816,7 @@ fn move_bullets(
                             );
                         }
                     } else {
-                        spawn_bullet_impact_effect(&mut commands, &assets, bullet.top_left);
+                        spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
                     }
                     play_sound(&mut commands, &sounds, hit_sound);
                     commands.entity(entity).despawn();
@@ -3841,14 +3844,15 @@ fn move_bullets(
                 player,
             ) in &mut player_tanks
             {
-                if player.id == shooter
-                    || !rects_overlap(
-                        bullet.top_left,
-                        Vec2::splat(BULLET_SIZE),
-                        player_tank.top_left,
-                        Vec2::splat(TANK_SIZE),
-                    )
-                {
+                if player.id == shooter {
+                    continue;
+                }
+                let Some(impact_top_left) =
+                    bullet_tank_hit(previous_top_left, bullet.top_left, player_tank.top_left)
+                else {
+                    continue;
+                };
+                if !bullet_hit_is_before_tile(previous_top_left, impact_top_left, tile_hit) {
                     continue;
                 }
 
@@ -3872,7 +3876,7 @@ fn move_bullets(
                         *game_mode,
                     );
                 } else {
-                    spawn_bullet_impact_effect(&mut commands, &assets, bullet.top_left);
+                    spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
                     play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                 }
                 commands.entity(entity).despawn();
@@ -3897,17 +3901,17 @@ fn move_bullets(
                 player,
             ) in &mut player_tanks
             {
-                if !rects_overlap(
-                    bullet.top_left,
-                    Vec2::splat(BULLET_SIZE),
-                    player_tank.top_left,
-                    Vec2::splat(TANK_SIZE),
-                ) {
+                let Some(impact_top_left) =
+                    bullet_tank_hit(previous_top_left, bullet.top_left, player_tank.top_left)
+                else {
+                    continue;
+                };
+                if !bullet_hit_is_before_tile(previous_top_left, impact_top_left, tile_hit) {
                     continue;
                 }
 
                 if shield.is_some() {
-                    spawn_bullet_impact_effect(&mut commands, &assets, bullet.top_left);
+                    spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
                     commands.entity(entity).despawn();
                     play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                     hit_player = true;
@@ -3941,8 +3945,7 @@ fn move_bullets(
             }
         }
 
-        if let Some(tile_hit) = bullet_blocking_tile_hit(&grid, previous_top_left, bullet.top_left)
-        {
+        if let Some(tile_hit) = tile_hit {
             spawn_bullet_impact_effect(&mut commands, &assets, tile_hit.impact_top_left);
             if bullet_destroys_tile(tile_hit.tile, bullet.breaks_steel) {
                 grid.set(tile_hit.x, tile_hit.y, TileKind::Empty);
@@ -6133,15 +6136,58 @@ fn bullet_destroys_tile(tile: TileKind, breaks_steel: bool) -> bool {
     matches!(tile, TileKind::Brick) || (breaks_steel && tile == TileKind::Steel)
 }
 
+fn bullet_tank_hit(start_top_left: Vec2, end_top_left: Vec2, tank_top_left: Vec2) -> Option<Vec2> {
+    let (start, delta, steps) = bullet_sweep(start_top_left, end_top_left);
+
+    for step in 1..=steps {
+        let center = start + delta * (step as f32 / steps as f32);
+        let impact_top_left = round_vec2(center - Vec2::splat(BULLET_SIZE / 2.0));
+        if rects_overlap(
+            impact_top_left,
+            Vec2::splat(BULLET_SIZE),
+            tank_top_left,
+            Vec2::splat(TANK_SIZE),
+        ) {
+            return Some(impact_top_left);
+        }
+    }
+
+    None
+}
+
+fn bullet_hit_is_before_tile(
+    start_top_left: Vec2,
+    impact_top_left: Vec2,
+    tile_hit: Option<BulletTileHit>,
+) -> bool {
+    let Some(tile_hit) = tile_hit else {
+        return true;
+    };
+
+    bullet_impact_distance_squared(start_top_left, impact_top_left)
+        < bullet_impact_distance_squared(start_top_left, tile_hit.impact_top_left)
+}
+
+fn bullet_impact_distance_squared(start_top_left: Vec2, impact_top_left: Vec2) -> f32 {
+    let start_center = start_top_left + Vec2::splat(BULLET_SIZE / 2.0);
+    let impact_center = impact_top_left + Vec2::splat(BULLET_SIZE / 2.0);
+    start_center.distance_squared(impact_center)
+}
+
+fn bullet_sweep(start_top_left: Vec2, end_top_left: Vec2) -> (Vec2, Vec2, usize) {
+    let start = start_top_left + Vec2::splat(BULLET_SIZE / 2.0);
+    let end = end_top_left + Vec2::splat(BULLET_SIZE / 2.0);
+    let delta = end - start;
+    let steps = ((delta.length() / (TILE_SIZE / 2.0)).ceil() as usize).max(1);
+    (start, delta, steps)
+}
+
 fn bullet_blocking_tile_hit(
     grid: &TileGrid,
     start_top_left: Vec2,
     end_top_left: Vec2,
 ) -> Option<BulletTileHit> {
-    let start = start_top_left + Vec2::splat(BULLET_SIZE / 2.0);
-    let end = end_top_left + Vec2::splat(BULLET_SIZE / 2.0);
-    let delta = end - start;
-    let steps = ((delta.length() / (TILE_SIZE / 2.0)).ceil() as usize).max(1);
+    let (start, delta, steps) = bullet_sweep(start_top_left, end_top_left);
 
     for step in 1..=steps {
         let center = start + delta * (step as f32 / steps as f32);
@@ -10194,6 +10240,84 @@ mod tests {
         assert_eq!(hit.y, 1);
         assert_eq!(hit.tile, TileKind::Brick);
         assert_eq!(hit.impact_top_left, Vec2::new(24.0, 8.0));
+    }
+
+    #[test]
+    fn bullet_tank_hit_uses_end_rect_for_normal_steps() {
+        assert_eq!(
+            bullet_tank_hit(
+                Vec2::new(20.0, 8.0),
+                Vec2::new(24.0, 8.0),
+                Vec2::new(24.0, 0.0)
+            ),
+            Some(Vec2::new(24.0, 8.0))
+        );
+    }
+
+    #[test]
+    fn bullet_tank_hit_sweeps_between_fast_steps() {
+        assert_eq!(
+            bullet_tank_hit(
+                Vec2::new(8.0, 8.0),
+                Vec2::new(52.0, 8.0),
+                Vec2::new(32.0, 0.0)
+            ),
+            Some(Vec2::new(32.0, 8.0))
+        );
+    }
+
+    #[test]
+    fn bullet_tank_hit_ignores_missed_lanes() {
+        assert_eq!(
+            bullet_tank_hit(
+                Vec2::new(8.0, 24.0),
+                Vec2::new(52.0, 24.0),
+                Vec2::new(32.0, 0.0)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn bullet_tank_hit_is_blocked_by_earlier_tile_hit() {
+        let mut grid = TileGrid::empty();
+        let start = Vec2::new(8.0, 8.0);
+        let end = Vec2::new(52.0, 8.0);
+        grid.set(3, 1, TileKind::Brick);
+
+        let tile_hit = bullet_blocking_tile_hit(&grid, start, end);
+        let tank_hit =
+            bullet_tank_hit(start, end, Vec2::new(32.0, 0.0)).expect("tank is later on the path");
+
+        assert_eq!(
+            tile_hit
+                .expect("brick should be first blocking tile")
+                .impact_top_left,
+            Vec2::new(24.0, 8.0)
+        );
+        assert_eq!(tank_hit, Vec2::new(32.0, 8.0));
+        assert!(!bullet_hit_is_before_tile(start, tank_hit, tile_hit));
+    }
+
+    #[test]
+    fn bullet_tank_hit_beats_later_tile_hit() {
+        let mut grid = TileGrid::empty();
+        let start = Vec2::new(8.0, 8.0);
+        let end = Vec2::new(52.0, 8.0);
+        grid.set(6, 1, TileKind::Steel);
+
+        let tile_hit = bullet_blocking_tile_hit(&grid, start, end);
+        let tank_hit =
+            bullet_tank_hit(start, end, Vec2::new(24.0, 0.0)).expect("tank is earlier on the path");
+
+        assert_eq!(
+            tile_hit
+                .expect("steel should be the later blocking tile")
+                .impact_top_left,
+            Vec2::new(48.0, 8.0)
+        );
+        assert_eq!(tank_hit, Vec2::new(24.0, 8.0));
+        assert!(bullet_hit_is_before_tile(start, tank_hit, tile_hit));
     }
 
     #[test]

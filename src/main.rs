@@ -13281,6 +13281,76 @@ mod tests {
     }
 
     #[test]
+    fn versus_fire_controls_spawn_each_players_bullet_independently() {
+        let mut app = App::new();
+        let p1_top_left = Vec2::new(32.0, 48.0);
+        let p2_top_left = Vec2::new(112.0, 48.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::Space);
+        keys.press(KeyCode::Enter);
+
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.world_mut().spawn((
+            Tank {
+                top_left: p1_top_left,
+                facing: Direction::Right,
+                speed: PLAYER_SPEED,
+            },
+            PlayerUpgrade { level: 0 },
+            Player { id: PlayerId::One },
+        ));
+        app.world_mut().spawn((
+            Tank {
+                top_left: p2_top_left,
+                facing: Direction::Left,
+                speed: PLAYER_SPEED,
+            },
+            PlayerUpgrade { level: 0 },
+            Player { id: PlayerId::Two },
+        ));
+        app.add_systems(Update, fire_player_bullet);
+
+        app.update();
+
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        let bullets: Vec<_> = bullets.iter(app.world()).collect();
+        assert_eq!(bullets.len(), 2);
+
+        let p1_bullet = bullets
+            .iter()
+            .find(|bullet| bullet.owner == Team::Player1)
+            .expect("P1 should fire a player-one bullet");
+        let p2_bullet = bullets
+            .iter()
+            .find(|bullet| bullet.owner == Team::Player2)
+            .expect("P2 should fire a player-two bullet");
+        let expected_p1_top_left = spawn_bullet_position(p1_top_left, Direction::Right);
+        let expected_p2_top_left = spawn_bullet_position(p2_top_left, Direction::Left);
+
+        assert_eq!(p1_bullet.previous_top_left, expected_p1_top_left);
+        assert_eq!(p1_bullet.top_left, expected_p1_top_left);
+        assert_eq!(p1_bullet.facing, Direction::Right);
+        assert_eq!(p1_bullet.speed, BULLET_SPEED);
+        assert!(!p1_bullet.breaks_steel);
+        assert!(!p1_bullet.resolved);
+
+        assert_eq!(p2_bullet.previous_top_left, expected_p2_top_left);
+        assert_eq!(p2_bullet.top_left, expected_p2_top_left);
+        assert_eq!(p2_bullet.facing, Direction::Left);
+        assert_eq!(p2_bullet.speed, BULLET_SPEED);
+        assert!(!p2_bullet.breaks_steel);
+        assert!(!p2_bullet.resolved);
+    }
+
+    #[test]
     fn player_fire_system_treats_held_fire_as_ready_input() {
         let mut app = App::new();
         let tank_top_left = Vec2::new(64.0, 80.0);

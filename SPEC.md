@@ -73,6 +73,7 @@ Default desktop window:
 
 - Use `3x` scale if it fits the display.
 - Fall back to `2x` if needed.
+- Allow `TANK_WINDOW_SCALE=2|3|4` to force a crisp integer-scaled window for capture or playtesting.
 - Never stretch non-uniformly.
 
 ### 4.2 Camera And Pixels

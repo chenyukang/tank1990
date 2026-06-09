@@ -9,7 +9,7 @@ use bevy::window::PresentMode;
 use serde::Deserialize;
 use std::collections::{HashSet, VecDeque};
 use std::fs;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 const ASSET_MANIFEST_PATH: &str = "assets/manifest.ron";
@@ -35,7 +35,11 @@ const GENERATED_UI_ICON_SIZE: usize = 8;
 
 const VIRTUAL_WIDTH: f32 = 256.0;
 const VIRTUAL_HEIGHT: f32 = 240.0;
-const WINDOW_SCALE: f32 = 3.0;
+const DEFAULT_WINDOW_SCALE: u32 = 3;
+const MIN_WINDOW_SCALE: u32 = 2;
+const MAX_WINDOW_SCALE: u32 = 4;
+const WINDOW_SCALE_ENV: &str = "TANK_WINDOW_SCALE";
+static WINDOW_SCALE_CACHE: OnceLock<f32> = OnceLock::new();
 
 const BOARD_ORIGIN_X: f32 = 0.0;
 const BOARD_ORIGIN_Y: f32 = 16.0;
@@ -89,7 +93,32 @@ const MAX_RETRO_SOUND_VOLUME: f32 = 1.0;
 const ICE_SPEED_MULTIPLIER: f32 = 1.18;
 const SPAWN_SHIMMER_FRAME_SECONDS: f32 = 0.08;
 
+fn window_scale() -> f32 {
+    *WINDOW_SCALE_CACHE.get_or_init(configured_window_scale)
+}
+
+fn configured_window_scale() -> f32 {
+    let requested = std::env::var(WINDOW_SCALE_ENV).ok();
+    parse_window_scale(requested.as_deref()) as f32
+}
+
+fn parse_window_scale(value: Option<&str>) -> u32 {
+    value
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .filter(|scale| (MIN_WINDOW_SCALE..=MAX_WINDOW_SCALE).contains(scale))
+        .unwrap_or(DEFAULT_WINDOW_SCALE)
+}
+
+fn virtual_window_size(scale: f32) -> (u32, u32) {
+    (
+        (VIRTUAL_WIDTH * scale).round() as u32,
+        (VIRTUAL_HEIGHT * scale).round() as u32,
+    )
+}
+
 fn main() {
+    let window_size = virtual_window_size(window_scale());
+
     App::new()
         .insert_resource(ClearColor(Color::BLACK))
         .insert_resource(Time::<Fixed>::from_hz(60.0))
@@ -107,11 +136,7 @@ fn main() {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "Tank 1990 Bevy Remake".into(),
-                        resolution: (
-                            (VIRTUAL_WIDTH * WINDOW_SCALE) as u32,
-                            (VIRTUAL_HEIGHT * WINDOW_SCALE) as u32,
-                        )
-                            .into(),
+                        resolution: window_size.into(),
                         present_mode: PresentMode::AutoVsync,
                         resizable: false,
                         ..default()
@@ -2354,7 +2379,7 @@ fn spawn_mode_select_screen(
     commands.spawn((
         Sprite::from_color(
             Color::srgb_u8(16, 16, 14),
-            Vec2::new(208.0 * WINDOW_SCALE, 208.0 * WINDOW_SCALE),
+            Vec2::new(208.0 * window_scale(), 208.0 * window_scale()),
         ),
         Transform::from_translation(virtual_center_scaled(
             Vec2::new(0.0, 16.0),
@@ -2423,7 +2448,7 @@ fn spawn_mode_select_arena_digits(
                 glyph_size(&assets.manifest.glyphs),
                 z,
             ))
-            .with_scale(Vec3::splat(WINDOW_SCALE)),
+            .with_scale(Vec3::splat(window_scale())),
             ModeSelectArenaGlyph { digit },
             GameEntity,
         ));
@@ -2453,7 +2478,7 @@ fn spawn_mode_select_battle_kind(
                 glyph_size(&assets.manifest.glyphs),
                 z,
             ))
-            .with_scale(Vec3::splat(WINDOW_SCALE)),
+            .with_scale(Vec3::splat(window_scale())),
             ModeSelectBattleKindGlyph { digit },
             GameEntity,
         ));
@@ -2475,7 +2500,7 @@ fn spawn_mode_select_cursor(commands: &mut Commands, assets: &SpriteAssets, sele
             },
         ),
         Transform::from_translation(mode_select_cursor_translation(selected))
-            .with_scale(Vec3::splat(WINDOW_SCALE)),
+            .with_scale(Vec3::splat(window_scale())),
         ModeSelectCursor,
         GameEntity,
     ));
@@ -2485,7 +2510,7 @@ fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets, mode: Game
     commands.spawn((
         Sprite::from_color(
             Color::srgb_u8(80, 80, 72),
-            Vec2::new(48.0 * WINDOW_SCALE, 208.0 * WINDOW_SCALE),
+            Vec2::new(48.0 * window_scale(), 208.0 * window_scale()),
         ),
         Transform::from_translation(virtual_center_scaled(
             Vec2::new(208.0, 16.0),
@@ -2498,7 +2523,7 @@ fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets, mode: Game
     commands.spawn((
         Sprite::from_color(
             Color::srgb_u8(36, 36, 32),
-            Vec2::new(40.0 * WINDOW_SCALE, 192.0 * WINDOW_SCALE),
+            Vec2::new(40.0 * window_scale(), 192.0 * window_scale()),
         ),
         Transform::from_translation(virtual_center_scaled(
             Vec2::new(212.0, 24.0),
@@ -2570,7 +2595,7 @@ fn spawn_enemy_marker(commands: &mut Commands, assets: &SpriteAssets, index: usi
             Vec2::splat(ENEMY_MARKER_SIZE),
             0.3,
         ))
-        .with_scale(Vec3::splat(WINDOW_SCALE * ENEMY_MARKER_SIZE / TANK_SIZE)),
+        .with_scale(Vec3::splat(window_scale() * ENEMY_MARKER_SIZE / TANK_SIZE)),
         Visibility::Visible,
         EnemyMarker { index },
         GameEntity,
@@ -2592,7 +2617,7 @@ fn spawn_player_life_icon(commands: &mut Commands, assets: &SpriteAssets) {
             0.3,
         ))
         .with_scale(Vec3::splat(
-            WINDOW_SCALE * PLAYER_LIFE_ICON_SIZE / TANK_SIZE,
+            window_scale() * PLAYER_LIFE_ICON_SIZE / TANK_SIZE,
         )),
         GameEntity,
     ));
@@ -2606,7 +2631,7 @@ fn spawn_stage_flag_icon(commands: &mut Commands, assets: &SpriteAssets) {
             generated_sprite_size(assets.manifest.ui.stage_flag),
             0.3,
         ))
-        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        .with_scale(Vec3::splat(window_scale())),
         GameEntity,
     ));
 }
@@ -2619,7 +2644,7 @@ fn spawn_score_badge_icon(commands: &mut Commands, assets: &SpriteAssets) {
             generated_sprite_size(assets.manifest.ui.score_badge),
             0.3,
         ))
-        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        .with_scale(Vec3::splat(window_scale())),
         GameEntity,
     ));
 }
@@ -2702,7 +2727,7 @@ fn spawn_status_digits(
                 glyph_size(&assets.manifest.glyphs),
                 z,
             ))
-            .with_scale(Vec3::splat(WINDOW_SCALE)),
+            .with_scale(Vec3::splat(window_scale())),
             StatusGlyph { kind, digit },
             GameEntity,
         ));
@@ -2738,7 +2763,7 @@ fn spawn_phase_text(
     commands.spawn((
         Sprite::from_color(
             Color::srgb_u8(48, 48, 40),
-            Vec2::new(132.0 * WINDOW_SCALE, background_height * WINDOW_SCALE),
+            Vec2::new(132.0 * window_scale(), background_height * window_scale()),
         ),
         Transform::from_translation(virtual_center_scaled(
             Vec2::new(36.0, background_top),
@@ -2790,7 +2815,7 @@ fn spawn_pixel_text_inner(
                 glyph_size(&assets.manifest.glyphs),
                 z,
             ))
-            .with_scale(Vec3::splat(WINDOW_SCALE)),
+            .with_scale(Vec3::splat(window_scale())),
             GameEntity,
         ));
 
@@ -2866,7 +2891,7 @@ fn spawn_base_sprite(
             generated_sprite_size(assets.manifest.base.intact),
             4.0,
         ))
-        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        .with_scale(Vec3::splat(window_scale())),
         BaseSprite { owner, top_left },
         GameEntity,
     ));
@@ -2901,7 +2926,7 @@ fn spawn_terrain_tile(
             },
         ),
         Transform::from_translation(board_tile_center(x, y, terrain_z(tile)))
-            .with_scale(Vec3::splat(WINDOW_SCALE)),
+            .with_scale(Vec3::splat(window_scale())),
         GridTile { x, y },
         GameEntity,
     ));
@@ -3095,7 +3120,7 @@ fn spawn_player_tank(
             Vec2::splat(TANK_SIZE),
             6.0,
         ))
-        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        .with_scale(Vec3::splat(window_scale())),
         Tank {
             top_left: player_top_left,
             facing: spawn.facing,
@@ -3285,7 +3310,7 @@ fn spawn_enemies(
                 Vec2::splat(TANK_SIZE),
                 6.0,
             ))
-            .with_scale(Vec3::splat(WINDOW_SCALE)),
+            .with_scale(Vec3::splat(window_scale())),
             Tank {
                 top_left,
                 facing: spawn.facing,
@@ -3462,7 +3487,7 @@ fn fire_enemy_bullets(
                 Vec2::splat(BULLET_SIZE),
                 7.0,
             ))
-            .with_scale(Vec3::splat(WINDOW_SCALE)),
+            .with_scale(Vec3::splat(window_scale())),
             Bullet {
                 top_left: bullet_top_left,
                 facing: tank.facing,
@@ -3535,7 +3560,7 @@ fn fire_player_bullet(
                 Vec2::splat(BULLET_SIZE),
                 7.0,
             ))
-            .with_scale(Vec3::splat(WINDOW_SCALE)),
+            .with_scale(Vec3::splat(window_scale())),
             Bullet {
                 top_left: bullet_top_left,
                 facing: tank.facing,
@@ -5092,7 +5117,7 @@ fn spawn_bullet_impact_effect(
             Vec2::splat(BULLET_SIZE),
             8.1,
         ))
-        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        .with_scale(Vec3::splat(window_scale())),
         SpriteAnimation {
             first: frames.first,
             last: frames.last,
@@ -5119,7 +5144,7 @@ fn spawn_explosion(commands: &mut Commands, assets: &SpriteAssets, top_left: Vec
             Vec2::splat(TANK_SIZE),
             8.0,
         ))
-        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        .with_scale(Vec3::splat(window_scale())),
         SpriteAnimation {
             first: frames.first,
             last: frames.last,
@@ -5202,7 +5227,7 @@ fn spawn_spawn_effect(commands: &mut Commands, assets: &SpriteAssets, top_left: 
             Vec2::splat(TANK_SIZE),
             8.0,
         ))
-        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        .with_scale(Vec3::splat(window_scale())),
         SpriteAnimation {
             first: frames.first,
             last: frames.last,
@@ -5229,7 +5254,7 @@ fn spawn_base_destruction_effect(commands: &mut Commands, assets: &SpriteAssets,
             Vec2::splat(TANK_SIZE),
             8.0,
         ))
-        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        .with_scale(Vec3::splat(window_scale())),
         SpriteAnimation {
             first: frames.first,
             last: frames.last,
@@ -5276,7 +5301,7 @@ fn spawn_powerup_entity(
             Vec2::splat(TANK_SIZE),
             5.5,
         ))
-        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        .with_scale(Vec3::splat(window_scale())),
         PowerUp { kind },
         GameEntity,
     ));
@@ -5299,7 +5324,7 @@ fn spawn_powerup_sparkle_effect(commands: &mut Commands, assets: &SpriteAssets, 
             Vec2::splat(TANK_SIZE),
             5.8,
         ))
-        .with_scale(Vec3::splat(WINDOW_SCALE)),
+        .with_scale(Vec3::splat(window_scale())),
         SpriteAnimation {
             first: frames.first,
             last: frames.last,
@@ -5925,8 +5950,8 @@ fn board_object_center(local_x: f32, local_y: f32, size: Vec2, z: f32) -> Vec3 {
 }
 
 fn board_top_left_from_translation(translation: Vec3, object_size: f32) -> Vec2 {
-    let center_x = translation.x / WINDOW_SCALE + VIRTUAL_WIDTH / 2.0;
-    let center_y = VIRTUAL_HEIGHT / 2.0 - translation.y / WINDOW_SCALE;
+    let center_x = translation.x / window_scale() + VIRTUAL_WIDTH / 2.0;
+    let center_y = VIRTUAL_HEIGHT / 2.0 - translation.y / window_scale();
     Vec2::new(
         center_x - object_size / 2.0 - BOARD_ORIGIN_X,
         center_y - object_size / 2.0 - BOARD_ORIGIN_Y,
@@ -5936,8 +5961,8 @@ fn board_top_left_from_translation(translation: Vec3, object_size: f32) -> Vec2 
 fn virtual_center_scaled(top_left: Vec2, size: Vec2, z: f32) -> Vec3 {
     let center = top_left + size / 2.0;
     Vec3::new(
-        (center.x - VIRTUAL_WIDTH / 2.0) * WINDOW_SCALE,
-        (VIRTUAL_HEIGHT / 2.0 - center.y) * WINDOW_SCALE,
+        (center.x - VIRTUAL_WIDTH / 2.0) * window_scale(),
+        (VIRTUAL_HEIGHT / 2.0 - center.y) * window_scale(),
         z,
     )
 }
@@ -7038,6 +7063,29 @@ mod tests {
   ],
 )"#
         )
+    }
+
+    #[test]
+    fn window_scale_defaults_and_accepts_integer_scales() {
+        assert_eq!(parse_window_scale(None), DEFAULT_WINDOW_SCALE);
+        assert_eq!(parse_window_scale(Some("2")), 2);
+        assert_eq!(parse_window_scale(Some("3")), 3);
+        assert_eq!(parse_window_scale(Some("4")), 4);
+        assert_eq!(parse_window_scale(Some(" 4 ")), 4);
+    }
+
+    #[test]
+    fn window_scale_rejects_non_crisp_or_out_of_range_values() {
+        for value in ["", "1", "5", "3.5", "abc"] {
+            assert_eq!(parse_window_scale(Some(value)), DEFAULT_WINDOW_SCALE);
+        }
+    }
+
+    #[test]
+    fn virtual_window_size_uses_integer_scale() {
+        assert_eq!(virtual_window_size(2.0), (512, 480));
+        assert_eq!(virtual_window_size(3.0), (768, 720));
+        assert_eq!(virtual_window_size(4.0), (1024, 960));
     }
 
     fn assert_manifest_glyph_is_visible(manifest: &AssetManifest, ch: char) {

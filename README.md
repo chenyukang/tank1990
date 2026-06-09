@@ -12,22 +12,17 @@ cargo run
 ```
 
 The default window scale is 3x. For capture or small displays, force a crisp
-integer scale with `2`, `3`, `4`, or the matching `x` suffix:
-
-```bash
-TANK_WINDOW_SCALE=2 cargo run
-TANK_WINDOW_SCALE=4x cargo run
-```
+integer scale from the main menu `SCALE` setting: `2X`, `3X`, or `4X`.
 
 ## Controls
 
 Mode select:
 
-- `W` / `S` or arrow up/down: switch Campaign/Battle/Music/Sound
+- `W` / `S` or arrow up/down: switch Campaign/Battle/Music/Sound/Scale
 - `A` / `D` or arrow left/right: choose stage while Campaign is selected, or
-  arena while Battle is selected; toggle `MUSIC` or `SOUND` settings
+  arena while Battle is selected; toggle `MUSIC`, `SOUND`, or `SCALE` settings
 - `Space`, `Enter`, or `RightShift`: start selected mode, or toggle the selected
-  audio setting
+  setting
 
 In game:
 
@@ -42,8 +37,8 @@ In game:
 ## Current Content
 
 - Campaign: 50 authored stages in `assets/levels/`.
-- Versus: 7 authored arenas in `assets/arenas/`.
-- Arenas 5 and 6 are `BaseBattle`; the others are `Deathmatch`.
+- Versus: 8 authored arenas in `assets/arenas/`.
+- Arenas 5, 6, and 8 are `BaseBattle`; the others are `Deathmatch`.
 - Generated placeholder sprite atlases and sounds are used when no personal
   override exists.
 

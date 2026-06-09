@@ -8,12 +8,13 @@ use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::window::PresentMode;
+use bevy::window::{PresentMode, PrimaryWindow};
 use serde::Deserialize;
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 const ASSET_MANIFEST_PATH: &str = "assets/manifest.ron";
@@ -69,7 +70,7 @@ const LEVEL_COUNT: usize = 50;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const LEVEL_CLEAR_SCORECARD_SECONDS: f32 = 4.0;
 const STAGE_INTRO_SECONDS: f32 = 1.2;
-const ARENA_COUNT: usize = 7;
+const ARENA_COUNT: usize = 8;
 const DEFAULT_VERSUS_ARENA: usize = 1;
 const TANK_ATLAS_TILES: usize = 48;
 const TANK_ANIMATION_FRAMES: usize = 2;
@@ -90,8 +91,7 @@ const VIRTUAL_HEIGHT: f32 = 240.0;
 const DEFAULT_WINDOW_SCALE: u32 = 3;
 const MIN_WINDOW_SCALE: u32 = 2;
 const MAX_WINDOW_SCALE: u32 = 4;
-const WINDOW_SCALE_ENV: &str = "TANK_WINDOW_SCALE";
-static WINDOW_SCALE_CACHE: OnceLock<f32> = OnceLock::new();
+static WINDOW_SCALE_SETTING: AtomicU32 = AtomicU32::new(DEFAULT_WINDOW_SCALE);
 
 const BOARD_ORIGIN_X: f32 = 0.0;
 const BOARD_ORIGIN_Y: f32 = 16.0;
@@ -151,26 +151,33 @@ const ICE_SPEED_MULTIPLIER: f32 = 1.18;
 const SPAWN_SHIMMER_FRAME_SECONDS: f32 = 0.08;
 
 fn window_scale() -> f32 {
-    *WINDOW_SCALE_CACHE.get_or_init(configured_window_scale)
+    WINDOW_SCALE_SETTING.load(Ordering::Relaxed) as f32
 }
 
-fn configured_window_scale() -> f32 {
-    let requested = std::env::var(WINDOW_SCALE_ENV).ok();
-    parse_window_scale(requested.as_deref()) as f32
+fn set_window_scale(scale: u32) {
+    WINDOW_SCALE_SETTING.store(clamp_window_scale(scale), Ordering::Relaxed);
 }
 
-fn parse_window_scale(value: Option<&str>) -> u32 {
-    value
-        .and_then(|raw| {
-            let trimmed = raw.trim();
-            let numeric = trimmed
-                .strip_suffix('x')
-                .or_else(|| trimmed.strip_suffix('X'))
-                .unwrap_or(trimmed);
-            numeric.parse::<u32>().ok()
-        })
-        .filter(|scale| (MIN_WINDOW_SCALE..=MAX_WINDOW_SCALE).contains(scale))
-        .unwrap_or(DEFAULT_WINDOW_SCALE)
+fn clamp_window_scale(scale: u32) -> u32 {
+    scale.clamp(MIN_WINDOW_SCALE, MAX_WINDOW_SCALE)
+}
+
+fn next_window_scale(scale: u32) -> u32 {
+    match clamp_window_scale(scale) {
+        MAX_WINDOW_SCALE => MIN_WINDOW_SCALE,
+        scale => scale + 1,
+    }
+}
+
+fn previous_window_scale(scale: u32) -> u32 {
+    match clamp_window_scale(scale) {
+        MIN_WINDOW_SCALE => MAX_WINDOW_SCALE,
+        scale => scale - 1,
+    }
+}
+
+fn window_scale_label(scale: u32) -> String {
+    format!("{}X", clamp_window_scale(scale))
 }
 
 fn virtual_window_size(scale: f32) -> (u32, u32) {
@@ -692,6 +699,7 @@ enum ModeSelectOption {
     Battle,
     Music,
     Sound,
+    Scale,
 }
 
 #[derive(Resource)]
@@ -701,6 +709,7 @@ struct ModeSelect {
     arena: usize,
     audio_mode: AudioMode,
     sound_enabled: bool,
+    window_scale: u32,
 }
 
 impl Default for ModeSelect {
@@ -711,6 +720,7 @@ impl Default for ModeSelect {
             arena: DEFAULT_VERSUS_ARENA,
             audio_mode: AudioMode::Bgm,
             sound_enabled: true,
+            window_scale: DEFAULT_WINDOW_SCALE,
         }
     }
 }
@@ -1653,11 +1663,12 @@ fn setup(
     spawn_mode_select_screen(
         &mut commands,
         &sprite_assets,
-        ModeSelectOption::Campaign,
-        1,
-        DEFAULT_VERSUS_ARENA,
+        mode_select.selected,
+        mode_select.stage,
+        mode_select.arena,
         mode_select.audio_mode,
         mode_select.sound_enabled,
+        mode_select.window_scale,
     );
 
     commands.insert_resource(sprite_assets);
@@ -1692,6 +1703,7 @@ fn handle_shared_controls(
         Query<(&ModeSelectBattleKindGlyph, &mut Sprite)>,
         Query<(&ModeSelectMusicGlyph, &mut Sprite)>,
         Query<(&ModeSelectSoundGlyph, &mut Sprite)>,
+        Query<&mut Window, With<PrimaryWindow>>,
     )>,
 ) {
     if game_status.phase == GamePhase::ModeSelect {
@@ -1745,6 +1757,17 @@ fn handle_shared_controls(
                         mode_select.sound_enabled,
                     );
                 }
+                ModeSelectOption::Scale => {
+                    let scale = previous_window_scale(mode_select.window_scale);
+                    change_mode_select_window_scale(&mut mode_select, scale);
+                    resize_primary_window(&mut menu_queries.p7(), mode_select.window_scale);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
+                    );
+                }
             }
         }
 
@@ -1786,6 +1809,17 @@ fn handle_shared_controls(
                         &mut menu_queries.p6(),
                         &assets.manifest.glyphs,
                         mode_select.sound_enabled,
+                    );
+                }
+                ModeSelectOption::Scale => {
+                    let scale = next_window_scale(mode_select.window_scale);
+                    change_mode_select_window_scale(&mut mode_select, scale);
+                    resize_primary_window(&mut menu_queries.p7(), mode_select.window_scale);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
                     );
                 }
             }
@@ -1849,6 +1883,17 @@ fn handle_shared_controls(
                         &mut menu_queries.p6(),
                         &assets.manifest.glyphs,
                         mode_select.sound_enabled,
+                    );
+                }
+                ModeSelectOption::Scale => {
+                    let scale = next_window_scale(mode_select.window_scale);
+                    change_mode_select_window_scale(&mut mode_select, scale);
+                    resize_primary_window(&mut menu_queries.p7(), mode_select.window_scale);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
                     );
                 }
             }
@@ -1948,6 +1993,7 @@ fn enter_mode_select(
         mode_select.arena,
         mode_select.audio_mode,
         mode_select.sound_enabled,
+        mode_select.window_scale,
     );
 
     *tile_grid = TileGrid::empty();
@@ -1961,6 +2007,40 @@ fn enter_mode_select(
     game_status.phase = GamePhase::ModeSelect;
     game_status.winner = None;
     game_status.transition_timer.reset();
+}
+
+fn change_mode_select_window_scale(mode_select: &mut ModeSelect, scale: u32) {
+    mode_select.window_scale = clamp_window_scale(scale);
+    set_window_scale(mode_select.window_scale);
+}
+
+fn resize_primary_window(primary_window: &mut Query<&mut Window, With<PrimaryWindow>>, scale: u32) {
+    if let Ok(mut window) = primary_window.single_mut() {
+        let (width, height) = virtual_window_size(scale as f32);
+        window.resolution.set(width as f32, height as f32);
+    }
+}
+
+fn respawn_mode_select_screen(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    mode_select: &ModeSelect,
+    game_entities: &Query<Entity, With<GameEntity>>,
+) {
+    for entity in game_entities {
+        commands.entity(entity).despawn();
+    }
+
+    spawn_mode_select_screen(
+        commands,
+        assets,
+        mode_select.selected,
+        mode_select.stage,
+        mode_select.arena,
+        mode_select.audio_mode,
+        mode_select.sound_enabled,
+        mode_select.window_scale,
+    );
 }
 
 fn restart_level(
@@ -2677,6 +2757,7 @@ fn spawn_mode_select_screen(
     arena: usize,
     audio_mode: AudioMode,
     sound_enabled: bool,
+    scale_setting: u32,
 ) {
     commands.spawn((
         Sprite::from_color(
@@ -2729,11 +2810,20 @@ fn spawn_mode_select_screen(
         Vec2::new(124.0, 145.0),
         0.3,
     );
-    spawn_pixel_text(commands, assets, "STAGE", Vec2::new(59.0, 160.0), 0.3);
-    spawn_mode_select_stage_digits(commands, assets, stage, Vec2::new(95.0, 160.0), 0.3);
-    spawn_pixel_text(commands, assets, "ARENA", Vec2::new(59.0, 172.0), 0.3);
-    spawn_mode_select_arena_digits(commands, assets, arena, Vec2::new(95.0, 172.0), 0.3);
-    spawn_mode_select_battle_kind(commands, assets, arena, Vec2::new(115.0, 172.0), 0.3);
+    spawn_pixel_text(
+        commands,
+        assets,
+        "SCALE",
+        mode_select_option_top_left(ModeSelectOption::Scale),
+        0.3,
+    );
+    let scale_label = window_scale_label(scale_setting);
+    spawn_pixel_text(commands, assets, &scale_label, Vec2::new(124.0, 159.0), 0.3);
+    spawn_pixel_text(commands, assets, "STAGE", Vec2::new(59.0, 171.0), 0.3);
+    spawn_mode_select_stage_digits(commands, assets, stage, Vec2::new(95.0, 171.0), 0.3);
+    spawn_pixel_text(commands, assets, "ARENA", Vec2::new(59.0, 183.0), 0.3);
+    spawn_mode_select_arena_digits(commands, assets, arena, Vec2::new(95.0, 183.0), 0.3);
+    spawn_mode_select_battle_kind(commands, assets, arena, Vec2::new(115.0, 183.0), 0.3);
     spawn_mode_select_hints(commands, assets);
     spawn_mode_select_cursor(commands, assets, selected);
 }
@@ -2745,7 +2835,7 @@ fn spawn_mode_select_hints(commands: &mut Commands, assets: &SpriteAssets) {
             commands,
             assets,
             line,
-            Vec2::new((208.0 - text_width) / 2.0, 190.0 + index as f32 * 11.0),
+            Vec2::new((208.0 - text_width) / 2.0, 197.0 + index as f32 * 9.0),
             0.3,
         );
     }
@@ -5728,16 +5818,18 @@ fn next_mode_select_option(option: ModeSelectOption) -> ModeSelectOption {
         ModeSelectOption::Campaign => ModeSelectOption::Battle,
         ModeSelectOption::Battle => ModeSelectOption::Music,
         ModeSelectOption::Music => ModeSelectOption::Sound,
-        ModeSelectOption::Sound => ModeSelectOption::Campaign,
+        ModeSelectOption::Sound => ModeSelectOption::Scale,
+        ModeSelectOption::Scale => ModeSelectOption::Campaign,
     }
 }
 
 fn previous_mode_select_option(option: ModeSelectOption) -> ModeSelectOption {
     match option {
-        ModeSelectOption::Campaign => ModeSelectOption::Sound,
+        ModeSelectOption::Campaign => ModeSelectOption::Scale,
         ModeSelectOption::Battle => ModeSelectOption::Campaign,
         ModeSelectOption::Music => ModeSelectOption::Battle,
         ModeSelectOption::Sound => ModeSelectOption::Music,
+        ModeSelectOption::Scale => ModeSelectOption::Sound,
     }
 }
 
@@ -5762,6 +5854,7 @@ fn mode_select_option_top_left(option: ModeSelectOption) -> Vec2 {
         ModeSelectOption::Battle => Vec2::new(88.0, 113.0),
         ModeSelectOption::Music => Vec2::new(82.0, 131.0),
         ModeSelectOption::Sound => Vec2::new(82.0, 145.0),
+        ModeSelectOption::Scale => Vec2::new(82.0, 159.0),
     }
 }
 
@@ -8412,6 +8505,7 @@ mod tests {
     const ARENA_5: &str = include_str!("../assets/arenas/arena_05.ron");
     const ARENA_6: &str = include_str!("../assets/arenas/arena_06.ron");
     const ARENA_7: &str = include_str!("../assets/arenas/arena_07.ron");
+    const ARENA_8: &str = include_str!("../assets/arenas/arena_08.ron");
     const GITIGNORE: &str = include_str!("../.gitignore");
     const TEST_SPAWN_INVULNERABILITY_SECONDS: f32 = 3.25;
 
@@ -8479,6 +8573,7 @@ mod tests {
             (5, ARENA_5),
             (6, ARENA_6),
             (7, ARENA_7),
+            (8, ARENA_8),
         ]
     }
 
@@ -8732,22 +8827,19 @@ mod tests {
     }
 
     #[test]
-    fn window_scale_defaults_and_accepts_integer_scales() {
-        assert_eq!(parse_window_scale(None), DEFAULT_WINDOW_SCALE);
-        assert_eq!(parse_window_scale(Some("2")), 2);
-        assert_eq!(parse_window_scale(Some("3")), 3);
-        assert_eq!(parse_window_scale(Some("4")), 4);
-        assert_eq!(parse_window_scale(Some(" 4 ")), 4);
-        assert_eq!(parse_window_scale(Some("2x")), 2);
-        assert_eq!(parse_window_scale(Some("3X")), 3);
-        assert_eq!(parse_window_scale(Some(" 4x ")), 4);
-    }
-
-    #[test]
-    fn window_scale_rejects_non_crisp_or_out_of_range_values() {
-        for value in ["", "1", "5", "1x", "5x", "3.5", "abc", "3xx", "4 x"] {
-            assert_eq!(parse_window_scale(Some(value)), DEFAULT_WINDOW_SCALE);
-        }
+    fn window_scale_menu_defaults_and_cycles_crisp_scales() {
+        assert_eq!(ModeSelect::default().window_scale, DEFAULT_WINDOW_SCALE);
+        assert_eq!(window_scale_label(2), "2X");
+        assert_eq!(window_scale_label(3), "3X");
+        assert_eq!(window_scale_label(4), "4X");
+        assert_eq!(next_window_scale(2), 3);
+        assert_eq!(next_window_scale(3), 4);
+        assert_eq!(next_window_scale(4), 2);
+        assert_eq!(previous_window_scale(2), 4);
+        assert_eq!(previous_window_scale(3), 2);
+        assert_eq!(previous_window_scale(4), 3);
+        assert_eq!(clamp_window_scale(1), 2);
+        assert_eq!(clamp_window_scale(5), 4);
     }
 
     #[test]
@@ -11135,7 +11227,7 @@ mod tests {
     }
 
     #[test]
-    fn mode_select_cycles_campaign_battle_music_and_sound() {
+    fn mode_select_cycles_campaign_battle_music_sound_and_scale() {
         assert_eq!(
             next_mode_select_option(ModeSelectOption::Campaign),
             ModeSelectOption::Battle
@@ -11150,10 +11242,18 @@ mod tests {
         );
         assert_eq!(
             next_mode_select_option(ModeSelectOption::Sound),
+            ModeSelectOption::Scale
+        );
+        assert_eq!(
+            next_mode_select_option(ModeSelectOption::Scale),
             ModeSelectOption::Campaign
         );
         assert_eq!(
             previous_mode_select_option(ModeSelectOption::Campaign),
+            ModeSelectOption::Scale
+        );
+        assert_eq!(
+            previous_mode_select_option(ModeSelectOption::Scale),
             ModeSelectOption::Sound
         );
         assert_eq!(
@@ -11175,14 +11275,16 @@ mod tests {
         assert_eq!(next_arena(4), 5);
         assert_eq!(next_arena(5), 6);
         assert_eq!(next_arena(6), 7);
-        assert_eq!(next_arena(7), 1);
-        assert_eq!(previous_arena(1), 7);
+        assert_eq!(next_arena(7), 8);
+        assert_eq!(next_arena(8), 1);
+        assert_eq!(previous_arena(1), 8);
         assert_eq!(previous_arena(2), 1);
         assert_eq!(previous_arena(3), 2);
         assert_eq!(previous_arena(4), 3);
         assert_eq!(previous_arena(5), 4);
         assert_eq!(previous_arena(6), 5);
         assert_eq!(previous_arena(7), 6);
+        assert_eq!(previous_arena(8), 7);
     }
 
     #[test]
@@ -11217,10 +11319,12 @@ mod tests {
         let battle = mode_select_cursor_translation(ModeSelectOption::Battle);
         let music = mode_select_cursor_translation(ModeSelectOption::Music);
         let sound = mode_select_cursor_translation(ModeSelectOption::Sound);
+        let scale = mode_select_cursor_translation(ModeSelectOption::Scale);
         assert_eq!(campaign.x, battle.x);
         assert!(campaign.y > battle.y);
         assert!(battle.y > music.y);
         assert!(music.y > sound.y);
+        assert!(sound.y > scale.y);
     }
 
     #[test]
@@ -11231,7 +11335,8 @@ mod tests {
             ["WS ARROWS SELECT", "AD ARROWS CHANGE", "SPACE ENTER START"]
         );
         for line in [
-            "STAGE", "ARENA", "37", "BASE", "DUEL", "MUSIC", "BGM", "CLASSIC", "SOUND", "ON", "OFF",
+            "STAGE", "ARENA", "37", "BASE", "DUEL", "MUSIC", "BGM", "CLASSIC", "SOUND", "ON",
+            "OFF", "SCALE", "2X", "3X", "4X",
         ]
         .into_iter()
         .chain(MODE_SELECT_HINT_LINES)
@@ -12364,6 +12469,30 @@ mod tests {
             panic!("arena seven should be deathmatch");
         };
         assert_eq!(target_score, 5);
+    }
+
+    #[test]
+    fn arena_eight_authors_base_battle_bridge_lanes() {
+        let arena = parse_arena(ARENA_8).expect("arena should parse");
+        let grid = TileGrid::from_arena(&arena).expect("grid should build");
+
+        assert!(grid.tiles.contains(&TileKind::Water));
+        assert!(grid.tiles.contains(&TileKind::Forest));
+        assert!(grid.tiles.contains(&TileKind::Ice));
+        assert!(grid.tiles.contains(&TileKind::Steel));
+        assert_eq!(arena.powerup_spawns.len(), 3);
+        assert_eq!(arena.p1_spawn.x, 4);
+        assert_eq!(arena.p1_spawn.y, 24);
+        assert_eq!(arena.p2_spawn.x, 20);
+        assert_eq!(arena.p2_spawn.y, 0);
+        let BattleRules::BaseBattle {
+            p1_base, p2_base, ..
+        } = arena.battle_rules
+        else {
+            panic!("arena eight should be base battle");
+        };
+        assert_eq!(p1_base, GridPoint { x: 0, y: 24 });
+        assert_eq!(p2_base, GridPoint { x: 24, y: 0 });
     }
 
     #[test]

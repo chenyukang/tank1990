@@ -72,9 +72,8 @@ Render the virtual canvas to the actual window using integer scaling:
 
 Default desktop window:
 
-- Use `3x` scale if it fits the display.
-- Fall back to `2x` if needed.
-- Allow `TANK_WINDOW_SCALE=2|3|4` or `2x|3x|4x` to force a crisp integer-scaled window for capture or playtesting.
+- Start at `3x` scale.
+- Allow the main menu `SCALE` setting to switch between `2X`, `3X`, and `4X` for capture or playtesting.
 - Never stretch non-uniformly.
 
 ### 4.2 Camera And Pixels
@@ -603,7 +602,7 @@ Current implementation note:
 - Base and standalone UI icon manifest entries include generated sprite dimensions.
 - Glyphs use generated placeholder pixels, but their atlas character order and tile dimensions live in `assets/manifest.ron`.
 - Sounds use generated placeholder waveforms, but their retro sweep/noise/note definitions now live in `assets/manifest.ron`.
-- `assets/arenas/arena_05.ron` is the first playable `BaseBattle` arena, with `arena_06.ron` adding a second base-defense layout; `arena_07.ron` adds another authored `Deathmatch` layout. Destroying a player's base ends the round for the opponent.
+- `assets/arenas/arena_05.ron` is the first playable `BaseBattle` arena, with `arena_06.ron` and `arena_08.ron` adding more base-defense layouts; `arena_07.ron` adds another authored `Deathmatch` layout. Destroying a player's base ends the round for the opponent.
 
 ### 10.2 Audio Style
 
@@ -620,10 +619,11 @@ Audio should be simple and era-appropriate:
 
 Background music configuration:
 
-- Main menu includes `MUSIC` and `SOUND` settings.
+- Main menu includes `MUSIC`, `SOUND`, and `SCALE` settings.
 - `MUSIC BGM` plays the generated or personal background loop during active play.
 - `MUSIC CLASSIC` disables the continuous loop and keeps short jingle/effect playback for a more original Battle City-style audio profile.
 - `SOUND ON/OFF` enables or mutes one-shot sound effects and short jingles without changing the continuous music profile.
+- `SCALE 2X/3X/4X` resizes the crisp integer-scaled window from the main menu.
 - `assets/personal/sounds/background.ogg` overrides the generated loop.
 - A personally supplied original soundtrack should be converted outside the project and placed at that path; do not commit or redistribute it.
 

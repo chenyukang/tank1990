@@ -13110,6 +13110,53 @@ mod tests {
     }
 
     #[test]
+    fn player_move_system_allows_ice_and_applies_speed_boost() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(4.0 * TILE_SIZE, 4.0 * TILE_SIZE);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyD);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(TILE_SIZE / PLAYER_SPEED));
+        let mut grid = TileGrid::empty();
+        for y in 4..=5 {
+            for x in 4..=5 {
+                grid.set(x, y, TileKind::Ice);
+            }
+        }
+
+        app.insert_resource(time);
+        app.insert_resource(keys);
+        app.insert_resource(PlayerControl::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(grid);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(VersusPlayerFreeze::default());
+        spawn_movable_test_player(app.world_mut(), PlayerId::One, tank_top_left, Direction::Up);
+        app.add_systems(Update, move_player_tank);
+
+        app.update();
+
+        let expected_top_left =
+            round_vec2(tank_top_left + Vec2::new(TILE_SIZE * ICE_SPEED_MULTIPLIER, 0.0));
+        let mut players = app.world_mut().query::<(&Tank, &Transform)>();
+        let (tank, transform) = players.single(app.world()).unwrap();
+        assert_eq!(tank.top_left, expected_top_left);
+        assert_eq!(tank.facing, Direction::Right);
+        assert_eq!(
+            transform.translation,
+            board_object_center(
+                expected_top_left.x,
+                expected_top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0
+            )
+        );
+    }
+
+    #[test]
     fn player_move_system_blocks_tank_from_entering_solid_tiles() {
         for tile in [TileKind::Brick, TileKind::Steel, TileKind::Base] {
             let mut app = App::new();

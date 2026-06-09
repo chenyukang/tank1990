@@ -136,6 +136,7 @@ const SHOVEL_WARNING_SECONDS: f32 = 2.0;
 const EXPLOSION_FRAME_SECONDS: f32 = 0.07;
 const BULLET_IMPACT_FRAME_SECONDS: f32 = 0.05;
 const STAGE_CLEAR_LIFE_BONUS: u32 = 1000;
+const MAX_PLAYER_LIVES: i32 = 9;
 const ENEMY_ALIGNMENT_FIRE_FRACTION: f32 = 0.45;
 const VERSUS_POWERUP_INTERVAL_SECONDS: f32 = 8.0;
 const SOUND_SAMPLE_RATE: u32 = 22_050;
@@ -4248,6 +4249,23 @@ fn grenade_player_target(game_mode: GameMode, collector: PlayerId) -> Option<Pla
     }
 }
 
+fn grant_extra_life(
+    lives: &mut PlayerLives,
+    score_board: &mut ScoreBoard,
+    game_mode: GameMode,
+    player: PlayerId,
+) {
+    lives.current = lives.current.saturating_add(1).min(MAX_PLAYER_LIVES);
+    match game_mode {
+        GameMode::Campaign => {
+            score_board.lives = lives.current;
+        }
+        GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
+            score_board.set_player_lives(player, lives.current);
+        }
+    }
+}
+
 fn cancel_colliding_bullets(
     mut commands: Commands,
     assets: Res<SpriteAssets>,
@@ -4450,15 +4468,7 @@ fn pickup_powerups(
                     );
                 }
                 PowerUpKind::Tank => {
-                    lives.current += 1;
-                    match *game_mode {
-                        GameMode::Campaign => {
-                            score_board.lives = lives.current;
-                        }
-                        GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
-                            score_board.set_player_lives(player.id, lives.current);
-                        }
-                    }
+                    grant_extra_life(&mut lives, &mut score_board, *game_mode, player.id);
                 }
             }
             commands.entity(powerup_entity).despawn();
@@ -5172,14 +5182,14 @@ fn status_value_text(
             }
         },
         StatusValue::Lives => match mode {
-            GameMode::Campaign => format!("{}", score_board.lives.clamp(0, 9)),
+            GameMode::Campaign => format!("{}", score_board.lives.clamp(0, MAX_PLAYER_LIVES)),
             GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
-                format!("{}", score_board.p1_lives.clamp(0, 9))
+                format!("{}", score_board.p1_lives.clamp(0, MAX_PLAYER_LIVES))
             }
         },
         StatusValue::Stage => format!("{:02}", game_status.stage.min(99)),
         StatusValue::P2Score => format!("{:02}", score_board.p2_score.min(99)),
-        StatusValue::P2Lives => format!("{}", score_board.p2_lives.clamp(0, 9)),
+        StatusValue::P2Lives => format!("{}", score_board.p2_lives.clamp(0, MAX_PLAYER_LIVES)),
         StatusValue::Arena => format!("{:02}", game_status.arena.min(99)),
         StatusValue::Target => format!("{:02}", score_board.target_score.min(99)),
     }
@@ -7960,6 +7970,57 @@ mod tests {
             breaks_steel: false,
             resolved,
         }
+    }
+
+    fn spawn_test_player(world: &mut World, id: PlayerId, top_left: Vec2, lives: i32) {
+        world.spawn((
+            Tank {
+                top_left,
+                facing: Direction::Up,
+                speed: PLAYER_SPEED,
+            },
+            Player { id },
+            PlayerUpgrade { level: 0 },
+            PlayerLives { current: lives },
+            Health { current: 1 },
+            Transform::from_translation(board_object_center(
+                top_left.x,
+                top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0,
+            )),
+            Sprite::default(),
+        ));
+    }
+
+    fn spawn_test_powerup(world: &mut World, kind: PowerUpKind, top_left: Vec2) {
+        world.spawn((
+            PowerUp { kind },
+            Transform::from_translation(board_object_center(
+                top_left.x,
+                top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0,
+            )),
+        ));
+    }
+
+    fn powerup_pickup_app(game_mode: GameMode, score_board: ScoreBoard) -> App {
+        let mut app = App::new();
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(game_mode);
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.insert_resource(BaseReinforcement::default());
+        app.insert_resource(score_board);
+        app.add_systems(Update, pickup_powerups);
+        app
     }
 
     fn bullet_paths_clash_impact(
@@ -10901,6 +10962,74 @@ mod tests {
         assert_eq!(powerup_for_cycle(4), PowerUpKind::Shovel);
         assert_eq!(powerup_for_cycle(5), PowerUpKind::Tank);
         assert_eq!(powerup_for_cycle(6), PowerUpKind::Star);
+    }
+
+    #[test]
+    fn tank_powerup_caps_campaign_lives_to_status_digit() {
+        let top_left = Vec2::new(64.0, 64.0);
+        let mut score_board = ScoreBoard::campaign(20);
+        score_board.lives = MAX_PLAYER_LIVES;
+        let mut app = powerup_pickup_app(GameMode::Campaign, score_board);
+
+        spawn_test_player(app.world_mut(), PlayerId::One, top_left, MAX_PLAYER_LIVES);
+        spawn_test_powerup(app.world_mut(), PowerUpKind::Tank, top_left);
+
+        app.update();
+
+        let score_board = app.world().resource::<ScoreBoard>();
+        assert_eq!(score_board.lives, MAX_PLAYER_LIVES);
+        assert_eq!(
+            status_value_text(
+                StatusValue::Lives,
+                GameMode::Campaign,
+                &GameStatus::default(),
+                score_board,
+            ),
+            "9"
+        );
+        let mut players = app.world_mut().query::<&PlayerLives>();
+        let lives: Vec<i32> = players
+            .iter(app.world())
+            .map(|lives| lives.current)
+            .collect();
+        assert_eq!(lives, [MAX_PLAYER_LIVES]);
+    }
+
+    #[test]
+    fn tank_powerup_updates_versus_collector_lives() {
+        let top_left = Vec2::new(96.0, 64.0);
+        let mut score_board = ScoreBoard::versus(3, 5, 2.0);
+        score_board.set_player_lives(PlayerId::Two, MAX_PLAYER_LIVES - 1);
+        let mut app = powerup_pickup_app(GameMode::VersusDeathmatch, score_board);
+
+        spawn_test_player(
+            app.world_mut(),
+            PlayerId::Two,
+            top_left,
+            MAX_PLAYER_LIVES - 1,
+        );
+        spawn_test_powerup(app.world_mut(), PowerUpKind::Tank, top_left);
+
+        app.update();
+
+        let score_board = app.world().resource::<ScoreBoard>();
+        assert_eq!(score_board.p1_lives, 3);
+        assert_eq!(score_board.p2_lives, MAX_PLAYER_LIVES);
+        assert_eq!(
+            status_value_text(
+                StatusValue::P2Lives,
+                GameMode::VersusDeathmatch,
+                &GameStatus::default(),
+                score_board,
+            ),
+            "9"
+        );
+        let mut players = app.world_mut().query::<&PlayerLives>();
+        let lives: Vec<i32> = players
+            .iter(app.world())
+            .map(|lives| lives.current)
+            .collect();
+        assert_eq!(lives, [MAX_PLAYER_LIVES]);
     }
 
     #[test]

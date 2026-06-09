@@ -13045,6 +13045,72 @@ mod tests {
     }
 
     #[test]
+    fn enemy_spawning_waits_for_clear_spawn_area_without_consuming_roster() {
+        let level = parse_level(LEVEL_1).expect("level should parse");
+        let grid = TileGrid::from_level(&level).expect("grid should build");
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(grid);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(EnemyDirector::from_level(&level));
+
+        let blockers: Vec<Entity> = level
+            .enemy_spawns
+            .iter()
+            .map(|spawn| {
+                app.world_mut()
+                    .spawn(Tank {
+                        top_left: spawn_point_top_left(spawn),
+                        facing: Direction::Down,
+                        speed: 0.0,
+                    })
+                    .id()
+            })
+            .collect();
+        app.add_systems(Update, spawn_enemies);
+
+        app.update();
+
+        assert_eq!(enemy_tank_count(&mut app), 0);
+        let director = app.world().resource::<EnemyDirector>();
+        assert_eq!(director.spawned_count, 0);
+        assert_eq!(director.roster.len(), level.enemies.len());
+
+        for blocker in blockers {
+            app.world_mut().entity_mut(blocker).despawn();
+        }
+        app.update();
+
+        assert_eq!(enemy_tank_count(&mut app), 1);
+        let spawned_top_left = spawned_enemy_top_lefts(&mut app);
+        assert_eq!(
+            spawned_top_left,
+            vec![spawn_point_top_left(&level.enemy_spawns[0])]
+        );
+        let director = app.world().resource::<EnemyDirector>();
+        assert_eq!(director.spawned_count, 1);
+        assert_eq!(director.roster.len(), level.enemies.len() - 1);
+    }
+
+    fn enemy_tank_count(app: &mut App) -> usize {
+        let mut query = app.world_mut().query::<&EnemyTank>();
+        query.iter(app.world()).count()
+    }
+
+    fn spawned_enemy_top_lefts(app: &mut App) -> Vec<Vec2> {
+        let mut query = app.world_mut().query::<(&Tank, &EnemyTank)>();
+        query
+            .iter(app.world())
+            .map(|(tank, _)| tank.top_left)
+            .collect()
+    }
+
+    #[test]
     fn level_rejects_invalid_powerup_carrier_markers() {
         let duplicate =
             LEVEL_1.replacen("(enemy: 10, kind: Helmet)", "(enemy: 5, kind: Helmet)", 1);

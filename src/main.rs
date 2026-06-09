@@ -9934,6 +9934,88 @@ mod tests {
     }
 
     #[test]
+    fn player_respawn_system_waits_until_respawn_point_is_clear() {
+        let mut app = App::new();
+        let respawn_top_left = Vec2::new(64.0, 192.0);
+        let frames = SpriteFrameRange { first: 0, last: 3 };
+        let mut pending_respawn = PlayerRespawnPending::for_explosion(frames);
+        assert!(pending_respawn.tick(Duration::from_secs_f32(explosion_duration_secs(frames))));
+
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ScoreBoard::versus(3, 5, 1.5));
+
+        let player_entity = app
+            .world_mut()
+            .spawn((
+                Player { id: PlayerId::One },
+                PlayerUpgrade { level: 3 },
+                RespawnPoint {
+                    top_left: respawn_top_left,
+                    facing: Direction::Up,
+                },
+                pending_respawn,
+                Transform::default(),
+                Sprite {
+                    color: player_upgrade_visual_color(3),
+                    ..default()
+                },
+                TankSpriteState::new(TankSpriteSet::Player1),
+            ))
+            .id();
+        let blocker = app
+            .world_mut()
+            .spawn(Tank {
+                top_left: respawn_top_left,
+                facing: Direction::Down,
+                speed: 0.0,
+            })
+            .id();
+        app.add_systems(Update, tick_player_respawns);
+
+        app.update();
+
+        assert!(
+            app.world()
+                .get::<PlayerRespawnPending>(player_entity)
+                .is_some()
+        );
+        assert!(app.world().get::<Tank>(player_entity).is_none());
+
+        app.world_mut().entity_mut(blocker).despawn();
+        app.update();
+
+        let tank = app
+            .world()
+            .get::<Tank>(player_entity)
+            .expect("player should respawn once the spawn point clears");
+        assert_eq!(tank.top_left, respawn_top_left);
+        assert_eq!(tank.facing, Direction::Up);
+        assert!(
+            app.world()
+                .get::<PlayerRespawnPending>(player_entity)
+                .is_none()
+        );
+        assert!(
+            app.world()
+                .get::<PlayerRespawnDelay>(player_entity)
+                .is_some()
+        );
+        assert!(app.world().get::<Shield>(player_entity).is_some());
+        assert_eq!(
+            app.world()
+                .get::<PlayerUpgrade>(player_entity)
+                .expect("player upgrade should remain present")
+                .level,
+            0
+        );
+    }
+
+    #[test]
     fn parked_destroyed_tank_is_outside_the_battlefield() {
         let top_left = parked_tank_top_left();
         assert!(top_left.x + TANK_SIZE < 0.0);

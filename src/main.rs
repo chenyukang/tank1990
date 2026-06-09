@@ -1,7 +1,9 @@
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 use bevy::asset::RenderAssetUsages;
-use bevy::audio::{AddAudioSource, AudioPlayer, Decodable, PlaybackSettings, Source, Volume};
+use bevy::audio::{
+    AddAudioSource, AudioPlayer, AudioSource, Decodable, PlaybackSettings, Source, Volume,
+};
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -24,6 +26,15 @@ const PERSONAL_BASE_INTACT_PATH: &str = "personal/base_intact.png";
 const PERSONAL_BASE_DESTROYED_PATH: &str = "personal/base_destroyed.png";
 const PERSONAL_SCORE_BADGE_PATH: &str = "personal/score_badge.png";
 const PERSONAL_STAGE_FLAG_PATH: &str = "personal/stage_flag.png";
+const PERSONAL_FIRE_SOUND_PATH: &str = "personal/sounds/fire.ogg";
+const PERSONAL_BRICK_HIT_SOUND_PATH: &str = "personal/sounds/brick_hit.ogg";
+const PERSONAL_STEEL_HIT_SOUND_PATH: &str = "personal/sounds/steel_hit.ogg";
+const PERSONAL_TANK_EXPLOSION_SOUND_PATH: &str = "personal/sounds/tank_explosion.ogg";
+const PERSONAL_BASE_DESTROYED_SOUND_PATH: &str = "personal/sounds/base_destroyed.ogg";
+const PERSONAL_POWERUP_PICKUP_SOUND_PATH: &str = "personal/sounds/powerup_pickup.ogg";
+const PERSONAL_STAGE_START_SOUND_PATH: &str = "personal/sounds/stage_start.ogg";
+const PERSONAL_LEVEL_CLEAR_SOUND_PATH: &str = "personal/sounds/level_clear.ogg";
+const PERSONAL_GAME_OVER_SOUND_PATH: &str = "personal/sounds/game_over.ogg";
 #[cfg(test)]
 const PERSONAL_SPRITE_OVERRIDE_PATHS: [&str; 9] = [
     PERSONAL_TANK_ATLAS_PATH,
@@ -35,6 +46,18 @@ const PERSONAL_SPRITE_OVERRIDE_PATHS: [&str; 9] = [
     PERSONAL_BASE_DESTROYED_PATH,
     PERSONAL_SCORE_BADGE_PATH,
     PERSONAL_STAGE_FLAG_PATH,
+];
+#[cfg(test)]
+const PERSONAL_SOUND_OVERRIDE_PATHS: [&str; 9] = [
+    PERSONAL_FIRE_SOUND_PATH,
+    PERSONAL_BRICK_HIT_SOUND_PATH,
+    PERSONAL_STEEL_HIT_SOUND_PATH,
+    PERSONAL_TANK_EXPLOSION_SOUND_PATH,
+    PERSONAL_BASE_DESTROYED_SOUND_PATH,
+    PERSONAL_POWERUP_PICKUP_SOUND_PATH,
+    PERSONAL_STAGE_START_SOUND_PATH,
+    PERSONAL_LEVEL_CLEAR_SOUND_PATH,
+    PERSONAL_GAME_OVER_SOUND_PATH,
 ];
 const LEVEL_COUNT: usize = 35;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
@@ -472,15 +495,21 @@ enum RetroSoundSpec {
 
 #[derive(Resource)]
 struct SoundAssets {
-    fire: Handle<RetroSound>,
-    brick_hit: Handle<RetroSound>,
-    steel_hit: Handle<RetroSound>,
-    tank_explosion: Handle<RetroSound>,
-    base_destroyed: Handle<RetroSound>,
-    powerup_pickup: Handle<RetroSound>,
-    stage_start: Handle<RetroSound>,
-    level_clear: Handle<RetroSound>,
-    game_over: Handle<RetroSound>,
+    fire: SoundHandle,
+    brick_hit: SoundHandle,
+    steel_hit: SoundHandle,
+    tank_explosion: SoundHandle,
+    base_destroyed: SoundHandle,
+    powerup_pickup: SoundHandle,
+    stage_start: SoundHandle,
+    level_clear: SoundHandle,
+    game_over: SoundHandle,
+}
+
+#[derive(Clone)]
+enum SoundHandle {
+    Retro(Handle<RetroSound>),
+    File(Handle<AudioSource>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1511,7 +1540,8 @@ fn setup(
     commands.spawn(Camera2d);
 
     let sprite_assets = create_sprite_assets(&asset_server, &mut images, &mut atlas_layouts);
-    let sound_assets = create_sound_assets(&mut retro_sounds, &sprite_assets.manifest);
+    let sound_assets =
+        create_sound_assets(&asset_server, &mut retro_sounds, &sprite_assets.manifest);
     spawn_mode_select_screen(
         &mut commands,
         &sprite_assets,
@@ -6144,17 +6174,79 @@ fn create_sprite_assets(
     }
 }
 
-fn create_sound_assets(sounds: &mut Assets<RetroSound>, manifest: &AssetManifest) -> SoundAssets {
+fn sound_handle_or_generated(
+    asset_server: &AssetServer,
+    sounds: &mut Assets<RetroSound>,
+    asset_path: &'static str,
+    spec: &RetroSoundSpec,
+) -> SoundHandle {
+    if personal_asset_exists(asset_path) {
+        SoundHandle::File(asset_server.load(asset_path))
+    } else {
+        SoundHandle::Retro(sounds.add(make_manifest_sound(spec)))
+    }
+}
+
+fn create_sound_assets(
+    asset_server: &AssetServer,
+    sounds: &mut Assets<RetroSound>,
+    manifest: &AssetManifest,
+) -> SoundAssets {
     SoundAssets {
-        fire: sounds.add(make_manifest_sound(&manifest.sounds.fire)),
-        brick_hit: sounds.add(make_manifest_sound(&manifest.sounds.brick_hit)),
-        steel_hit: sounds.add(make_manifest_sound(&manifest.sounds.steel_hit)),
-        tank_explosion: sounds.add(make_manifest_sound(&manifest.sounds.tank_explosion)),
-        base_destroyed: sounds.add(make_manifest_sound(&manifest.sounds.base_destroyed)),
-        powerup_pickup: sounds.add(make_manifest_sound(&manifest.sounds.powerup_pickup)),
-        stage_start: sounds.add(make_manifest_sound(&manifest.sounds.stage_start)),
-        level_clear: sounds.add(make_manifest_sound(&manifest.sounds.level_clear)),
-        game_over: sounds.add(make_manifest_sound(&manifest.sounds.game_over)),
+        fire: sound_handle_or_generated(
+            asset_server,
+            sounds,
+            PERSONAL_FIRE_SOUND_PATH,
+            &manifest.sounds.fire,
+        ),
+        brick_hit: sound_handle_or_generated(
+            asset_server,
+            sounds,
+            PERSONAL_BRICK_HIT_SOUND_PATH,
+            &manifest.sounds.brick_hit,
+        ),
+        steel_hit: sound_handle_or_generated(
+            asset_server,
+            sounds,
+            PERSONAL_STEEL_HIT_SOUND_PATH,
+            &manifest.sounds.steel_hit,
+        ),
+        tank_explosion: sound_handle_or_generated(
+            asset_server,
+            sounds,
+            PERSONAL_TANK_EXPLOSION_SOUND_PATH,
+            &manifest.sounds.tank_explosion,
+        ),
+        base_destroyed: sound_handle_or_generated(
+            asset_server,
+            sounds,
+            PERSONAL_BASE_DESTROYED_SOUND_PATH,
+            &manifest.sounds.base_destroyed,
+        ),
+        powerup_pickup: sound_handle_or_generated(
+            asset_server,
+            sounds,
+            PERSONAL_POWERUP_PICKUP_SOUND_PATH,
+            &manifest.sounds.powerup_pickup,
+        ),
+        stage_start: sound_handle_or_generated(
+            asset_server,
+            sounds,
+            PERSONAL_STAGE_START_SOUND_PATH,
+            &manifest.sounds.stage_start,
+        ),
+        level_clear: sound_handle_or_generated(
+            asset_server,
+            sounds,
+            PERSONAL_LEVEL_CLEAR_SOUND_PATH,
+            &manifest.sounds.level_clear,
+        ),
+        game_over: sound_handle_or_generated(
+            asset_server,
+            sounds,
+            PERSONAL_GAME_OVER_SOUND_PATH,
+            &manifest.sounds.game_over,
+        ),
     }
 }
 
@@ -6167,20 +6259,25 @@ struct SoundNote {
 
 fn play_sound(commands: &mut Commands, sounds: &SoundAssets, kind: SoundKind) {
     let handle = match kind {
-        SoundKind::Fire => sounds.fire.clone(),
-        SoundKind::BrickHit => sounds.brick_hit.clone(),
-        SoundKind::SteelHit => sounds.steel_hit.clone(),
-        SoundKind::TankExplosion => sounds.tank_explosion.clone(),
-        SoundKind::BaseDestroyed => sounds.base_destroyed.clone(),
-        SoundKind::PowerupPickup => sounds.powerup_pickup.clone(),
-        SoundKind::StageStart => sounds.stage_start.clone(),
-        SoundKind::LevelClear => sounds.level_clear.clone(),
-        SoundKind::GameOver => sounds.game_over.clone(),
+        SoundKind::Fire => &sounds.fire,
+        SoundKind::BrickHit => &sounds.brick_hit,
+        SoundKind::SteelHit => &sounds.steel_hit,
+        SoundKind::TankExplosion => &sounds.tank_explosion,
+        SoundKind::BaseDestroyed => &sounds.base_destroyed,
+        SoundKind::PowerupPickup => &sounds.powerup_pickup,
+        SoundKind::StageStart => &sounds.stage_start,
+        SoundKind::LevelClear => &sounds.level_clear,
+        SoundKind::GameOver => &sounds.game_over,
     };
-    commands.spawn((
-        AudioPlayer(handle),
-        PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.45)),
-    ));
+    let playback = PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.45));
+    match handle {
+        SoundHandle::Retro(handle) => {
+            commands.spawn((AudioPlayer(handle.clone()), playback));
+        }
+        SoundHandle::File(handle) => {
+            commands.spawn((AudioPlayer(handle.clone()), playback));
+        }
+    }
 }
 
 fn make_manifest_sound(spec: &RetroSoundSpec) -> RetroSound {
@@ -7168,6 +7265,21 @@ mod tests {
         for asset_path in PERSONAL_SPRITE_OVERRIDE_PATHS {
             assert!(asset_path.starts_with("personal/"));
             assert!(asset_path.ends_with(".png"));
+            assert!(!asset_path.starts_with('/'));
+            assert!(!asset_path.contains(".."));
+            assert_eq!(
+                personal_asset_disk_path(asset_path),
+                Path::new(ASSET_ROOT_DIR).join(asset_path)
+            );
+        }
+    }
+
+    #[test]
+    fn personal_sound_override_paths_are_asset_root_relative_ogg_files() {
+        assert_eq!(PERSONAL_SOUND_OVERRIDE_PATHS.len(), 9);
+        for asset_path in PERSONAL_SOUND_OVERRIDE_PATHS {
+            assert!(asset_path.starts_with("personal/sounds/"));
+            assert!(asset_path.ends_with(".ogg"));
             assert!(!asset_path.starts_with('/'));
             assert!(!asset_path.contains(".."));
             assert_eq!(

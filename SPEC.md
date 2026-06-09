@@ -532,6 +532,26 @@ assets/personal/score_badge.png
 assets/personal/stage_flag.png
 ```
 
+Personal sound overrides:
+
+- Runtime may load local-only `.ogg` sounds from `assets/personal/sounds/` before falling back to generated retro sounds.
+- These files are also covered by the `assets/personal/` gitignore rule.
+- Convert copied or ROM-extracted sounds to short `.ogg` clips before use.
+
+Supported personal sound paths:
+
+```text
+assets/personal/sounds/fire.ogg
+assets/personal/sounds/brick_hit.ogg
+assets/personal/sounds/steel_hit.ogg
+assets/personal/sounds/tank_explosion.ogg
+assets/personal/sounds/base_destroyed.ogg
+assets/personal/sounds/powerup_pickup.ogg
+assets/personal/sounds/stage_start.ogg
+assets/personal/sounds/level_clear.ogg
+assets/personal/sounds/game_over.ogg
+```
+
 ### 10.1 Asset Manifest
 
 Use an explicit asset manifest instead of hard-coding every atlas index in gameplay systems.

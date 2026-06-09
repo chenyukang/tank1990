@@ -597,7 +597,7 @@ Current implementation note:
 - Atlas manifest entries define tile size and tile count for generated tank, terrain, bullet, effect, and power-up atlases.
 - Tank manifest entries include separate two-frame directional groups for P1, P2, Basic, Fast, Power, and Armor tanks.
 - Generated tank atlas frames use direction-specific tread and body silhouettes, so horizontal tanks do not reuse the vertical tank outline.
-- Bullet manifest entries include four directional atlas indices.
+- Bullet manifest entries include four directional atlas indices, and generated bullet sprites use vertical or horizontal silhouettes that match their travel direction.
 - Terrain manifest entries include a two-frame water animation range plus static brick, steel, forest, and ice entries.
 - Effect manifest entries include explosion, spawn shimmer, base destruction, and power-up sparkle frame ranges.
 - Base and standalone UI icon manifest entries include generated sprite dimensions.

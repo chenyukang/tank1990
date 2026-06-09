@@ -7932,27 +7932,55 @@ fn draw_tank_group(pixels: &mut [u8], width: usize, x_offset: usize, palette: Ta
 fn create_bullet_atlas(manifest: GeneratedAtlasManifest) -> Image {
     let atlas_width = manifest.tile_width * manifest.tiles;
     let mut pixels = vec![0; atlas_width * manifest.tile_height * 4];
-    for index in 0..manifest.tiles {
-        let x_offset = index * manifest.tile_width;
-        fill_rect(
-            &mut pixels,
-            atlas_width,
-            x_offset,
-            0,
-            4,
-            4,
-            [248, 248, 216, 255],
-        );
-        set_pixel(&mut pixels, atlas_width, x_offset, 0, [128, 112, 64, 255]);
-        set_pixel(
-            &mut pixels,
-            atlas_width,
-            x_offset + 3,
-            3,
-            [128, 112, 64, 255],
-        );
-    }
+    draw_bullet(&mut pixels, atlas_width, 0, Direction::Up);
+    draw_bullet(
+        &mut pixels,
+        atlas_width,
+        manifest.tile_width,
+        Direction::Down,
+    );
+    draw_bullet(
+        &mut pixels,
+        atlas_width,
+        manifest.tile_width * 2,
+        Direction::Left,
+    );
+    draw_bullet(
+        &mut pixels,
+        atlas_width,
+        manifest.tile_width * 3,
+        Direction::Right,
+    );
     image_from_pixels(atlas_width, manifest.tile_height, pixels)
+}
+
+fn draw_bullet(pixels: &mut [u8], width: usize, x_offset: usize, direction: Direction) {
+    let light = [248, 248, 216, 255];
+    let mid = [208, 184, 96, 255];
+    let dark = [128, 112, 64, 255];
+
+    match direction {
+        Direction::Up => {
+            fill_rect(pixels, width, x_offset + 1, 0, 2, 1, light);
+            fill_rect(pixels, width, x_offset + 1, 1, 2, 2, mid);
+            fill_rect(pixels, width, x_offset + 1, 3, 2, 1, dark);
+        }
+        Direction::Down => {
+            fill_rect(pixels, width, x_offset + 1, 0, 2, 1, dark);
+            fill_rect(pixels, width, x_offset + 1, 1, 2, 2, mid);
+            fill_rect(pixels, width, x_offset + 1, 3, 2, 1, light);
+        }
+        Direction::Left => {
+            fill_rect(pixels, width, x_offset, 1, 1, 2, light);
+            fill_rect(pixels, width, x_offset + 1, 1, 2, 2, mid);
+            fill_rect(pixels, width, x_offset + 3, 1, 1, 2, dark);
+        }
+        Direction::Right => {
+            fill_rect(pixels, width, x_offset, 1, 1, 2, dark);
+            fill_rect(pixels, width, x_offset + 1, 1, 2, 2, mid);
+            fill_rect(pixels, width, x_offset + 3, 1, 1, 2, light);
+        }
+    }
 }
 
 fn create_effect_atlas(manifest: GeneratedAtlasManifest) -> Image {
@@ -9603,6 +9631,32 @@ mod tests {
         let right_offset = manifest.atlases.tanks.tile_width * 3;
         assert_eq!(image_pixel(&image, right_offset + 8, 13), player1_tread);
         assert_eq!(image_pixel(&image, right_offset + 13, 8), player1_light);
+    }
+
+    #[test]
+    fn generated_bullet_atlas_uses_directional_silhouettes() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let image = create_bullet_atlas(manifest.atlases.bullets);
+        let light = [248, 248, 216, 255];
+        let dark = [128, 112, 64, 255];
+        let transparent = [0, 0, 0, 0];
+
+        assert_eq!(image_pixel(&image, 1, 0), light);
+        assert_eq!(image_pixel(&image, 1, 3), dark);
+        assert_eq!(image_pixel(&image, 0, 0), transparent);
+
+        let down_offset = manifest.atlases.bullets.tile_width;
+        assert_eq!(image_pixel(&image, down_offset + 1, 0), dark);
+        assert_eq!(image_pixel(&image, down_offset + 1, 3), light);
+
+        let left_offset = manifest.atlases.bullets.tile_width * 2;
+        assert_eq!(image_pixel(&image, left_offset, 1), light);
+        assert_eq!(image_pixel(&image, left_offset + 3, 1), dark);
+        assert_eq!(image_pixel(&image, left_offset, 0), transparent);
+
+        let right_offset = manifest.atlases.bullets.tile_width * 3;
+        assert_eq!(image_pixel(&image, right_offset, 1), dark);
+        assert_eq!(image_pixel(&image, right_offset + 3, 1), light);
     }
 
     #[test]

@@ -3746,6 +3746,7 @@ fn move_bullets(
     for (entity, mut bullet, mut transform) in &mut bullets {
         let facing = bullet.facing;
         let speed = bullet.speed;
+        let previous_top_left = bullet.top_left;
         bullet.top_left += facing.movement() * speed * time.delta_secs();
         bullet.top_left = round_vec2(bullet.top_left);
 
@@ -3932,11 +3933,9 @@ fn move_bullets(
             }
         }
 
-        let tile_x = (center.x / TILE_SIZE).floor() as usize;
-        let tile_y = (center.y / TILE_SIZE).floor() as usize;
-        let tile = grid.tiles[tile_y * BOARD_TILES + tile_x];
-
-        if tile.bullet_blocks() {
+        if let Some((tile_x, tile_y, tile)) =
+            bullet_blocking_tile_hit(&grid, previous_top_left, bullet.top_left)
+        {
             spawn_bullet_impact_effect(&mut commands, &assets, bullet.top_left);
             if bullet_destroys_tile(tile, bullet.breaks_steel) {
                 grid.set(tile_x, tile_y, TileKind::Empty);
@@ -6125,6 +6124,34 @@ fn player_bullets_break_steel(upgrade_level: u8, stage_rules: StageRules) -> boo
 
 fn bullet_destroys_tile(tile: TileKind, breaks_steel: bool) -> bool {
     matches!(tile, TileKind::Brick) || (breaks_steel && tile == TileKind::Steel)
+}
+
+fn bullet_blocking_tile_hit(
+    grid: &TileGrid,
+    start_top_left: Vec2,
+    end_top_left: Vec2,
+) -> Option<(usize, usize, TileKind)> {
+    let start = start_top_left + Vec2::splat(BULLET_SIZE / 2.0);
+    let end = end_top_left + Vec2::splat(BULLET_SIZE / 2.0);
+    let delta = end - start;
+    let steps = ((delta.length() / (TILE_SIZE / 2.0)).ceil() as usize).max(1);
+
+    for step in 1..=steps {
+        let center = start + delta * (step as f32 / steps as f32);
+        if center.x < 0.0 || center.y < 0.0 || center.x >= board_size() || center.y >= board_size()
+        {
+            continue;
+        }
+
+        let tile_x = (center.x / TILE_SIZE).floor() as usize;
+        let tile_y = (center.y / TILE_SIZE).floor() as usize;
+        let tile = grid.tiles[tile_y * BOARD_TILES + tile_x];
+        if tile.bullet_blocks() {
+            return Some((tile_x, tile_y, tile));
+        }
+    }
+
+    None
 }
 
 fn validate_level_positions(level: &LevelDefinition, grid: &TileGrid) -> Result<(), String> {
@@ -10126,6 +10153,29 @@ mod tests {
         assert!(!bullet_destroys_tile(TileKind::Steel, false));
         assert!(bullet_destroys_tile(TileKind::Steel, true));
         assert!(!bullet_destroys_tile(TileKind::Base, true));
+    }
+
+    #[test]
+    fn bullet_tile_hit_uses_end_tile_for_normal_steps() {
+        let mut grid = TileGrid::empty();
+        grid.set(3, 1, TileKind::Steel);
+
+        assert_eq!(
+            bullet_blocking_tile_hit(&grid, Vec2::new(20.0, 8.0), Vec2::new(24.0, 8.0)),
+            Some((3, 1, TileKind::Steel))
+        );
+    }
+
+    #[test]
+    fn bullet_tile_hit_sweeps_between_fast_steps() {
+        let mut grid = TileGrid::empty();
+        grid.set(3, 1, TileKind::Brick);
+        grid.set(4, 1, TileKind::Steel);
+
+        assert_eq!(
+            bullet_blocking_tile_hit(&grid, Vec2::new(8.0, 8.0), Vec2::new(36.0, 8.0)),
+            Some((3, 1, TileKind::Brick))
+        );
     }
 
     #[test]

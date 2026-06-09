@@ -3052,10 +3052,7 @@ fn sync_tile_sprite(
     y: usize,
     tile: TileKind,
 ) {
-    if tile_grid.tiles[y * BOARD_TILES + x] == tile {
-        return;
-    }
-
+    // Refresh same-kind tiles too, so temporary tints from shovel warnings cannot stick.
     tile_grid.set(x, y, tile);
     for (tile_entity, grid_tile) in tile_sprites {
         if grid_tile.x == x && grid_tile.y == y {
@@ -7485,6 +7482,49 @@ mod tests {
         )
     }
 
+    fn test_sprite_assets() -> SpriteAssets {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let image = Handle::<Image>::default();
+        let layout = Handle::<TextureAtlasLayout>::default();
+
+        SpriteAssets {
+            manifest,
+            terrain_image: image.clone(),
+            terrain_layout: layout.clone(),
+            tank_image: image.clone(),
+            tank_layout: layout.clone(),
+            bullet_image: image.clone(),
+            bullet_layout: layout.clone(),
+            effect_image: image.clone(),
+            effect_layout: layout.clone(),
+            powerup_image: image.clone(),
+            powerup_layout: layout.clone(),
+            glyph_image: image.clone(),
+            glyph_layout: layout,
+            base_intact: image.clone(),
+            base_destroyed: image.clone(),
+            score_badge_icon: image.clone(),
+            stage_flag_icon: image,
+        }
+    }
+
+    fn refresh_same_kind_steel_tile_for_test(
+        mut commands: Commands,
+        assets: Res<SpriteAssets>,
+        mut tile_grid: ResMut<TileGrid>,
+        tile_sprites: Query<(Entity, &GridTile)>,
+    ) {
+        sync_tile_sprite(
+            &mut commands,
+            &assets,
+            &mut tile_grid,
+            &tile_sprites,
+            10,
+            24,
+            TileKind::Steel,
+        );
+    }
+
     #[test]
     fn window_scale_defaults_and_accepts_integer_scales() {
         assert_eq!(parse_window_scale(None), DEFAULT_WINDOW_SCALE);
@@ -10035,6 +10075,52 @@ mod tests {
     fn shovel_warning_visuals_flash_yellow() {
         assert_eq!(shovel_warning_visual_rgb(0.05), [255, 255, 255]);
         assert_eq!(shovel_warning_visual_rgb(0.18), [248, 232, 96]);
+    }
+
+    #[test]
+    fn same_kind_tile_sync_refreshes_sprite_to_clear_shovel_tint() {
+        let mut app = App::new();
+        let assets = test_sprite_assets();
+        let mut grid = TileGrid::empty();
+        grid.set(10, 24, TileKind::Steel);
+
+        let mut tinted_sprite = Sprite::from_atlas_image(
+            assets.terrain_image.clone(),
+            TextureAtlas {
+                layout: assets.terrain_layout.clone(),
+                index: assets.manifest.terrain.steel,
+            },
+        );
+        tinted_sprite.color = shovel_warning_visual_color(0.18);
+
+        app.insert_resource(assets);
+        app.insert_resource(grid);
+        app.world_mut()
+            .spawn((tinted_sprite, GridTile { x: 10, y: 24 }, GameEntity));
+        app.add_systems(Update, refresh_same_kind_steel_tile_for_test);
+
+        app.update();
+
+        let mut query = app.world_mut().query::<(&GridTile, &Sprite)>();
+        let matching_sprites: Vec<&Sprite> = query
+            .iter(app.world())
+            .filter_map(|(tile, sprite)| (tile.x == 10 && tile.y == 24).then_some(sprite))
+            .collect();
+
+        assert_eq!(matching_sprites.len(), 1);
+        assert_eq!(matching_sprites[0].color, Color::WHITE);
+        assert_eq!(
+            matching_sprites[0]
+                .texture_atlas
+                .as_ref()
+                .expect("refreshed terrain sprite should use the terrain atlas")
+                .index,
+            app.world()
+                .resource::<SpriteAssets>()
+                .manifest
+                .terrain
+                .steel
+        );
     }
 
     #[test]

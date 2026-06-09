@@ -9135,6 +9135,30 @@ mod tests {
         ));
     }
 
+    fn spawn_movable_test_player(
+        world: &mut World,
+        id: PlayerId,
+        top_left: Vec2,
+        facing: Direction,
+    ) {
+        world.spawn((
+            Tank {
+                top_left,
+                facing,
+                speed: PLAYER_SPEED,
+            },
+            TankSpriteState::new(TankSpriteSet::player(id)),
+            Player { id },
+            Transform::from_translation(board_object_center(
+                top_left.x,
+                top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0,
+            )),
+            Sprite::default(),
+        ));
+    }
+
     fn spawn_test_powerup(world: &mut World, kind: PowerUpKind, top_left: Vec2) {
         world.spawn((
             PowerUp { kind },
@@ -13017,22 +13041,7 @@ mod tests {
             ..GameStatus::default()
         });
         app.insert_resource(VersusPlayerFreeze::default());
-        app.world_mut().spawn((
-            Tank {
-                top_left: tank_top_left,
-                facing: Direction::Up,
-                speed: PLAYER_SPEED,
-            },
-            TankSpriteState::new(TankSpriteSet::player(PlayerId::One)),
-            Player { id: PlayerId::One },
-            Transform::from_translation(board_object_center(
-                tank_top_left.x,
-                tank_top_left.y,
-                Vec2::splat(TANK_SIZE),
-                6.0,
-            )),
-            Sprite::default(),
-        ));
+        spawn_movable_test_player(app.world_mut(), PlayerId::One, tank_top_left, Direction::Up);
         app.add_systems(Update, move_player_tank);
 
         app.update();
@@ -13053,6 +13062,68 @@ mod tests {
             )
         );
         assert_eq!(sprite_state.frame, 0);
+    }
+
+    #[test]
+    fn player_move_system_blocks_tank_from_entering_other_player() {
+        let mut app = App::new();
+        let p1_top_left = Vec2::new(16.0, 16.0);
+        let p2_top_left = Vec2::new(32.0, 16.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyD);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(TILE_SIZE / PLAYER_SPEED));
+
+        app.insert_resource(time);
+        app.insert_resource(keys);
+        app.insert_resource(PlayerControl::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(VersusPlayerFreeze::default());
+        spawn_movable_test_player(app.world_mut(), PlayerId::One, p1_top_left, Direction::Up);
+        spawn_movable_test_player(app.world_mut(), PlayerId::Two, p2_top_left, Direction::Left);
+        app.add_systems(Update, move_player_tank);
+
+        app.update();
+
+        let mut players = app.world_mut().query::<(&Player, &Tank, &Transform)>();
+        let players: Vec<(PlayerId, Vec2, Direction, Vec3)> = players
+            .iter(app.world())
+            .map(|(player, tank, transform)| {
+                (player.id, tank.top_left, tank.facing, transform.translation)
+            })
+            .collect();
+        let p1 = players
+            .iter()
+            .find(|(player, _, _, _)| *player == PlayerId::One)
+            .expect("P1 should exist");
+        let p2 = players
+            .iter()
+            .find(|(player, _, _, _)| *player == PlayerId::Two)
+            .expect("P2 should exist");
+
+        assert_eq!(
+            *p1,
+            (
+                PlayerId::One,
+                p1_top_left,
+                Direction::Right,
+                board_object_center(p1_top_left.x, p1_top_left.y, Vec2::splat(TANK_SIZE), 6.0)
+            )
+        );
+        assert_eq!(
+            *p2,
+            (
+                PlayerId::Two,
+                p2_top_left,
+                Direction::Left,
+                board_object_center(p2_top_left.x, p2_top_left.y, Vec2::splat(TANK_SIZE), 6.0)
+            )
+        );
     }
 
     #[test]

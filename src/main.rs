@@ -13171,6 +13171,71 @@ mod tests {
     }
 
     #[test]
+    fn versus_move_controls_drive_players_independently() {
+        let mut app = App::new();
+        let p1_top_left = Vec2::new(16.0, 16.0);
+        let p2_top_left = Vec2::new(80.0, 16.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyD);
+        keys.press(KeyCode::ArrowDown);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(TILE_SIZE / PLAYER_SPEED));
+
+        app.insert_resource(time);
+        app.insert_resource(keys);
+        app.insert_resource(PlayerControl::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(VersusPlayerFreeze::default());
+        spawn_movable_test_player(app.world_mut(), PlayerId::One, p1_top_left, Direction::Up);
+        spawn_movable_test_player(app.world_mut(), PlayerId::Two, p2_top_left, Direction::Left);
+        app.add_systems(Update, (update_player_control, move_player_tank).chain());
+
+        app.update();
+
+        let mut players = app.world_mut().query::<(&Player, &Tank, &Transform)>();
+        let players: Vec<(PlayerId, Vec2, Direction, Vec3)> = players
+            .iter(app.world())
+            .map(|(player, tank, transform)| {
+                (player.id, tank.top_left, tank.facing, transform.translation)
+            })
+            .collect();
+        let p1 = players
+            .iter()
+            .find(|(player, _, _, _)| *player == PlayerId::One)
+            .expect("P1 should exist");
+        let p2 = players
+            .iter()
+            .find(|(player, _, _, _)| *player == PlayerId::Two)
+            .expect("P2 should exist");
+        let p1_next = p1_top_left + Vec2::new(TILE_SIZE, 0.0);
+        let p2_next = p2_top_left + Vec2::new(0.0, TILE_SIZE);
+
+        assert_eq!(
+            *p1,
+            (
+                PlayerId::One,
+                p1_next,
+                Direction::Right,
+                board_object_center(p1_next.x, p1_next.y, Vec2::splat(TANK_SIZE), 6.0)
+            )
+        );
+        assert_eq!(
+            *p2,
+            (
+                PlayerId::Two,
+                p2_next,
+                Direction::Down,
+                board_object_center(p2_next.x, p2_next.y, Vec2::splat(TANK_SIZE), 6.0)
+            )
+        );
+    }
+
+    #[test]
     fn player_fire_system_treats_held_fire_as_ready_input() {
         let mut app = App::new();
         let tank_top_left = Vec2::new(64.0, 80.0);

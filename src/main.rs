@@ -2456,8 +2456,7 @@ fn parse_arena(contents: &str) -> Result<ArenaDefinition, String> {
         ron::from_str(contents).map_err(|err| format!("failed to parse arena: {err}"))?;
 
     let grid = TileGrid::from_arena(&arena)?;
-    validate_tank_spawn(&grid, "p1 spawn", &arena.p1_spawn)?;
-    validate_tank_spawn(&grid, "p2 spawn", &arena.p2_spawn)?;
+    validate_arena_spawns(&grid, &arena)?;
     validate_battle_rules(&grid, arena.battle_rules)?;
     for (index, point) in arena.powerup_spawns.iter().enumerate() {
         validate_powerup_spawn(&grid, index + 1, point)?;
@@ -2497,6 +2496,7 @@ fn validate_battle_rules(grid: &TileGrid, rules: BattleRules) -> Result<(), Stri
             }
             validate_base_position(grid, "p1 base position", &p1_base)?;
             validate_base_position(grid, "p2 base position", &p2_base)?;
+            validate_base_positions_do_not_overlap(p1_base, p2_base)?;
         }
     }
 
@@ -6266,6 +6266,22 @@ fn validate_tank_spawn(grid: &TileGrid, label: &str, spawn: &SpawnPoint) -> Resu
     }
 }
 
+fn validate_arena_spawns(grid: &TileGrid, arena: &ArenaDefinition) -> Result<(), String> {
+    validate_tank_spawn(grid, "p1 spawn", &arena.p1_spawn)?;
+    validate_tank_spawn(grid, "p2 spawn", &arena.p2_spawn)?;
+
+    let p1_top_left = spawn_point_top_left(&arena.p1_spawn);
+    let p2_top_left = spawn_point_top_left(&arena.p2_spawn);
+    if tank_rects_overlap(p1_top_left, p2_top_left) {
+        return Err(format!(
+            "p1 spawn ({}, {}) and p2 spawn ({}, {}) must not overlap",
+            arena.p1_spawn.x, arena.p1_spawn.y, arena.p2_spawn.x, arena.p2_spawn.y
+        ));
+    }
+
+    Ok(())
+}
+
 fn validate_base_position(grid: &TileGrid, label: &str, point: &GridPoint) -> Result<(), String> {
     if point.x >= BOARD_TILES - 1 || point.y >= BOARD_TILES - 1 {
         return Err(format!(
@@ -6297,6 +6313,25 @@ fn validate_classic_campaign_base_position(point: &GridPoint) -> Result<(), Stri
         "base position ({}, {}) must use classic campaign base ({CLASSIC_BASE_X}, {CLASSIC_BASE_Y})",
         point.x, point.y
     ))
+}
+
+fn validate_base_positions_do_not_overlap(
+    p1_base: GridPoint,
+    p2_base: GridPoint,
+) -> Result<(), String> {
+    if rects_overlap(
+        grid_point_top_left(&p1_base),
+        Vec2::splat(TANK_SIZE),
+        grid_point_top_left(&p2_base),
+        Vec2::splat(TANK_SIZE),
+    ) {
+        return Err(format!(
+            "p1 base ({}, {}) and p2 base ({}, {}) must not overlap",
+            p1_base.x, p1_base.y, p2_base.x, p2_base.y
+        ));
+    }
+
+    Ok(())
 }
 
 fn validate_powerup_spawn(grid: &TileGrid, index: usize, point: &GridPoint) -> Result<(), String> {
@@ -8776,6 +8811,18 @@ mod tests {
                 .expect("shifted p1 base should fail")
                 .contains("p1 base position (23, 24) must cover a 2x2 base tile area")
         );
+
+        let overlapping_bases = base_battle_arena_text().replacen(
+            "p1_base: (x: 24, y: 24)",
+            "p1_base: (x: 0, y: 0)",
+            1,
+        );
+        assert!(
+            parse_arena(&overlapping_bases)
+                .err()
+                .expect("overlapping bases should fail")
+                .contains("p1 base (0, 0) and p2 base (0, 0) must not overlap")
+        );
     }
 
     #[test]
@@ -8881,6 +8928,22 @@ mod tests {
                 .err()
                 .expect("blocked p1 spawn should fail")
                 .contains("p1 spawn (4, 24) must fit a tank on passable tiles")
+        );
+    }
+
+    #[test]
+    fn arena_rejects_overlapping_player_spawns() {
+        let overlapping_p2 = ARENA_1.replacen(
+            "p2_spawn: (x: 24, y: 0, facing: Down)",
+            "p2_spawn: (x: 0, y: 24, facing: Down)",
+            1,
+        );
+
+        assert!(
+            parse_arena(&overlapping_p2)
+                .err()
+                .expect("overlapping player spawns should fail")
+                .contains("p1 spawn (0, 24) and p2 spawn (0, 24) must not overlap")
         );
     }
 

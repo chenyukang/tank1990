@@ -600,7 +600,7 @@ Current implementation note:
 - Bullet manifest entries include four directional atlas indices, and generated bullet sprites use vertical or horizontal silhouettes that match their travel direction.
 - Terrain manifest entries include a two-frame water animation range plus static brick, steel, forest, and ice entries.
 - Effect manifest entries include explosion, spawn shimmer, base destruction, and power-up sparkle frame ranges.
-- Base and standalone UI icon manifest entries include generated sprite dimensions.
+- Base and standalone UI icon manifest entries include generated sprite dimensions; the generated base fallback distinguishes an intact emblem from destroyed rubble.
 - Glyphs use generated placeholder pixels, but their atlas character order and tile dimensions live in `assets/manifest.ron`.
 - Sounds use generated placeholder waveforms, but their retro sweep/noise/note definitions now live in `assets/manifest.ron`.
 - `assets/arenas/arena_05.ron` is the first playable `BaseBattle` arena, with `arena_06.ron` and `arena_08.ron` adding more base-defense layouts; `arena_07.ron` adds another authored `Deathmatch` layout. Destroying a player's base ends the round for the opponent.

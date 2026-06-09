@@ -8412,24 +8412,47 @@ fn generated_sprite_size(manifest: GeneratedSpriteManifest) -> Vec2 {
 
 fn create_base_image(manifest: GeneratedSpriteManifest, destroyed: bool) -> Image {
     let mut pixels = vec![0; manifest.width * manifest.height * 4];
+    let outline = [56, 48, 32, 255];
+    let shadow = [72, 56, 40, 255];
+    let gold_dark = [152, 104, 40, 255];
+    let gold_mid = [208, 152, 56, 255];
+    let gold_light = [248, 216, 104, 255];
+    let body = [240, 232, 160, 255];
+
     if destroyed {
-        fill_rect(&mut pixels, manifest.width, 3, 9, 10, 4, [96, 72, 48, 255]);
-        fill_rect(&mut pixels, manifest.width, 5, 5, 3, 4, [160, 48, 24, 255]);
-        fill_rect(&mut pixels, manifest.width, 9, 4, 2, 6, [184, 88, 32, 255]);
-        fill_rect(&mut pixels, manifest.width, 2, 12, 12, 2, [48, 40, 32, 255]);
+        let rubble = [120, 80, 48, 255];
+        let ember = [184, 64, 32, 255];
+        let flame = [248, 184, 64, 255];
+        let smoke = [80, 72, 64, 255];
+
+        fill_rect(&mut pixels, manifest.width, 7, 2, 2, 2, smoke);
+        fill_rect(&mut pixels, manifest.width, 6, 5, 2, 3, ember);
+        fill_rect(&mut pixels, manifest.width, 9, 6, 2, 3, ember);
+        set_pixel(&mut pixels, manifest.width, 6, 5, flame);
+        set_pixel(&mut pixels, manifest.width, 10, 6, flame);
+        fill_rect(&mut pixels, manifest.width, 4, 10, 4, 2, rubble);
+        fill_rect(&mut pixels, manifest.width, 9, 9, 4, 3, rubble);
+        fill_rect(&mut pixels, manifest.width, 6, 11, 5, 1, gold_dark);
+        fill_rect(&mut pixels, manifest.width, 3, 12, 10, 2, outline);
+        fill_rect(&mut pixels, manifest.width, 2, 13, 12, 1, shadow);
     } else {
-        fill_rect(&mut pixels, manifest.width, 4, 9, 8, 4, [160, 120, 72, 255]);
-        fill_rect(&mut pixels, manifest.width, 5, 6, 6, 4, [192, 152, 88, 255]);
-        fill_rect(
-            &mut pixels,
-            manifest.width,
-            7,
-            3,
-            2,
-            4,
-            [224, 192, 112, 255],
-        );
-        fill_rect(&mut pixels, manifest.width, 3, 13, 10, 1, [72, 56, 32, 255]);
+        fill_rect(&mut pixels, manifest.width, 7, 2, 2, 1, outline);
+        fill_rect(&mut pixels, manifest.width, 7, 3, 2, 2, body);
+        set_pixel(&mut pixels, manifest.width, 9, 4, [232, 112, 40, 255]);
+        fill_rect(&mut pixels, manifest.width, 6, 6, 4, 1, outline);
+        fill_rect(&mut pixels, manifest.width, 7, 6, 2, 5, body);
+        fill_rect(&mut pixels, manifest.width, 6, 8, 4, 2, gold_light);
+        fill_rect(&mut pixels, manifest.width, 3, 7, 3, 1, gold_dark);
+        fill_rect(&mut pixels, manifest.width, 10, 7, 3, 1, gold_dark);
+        fill_rect(&mut pixels, manifest.width, 2, 8, 5, 1, gold_mid);
+        fill_rect(&mut pixels, manifest.width, 9, 8, 5, 1, gold_mid);
+        fill_rect(&mut pixels, manifest.width, 4, 9, 3, 1, gold_light);
+        fill_rect(&mut pixels, manifest.width, 9, 9, 3, 1, gold_light);
+        set_pixel(&mut pixels, manifest.width, 2, 9, outline);
+        set_pixel(&mut pixels, manifest.width, 13, 9, outline);
+        fill_rect(&mut pixels, manifest.width, 6, 11, 4, 2, gold_dark);
+        fill_rect(&mut pixels, manifest.width, 4, 12, 8, 1, shadow);
+        fill_rect(&mut pixels, manifest.width, 3, 13, 10, 1, outline);
     }
     image_from_pixels(manifest.width, manifest.height, pixels)
 }
@@ -10922,6 +10945,24 @@ mod tests {
             let pixels = image.data.as_ref().expect("base sprite should have pixels");
             assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] == 255));
         }
+    }
+
+    #[test]
+    fn generated_base_sprites_have_emblem_and_rubble_pixels() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let intact = create_base_image(manifest.base.intact, false);
+        let destroyed = create_base_image(manifest.base.destroyed, true);
+
+        assert_eq!(image_pixel(&intact, 0, 0), [0, 0, 0, 0]);
+        assert_eq!(image_pixel(&intact, 7, 3), [240, 232, 160, 255]);
+        assert_eq!(image_pixel(&intact, 4, 9), [248, 216, 104, 255]);
+        assert_eq!(image_pixel(&intact, 3, 13), [56, 48, 32, 255]);
+
+        assert_eq!(image_pixel(&destroyed, 0, 0), [0, 0, 0, 0]);
+        assert_eq!(image_pixel(&destroyed, 7, 2), [80, 72, 64, 255]);
+        assert_eq!(image_pixel(&destroyed, 6, 5), [248, 184, 64, 255]);
+        assert_eq!(image_pixel(&destroyed, 9, 9), [120, 80, 48, 255]);
+        assert_ne!(image_pixel(&destroyed, 7, 3), image_pixel(&intact, 7, 3));
     }
 
     #[test]

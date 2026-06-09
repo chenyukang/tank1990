@@ -2696,7 +2696,12 @@ fn spawn_campaign_status_panel(commands: &mut Commands, assets: &SpriteAssets) {
     );
 
     spawn_pixel_text(commands, assets, "LIFE", Vec2::new(214.0, 112.0), 0.3);
-    spawn_player_life_icon(commands, assets);
+    spawn_player_life_icon(
+        commands,
+        assets,
+        PlayerId::One,
+        campaign_life_icon_top_left(),
+    );
     spawn_status_digits(
         commands,
         assets,
@@ -2733,17 +2738,22 @@ fn spawn_enemy_marker(commands: &mut Commands, assets: &SpriteAssets, index: usi
     ));
 }
 
-fn spawn_player_life_icon(commands: &mut Commands, assets: &SpriteAssets) {
+fn spawn_player_life_icon(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    player_id: PlayerId,
+    top_left: Vec2,
+) {
     commands.spawn((
         Sprite::from_atlas_image(
             assets.tank_image.clone(),
             TextureAtlas {
                 layout: assets.tank_layout.clone(),
-                index: player_life_icon_tank_index(&assets.manifest),
+                index: player_life_icon_tank_index(&assets.manifest, player_id),
             },
         ),
         Transform::from_translation(virtual_center_scaled(
-            player_life_icon_top_left(),
+            top_left,
             Vec2::splat(PLAYER_LIFE_ICON_SIZE),
             0.3,
         ))
@@ -2792,6 +2802,12 @@ fn spawn_versus_status_panel(commands: &mut Commands, assets: &SpriteAssets, sho
         0.3,
     );
     spawn_pixel_text(commands, assets, "LIFE", Vec2::new(214.0, 62.0), 0.3);
+    spawn_player_life_icon(
+        commands,
+        assets,
+        PlayerId::One,
+        versus_life_icon_top_left(PlayerId::One),
+    );
     spawn_status_digits(
         commands,
         assets,
@@ -2812,6 +2828,12 @@ fn spawn_versus_status_panel(commands: &mut Commands, assets: &SpriteAssets, sho
         0.3,
     );
     spawn_pixel_text(commands, assets, "LIFE", Vec2::new(214.0, 134.0), 0.3);
+    spawn_player_life_icon(
+        commands,
+        assets,
+        PlayerId::Two,
+        versus_life_icon_top_left(PlayerId::Two),
+    );
     spawn_status_digits(
         commands,
         assets,
@@ -5140,12 +5162,19 @@ fn enemy_marker_tank_index(manifest: &AssetManifest) -> usize {
     animated_tank_sprite_index(manifest, TankSpriteSet::EnemyBasic, Direction::Down, 0)
 }
 
-fn player_life_icon_top_left() -> Vec2 {
+fn campaign_life_icon_top_left() -> Vec2 {
     Vec2::new(222.0, 123.0)
 }
 
-fn player_life_icon_tank_index(manifest: &AssetManifest) -> usize {
-    animated_tank_sprite_index(manifest, TankSpriteSet::Player1, Direction::Up, 0)
+fn versus_life_icon_top_left(player: PlayerId) -> Vec2 {
+    match player {
+        PlayerId::One => Vec2::new(222.0, 73.0),
+        PlayerId::Two => Vec2::new(222.0, 145.0),
+    }
+}
+
+fn player_life_icon_tank_index(manifest: &AssetManifest, player: PlayerId) -> usize {
+    animated_tank_sprite_index(manifest, TankSpriteSet::player(player), Direction::Up, 0)
 }
 
 fn score_badge_icon_top_left() -> Vec2 {
@@ -9415,7 +9444,7 @@ mod tests {
 
     #[test]
     fn campaign_life_icon_fits_status_panel() {
-        let top_left = player_life_icon_top_left();
+        let top_left = campaign_life_icon_top_left();
         assert_eq!(top_left, Vec2::new(222.0, 123.0));
         assert!(top_left.x >= 212.0);
         assert!(top_left.x + PLAYER_LIFE_ICON_SIZE < 234.0);
@@ -9426,8 +9455,32 @@ mod tests {
     fn campaign_life_icon_uses_player_tank_sprite() {
         let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
         assert_eq!(
-            player_life_icon_tank_index(&manifest),
+            player_life_icon_tank_index(&manifest, PlayerId::One),
             manifest.tank_index(TankSpriteSet::Player1, Direction::Up, 0)
+        );
+    }
+
+    #[test]
+    fn versus_life_icons_fit_status_panel_and_match_players() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let p1_top_left = versus_life_icon_top_left(PlayerId::One);
+        let p2_top_left = versus_life_icon_top_left(PlayerId::Two);
+
+        assert_eq!(p1_top_left, Vec2::new(222.0, 73.0));
+        assert_eq!(p2_top_left, Vec2::new(222.0, 145.0));
+        for top_left in [p1_top_left, p2_top_left] {
+            assert!(top_left.x >= 212.0);
+            assert!(top_left.x + PLAYER_LIFE_ICON_SIZE < 234.0);
+            assert!(top_left.y >= 24.0);
+            assert!(top_left.y + PLAYER_LIFE_ICON_SIZE <= BOARD_ORIGIN_Y + board_size());
+        }
+        assert_eq!(
+            player_life_icon_tank_index(&manifest, PlayerId::One),
+            manifest.tank_index(TankSpriteSet::Player1, Direction::Up, 0)
+        );
+        assert_eq!(
+            player_life_icon_tank_index(&manifest, PlayerId::Two),
+            manifest.tank_index(TankSpriteSet::Player2, Direction::Up, 0)
         );
     }
 

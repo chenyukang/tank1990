@@ -23,10 +23,10 @@ TANK_WINDOW_SCALE=4x cargo run
 
 Mode select:
 
-- `W` / `S` or arrow up/down: switch Campaign/Battle
+- `W` / `S` or arrow up/down: switch Campaign/Battle/Music
 - `A` / `D` or arrow left/right: choose stage while Campaign is selected, or
-  arena while Battle is selected
-- `Space`, `Enter`, or `RightShift`: start
+  arena while Battle is selected; toggle `MUSIC` between `BGM` and `CLASSIC`
+- `Space`, `Enter`, or `RightShift`: start selected mode, or toggle `MUSIC`
 
 In game:
 
@@ -92,10 +92,11 @@ assets/personal/sounds/game_over.ogg
 assets/personal/sounds/background.ogg
 ```
 
-Set `TANK_BGM=off` to disable the generated or personal background music loop.
-To use an original soundtrack for private local play, provide your own lawful
-copy converted to OGG at `assets/personal/sounds/background.ogg`; this
-repository intentionally does not include or distribute original game music.
+Use the main menu `MUSIC` setting to choose `BGM` for the generated or personal
+background loop, or `CLASSIC` for original-style play with no continuous
+background loop. To use an original soundtrack for private local play, provide
+your own lawful copy converted to OGG at `assets/personal/sounds/background.ogg`;
+this repository intentionally does not include or distribute original game music.
 
 Supported personal map override paths:
 

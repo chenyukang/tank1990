@@ -92,7 +92,6 @@ const MIN_WINDOW_SCALE: u32 = 2;
 const MAX_WINDOW_SCALE: u32 = 4;
 const WINDOW_SCALE_ENV: &str = "TANK_WINDOW_SCALE";
 static WINDOW_SCALE_CACHE: OnceLock<f32> = OnceLock::new();
-const BACKGROUND_MUSIC_ENV: &str = "TANK_BGM";
 
 const BOARD_ORIGIN_X: f32 = 0.0;
 const BOARD_ORIGIN_Y: f32 = 16.0;
@@ -130,7 +129,7 @@ static P1_WIN_BANNER_LINES: [&str; 2] = ["P1 WIN", "PRESS R OR M"];
 static P2_WIN_BANNER_LINES: [&str; 2] = ["P2 WIN", "PRESS R OR M"];
 static VICTORY_BANNER_LINES: [&str; 3] = ["VICTORY", "ALL STAGES CLEAR", "PRESS R OR M"];
 static MODE_SELECT_HINT_LINES: [&str; 3] =
-    ["WS ARROWS SELECT", "AD ARROWS PICK", "SPACE ENTER START"];
+    ["WS ARROWS SELECT", "AD ARROWS CHANGE", "SPACE ENTER START"];
 const DEFAULT_RESPAWN_INVULNERABILITY_SECONDS: f32 = 2.0;
 const HELMET_SECONDS: f32 = 6.0;
 const CLOCK_SECONDS: f32 = 6.0;
@@ -174,17 +173,6 @@ fn parse_window_scale(value: Option<&str>) -> u32 {
         .unwrap_or(DEFAULT_WINDOW_SCALE)
 }
 
-fn parse_background_music_enabled(value: Option<&str>) -> bool {
-    let Some(raw) = value else {
-        return true;
-    };
-
-    !matches!(
-        raw.trim().to_ascii_lowercase().as_str(),
-        "0" | "false" | "off" | "no" | "mute" | "muted" | "disabled"
-    )
-}
-
 fn virtual_window_size(scale: f32) -> (u32, u32) {
     (
         (VIRTUAL_WIDTH * scale).round() as u32,
@@ -206,7 +194,6 @@ fn main() {
         .insert_resource(VersusPlayerFreeze::default())
         .insert_resource(BaseReinforcement::default())
         .insert_resource(VersusPowerUpDirector::inactive())
-        .insert_resource(MusicSettings::from_env())
         .add_plugins(
             DefaultPlugins
                 .set(ImagePlugin::default_nearest())
@@ -585,18 +572,23 @@ struct RetroSoundDecoder {
     cursor: usize,
 }
 
-#[derive(Resource, Clone, Copy, Debug, Eq, PartialEq)]
-struct MusicSettings {
-    enabled: bool,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AudioMode {
+    Bgm,
+    Classic,
 }
 
-impl MusicSettings {
-    fn from_env() -> Self {
-        Self {
-            enabled: parse_background_music_enabled(
-                std::env::var(BACKGROUND_MUSIC_ENV).ok().as_deref(),
-            ),
-        }
+fn next_audio_mode(mode: AudioMode) -> AudioMode {
+    match mode {
+        AudioMode::Bgm => AudioMode::Classic,
+        AudioMode::Classic => AudioMode::Bgm,
+    }
+}
+
+fn audio_mode_label(mode: AudioMode) -> &'static str {
+    match mode {
+        AudioMode::Bgm => "BGM",
+        AudioMode::Classic => "CLASSIC",
     }
 }
 
@@ -677,27 +669,36 @@ impl GameMode {
         matches!(self, Self::VersusDeathmatch | Self::VersusBaseBattle)
     }
 
-    fn mode_select_option(self) -> Self {
+    fn mode_select_option(self) -> ModeSelectOption {
         match self {
-            Self::Campaign => Self::Campaign,
-            Self::VersusDeathmatch | Self::VersusBaseBattle => Self::VersusDeathmatch,
+            Self::Campaign => ModeSelectOption::Campaign,
+            Self::VersusDeathmatch | Self::VersusBaseBattle => ModeSelectOption::Battle,
         }
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ModeSelectOption {
+    Campaign,
+    Battle,
+    Music,
+}
+
 #[derive(Resource)]
 struct ModeSelect {
-    selected: GameMode,
+    selected: ModeSelectOption,
     stage: usize,
     arena: usize,
+    audio_mode: AudioMode,
 }
 
 impl Default for ModeSelect {
     fn default() -> Self {
         Self {
-            selected: GameMode::Campaign,
+            selected: ModeSelectOption::Campaign,
             stage: 1,
             arena: DEFAULT_VERSUS_ARENA,
+            audio_mode: AudioMode::Bgm,
         }
     }
 }
@@ -1571,6 +1572,11 @@ struct ModeSelectBattleKindGlyph {
 }
 
 #[derive(Component)]
+struct ModeSelectMusicGlyph {
+    digit: usize,
+}
+
+#[derive(Component)]
 struct SpriteAnimation {
     first: usize,
     last: usize,
@@ -1617,6 +1623,7 @@ enum PowerUpKind {
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    mode_select: Res<ModeSelect>,
     mut images: ResMut<Assets<Image>>,
     mut atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut retro_sounds: ResMut<Assets<RetroSound>>,
@@ -1629,9 +1636,10 @@ fn setup(
     spawn_mode_select_screen(
         &mut commands,
         &sprite_assets,
-        GameMode::Campaign,
+        ModeSelectOption::Campaign,
         1,
         DEFAULT_VERSUS_ARENA,
+        mode_select.audio_mode,
     );
 
     commands.insert_resource(sprite_assets);
@@ -1664,61 +1672,85 @@ fn handle_shared_controls(
         Query<(&ModeSelectStageGlyph, &mut Sprite)>,
         Query<(&ModeSelectArenaGlyph, &mut Sprite)>,
         Query<(&ModeSelectBattleKindGlyph, &mut Sprite)>,
+        Query<(&ModeSelectMusicGlyph, &mut Sprite)>,
     )>,
 ) {
     if game_status.phase == GamePhase::ModeSelect {
-        if keys.just_pressed(KeyCode::KeyW)
-            || keys.just_pressed(KeyCode::ArrowUp)
-            || keys.just_pressed(KeyCode::KeyS)
-            || keys.just_pressed(KeyCode::ArrowDown)
-        {
-            mode_select.selected = other_mode(mode_select.selected);
+        if keys.just_pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp) {
+            mode_select.selected = previous_mode_select_option(mode_select.selected);
+            update_mode_select_cursor(&mut menu_queries.p1(), mode_select.selected);
+        }
+
+        if keys.just_pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ArrowDown) {
+            mode_select.selected = next_mode_select_option(mode_select.selected);
             update_mode_select_cursor(&mut menu_queries.p1(), mode_select.selected);
         }
 
         if keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft) {
-            if mode_select.selected.is_versus() {
-                mode_select.arena = previous_arena(mode_select.arena);
-                update_mode_select_arena_digits(
-                    &mut menu_queries.p3(),
-                    &assets.manifest.glyphs,
-                    mode_select.arena,
-                );
-                update_mode_select_battle_kind(
-                    &mut menu_queries.p4(),
-                    &assets.manifest.glyphs,
-                    mode_select.arena,
-                );
-            } else {
-                mode_select.stage = previous_stage(mode_select.stage);
-                update_mode_select_stage_digits(
-                    &mut menu_queries.p2(),
-                    &assets.manifest.glyphs,
-                    mode_select.stage,
-                );
+            match mode_select.selected {
+                ModeSelectOption::Campaign => {
+                    mode_select.stage = previous_stage(mode_select.stage);
+                    update_mode_select_stage_digits(
+                        &mut menu_queries.p2(),
+                        &assets.manifest.glyphs,
+                        mode_select.stage,
+                    );
+                }
+                ModeSelectOption::Battle => {
+                    mode_select.arena = previous_arena(mode_select.arena);
+                    update_mode_select_arena_digits(
+                        &mut menu_queries.p3(),
+                        &assets.manifest.glyphs,
+                        mode_select.arena,
+                    );
+                    update_mode_select_battle_kind(
+                        &mut menu_queries.p4(),
+                        &assets.manifest.glyphs,
+                        mode_select.arena,
+                    );
+                }
+                ModeSelectOption::Music => {
+                    mode_select.audio_mode = next_audio_mode(mode_select.audio_mode);
+                    update_mode_select_music_value(
+                        &mut menu_queries.p5(),
+                        &assets.manifest.glyphs,
+                        mode_select.audio_mode,
+                    );
+                }
             }
         }
 
         if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) {
-            if mode_select.selected.is_versus() {
-                mode_select.arena = next_arena(mode_select.arena);
-                update_mode_select_arena_digits(
-                    &mut menu_queries.p3(),
-                    &assets.manifest.glyphs,
-                    mode_select.arena,
-                );
-                update_mode_select_battle_kind(
-                    &mut menu_queries.p4(),
-                    &assets.manifest.glyphs,
-                    mode_select.arena,
-                );
-            } else {
-                mode_select.stage = next_stage(mode_select.stage);
-                update_mode_select_stage_digits(
-                    &mut menu_queries.p2(),
-                    &assets.manifest.glyphs,
-                    mode_select.stage,
-                );
+            match mode_select.selected {
+                ModeSelectOption::Campaign => {
+                    mode_select.stage = next_stage(mode_select.stage);
+                    update_mode_select_stage_digits(
+                        &mut menu_queries.p2(),
+                        &assets.manifest.glyphs,
+                        mode_select.stage,
+                    );
+                }
+                ModeSelectOption::Battle => {
+                    mode_select.arena = next_arena(mode_select.arena);
+                    update_mode_select_arena_digits(
+                        &mut menu_queries.p3(),
+                        &assets.manifest.glyphs,
+                        mode_select.arena,
+                    );
+                    update_mode_select_battle_kind(
+                        &mut menu_queries.p4(),
+                        &assets.manifest.glyphs,
+                        mode_select.arena,
+                    );
+                }
+                ModeSelectOption::Music => {
+                    mode_select.audio_mode = next_audio_mode(mode_select.audio_mode);
+                    update_mode_select_music_value(
+                        &mut menu_queries.p5(),
+                        &assets.manifest.glyphs,
+                        mode_select.audio_mode,
+                    );
+                }
             }
         }
 
@@ -1727,7 +1759,7 @@ fn handle_shared_controls(
             || keys.just_pressed(KeyCode::ShiftRight)
         {
             match mode_select.selected {
-                GameMode::Campaign => {
+                ModeSelectOption::Campaign => {
                     game_status.stage = selected_campaign_stage(&mode_select);
                     *game_mode = GameMode::Campaign;
                     restart_level(
@@ -1746,7 +1778,7 @@ fn handle_shared_controls(
                         &menu_queries.p0(),
                     );
                 }
-                GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
+                ModeSelectOption::Battle => {
                     game_status.arena = mode_select.arena;
                     start_versus_round(
                         &mut commands,
@@ -1763,6 +1795,14 @@ fn handle_shared_controls(
                         &mut versus_freeze,
                         &mut base_reinforcement,
                         &menu_queries.p0(),
+                    );
+                }
+                ModeSelectOption::Music => {
+                    mode_select.audio_mode = next_audio_mode(mode_select.audio_mode);
+                    update_mode_select_music_value(
+                        &mut menu_queries.p5(),
+                        &assets.manifest.glyphs,
+                        mode_select.audio_mode,
                     );
                 }
             }
@@ -1860,6 +1900,7 @@ fn enter_mode_select(
         mode_select.selected,
         mode_select.stage,
         mode_select.arena,
+        mode_select.audio_mode,
     );
 
     *tile_grid = TileGrid::empty();
@@ -2584,9 +2625,10 @@ fn validate_battle_rules(grid: &TileGrid, rules: BattleRules) -> Result<(), Stri
 fn spawn_mode_select_screen(
     commands: &mut Commands,
     assets: &SpriteAssets,
-    selected: GameMode,
+    selected: ModeSelectOption,
     stage: usize,
     arena: usize,
+    audio_mode: AudioMode,
 ) {
     commands.spawn((
         Sprite::from_color(
@@ -2607,21 +2649,29 @@ fn spawn_mode_select_screen(
         commands,
         assets,
         "1 PLAYER",
-        mode_select_option_top_left(GameMode::Campaign),
+        mode_select_option_top_left(ModeSelectOption::Campaign),
         0.3,
     );
     spawn_pixel_text(
         commands,
         assets,
         "BATTLE",
-        mode_select_option_top_left(GameMode::VersusDeathmatch),
+        mode_select_option_top_left(ModeSelectOption::Battle),
         0.3,
     );
-    spawn_pixel_text(commands, assets, "STAGE", Vec2::new(59.0, 145.0), 0.3);
-    spawn_mode_select_stage_digits(commands, assets, stage, Vec2::new(95.0, 145.0), 0.3);
-    spawn_pixel_text(commands, assets, "ARENA", Vec2::new(59.0, 157.0), 0.3);
-    spawn_mode_select_arena_digits(commands, assets, arena, Vec2::new(95.0, 157.0), 0.3);
-    spawn_mode_select_battle_kind(commands, assets, arena, Vec2::new(115.0, 157.0), 0.3);
+    spawn_pixel_text(
+        commands,
+        assets,
+        "MUSIC",
+        mode_select_option_top_left(ModeSelectOption::Music),
+        0.3,
+    );
+    spawn_mode_select_music_value(commands, assets, audio_mode, Vec2::new(124.0, 137.0), 0.3);
+    spawn_pixel_text(commands, assets, "STAGE", Vec2::new(59.0, 153.0), 0.3);
+    spawn_mode_select_stage_digits(commands, assets, stage, Vec2::new(95.0, 153.0), 0.3);
+    spawn_pixel_text(commands, assets, "ARENA", Vec2::new(59.0, 165.0), 0.3);
+    spawn_mode_select_arena_digits(commands, assets, arena, Vec2::new(95.0, 165.0), 0.3);
+    spawn_mode_select_battle_kind(commands, assets, arena, Vec2::new(115.0, 165.0), 0.3);
     spawn_mode_select_hints(commands, assets);
     spawn_mode_select_cursor(commands, assets, selected);
 }
@@ -2633,7 +2683,7 @@ fn spawn_mode_select_hints(commands: &mut Commands, assets: &SpriteAssets) {
             commands,
             assets,
             line,
-            Vec2::new((208.0 - text_width) / 2.0, 174.0 + index as f32 * 12.0),
+            Vec2::new((208.0 - text_width) / 2.0, 181.0 + index as f32 * 12.0),
             0.3,
         );
     }
@@ -2729,7 +2779,41 @@ fn spawn_mode_select_battle_kind(
     }
 }
 
-fn spawn_mode_select_cursor(commands: &mut Commands, assets: &SpriteAssets, selected: GameMode) {
+fn spawn_mode_select_music_value(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    mode: AudioMode,
+    top_left: Vec2,
+    z: f32,
+) {
+    let text = audio_mode_label(mode);
+    for digit in 0..7 {
+        let ch = text.chars().nth(digit).unwrap_or(' ');
+        commands.spawn((
+            Sprite::from_atlas_image(
+                assets.glyph_image.clone(),
+                TextureAtlas {
+                    layout: assets.glyph_layout.clone(),
+                    index: glyph_index(ch, &assets.manifest.glyphs),
+                },
+            ),
+            Transform::from_translation(virtual_center_scaled(
+                Vec2::new(top_left.x + digit as f32 * GLYPH_ADVANCE, top_left.y),
+                glyph_size(&assets.manifest.glyphs),
+                z,
+            ))
+            .with_scale(Vec3::splat(window_scale())),
+            ModeSelectMusicGlyph { digit },
+            GameEntity,
+        ));
+    }
+}
+
+fn spawn_mode_select_cursor(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    selected: ModeSelectOption,
+) {
     commands.spawn((
         Sprite::from_atlas_image(
             assets.tank_image.clone(),
@@ -5511,13 +5595,6 @@ fn terminal_phase_clears_transients(phase: GamePhase) -> bool {
     )
 }
 
-fn other_mode(mode: GameMode) -> GameMode {
-    match mode {
-        GameMode::Campaign => GameMode::VersusDeathmatch,
-        GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => GameMode::Campaign,
-    }
-}
-
 fn next_arena(current: usize) -> usize {
     if current >= ARENA_COUNT {
         1
@@ -5554,6 +5631,22 @@ fn selected_campaign_stage(mode_select: &ModeSelect) -> usize {
     mode_select.stage.clamp(1, LEVEL_COUNT)
 }
 
+fn next_mode_select_option(option: ModeSelectOption) -> ModeSelectOption {
+    match option {
+        ModeSelectOption::Campaign => ModeSelectOption::Battle,
+        ModeSelectOption::Battle => ModeSelectOption::Music,
+        ModeSelectOption::Music => ModeSelectOption::Campaign,
+    }
+}
+
+fn previous_mode_select_option(option: ModeSelectOption) -> ModeSelectOption {
+    match option {
+        ModeSelectOption::Campaign => ModeSelectOption::Music,
+        ModeSelectOption::Battle => ModeSelectOption::Campaign,
+        ModeSelectOption::Music => ModeSelectOption::Battle,
+    }
+}
+
 fn update_mode_select_stage_digits(
     glyphs: &mut Query<(&ModeSelectStageGlyph, &mut Sprite)>,
     glyph_manifest: &GlyphManifest,
@@ -5569,15 +5662,16 @@ fn update_mode_select_stage_digits(
     }
 }
 
-fn mode_select_option_top_left(mode: GameMode) -> Vec2 {
-    match mode {
-        GameMode::Campaign => Vec2::new(82.0, 105.0),
-        GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => Vec2::new(88.0, 125.0),
+fn mode_select_option_top_left(option: ModeSelectOption) -> Vec2 {
+    match option {
+        ModeSelectOption::Campaign => Vec2::new(82.0, 101.0),
+        ModeSelectOption::Battle => Vec2::new(88.0, 119.0),
+        ModeSelectOption::Music => Vec2::new(82.0, 137.0),
     }
 }
 
-fn mode_select_cursor_translation(mode: GameMode) -> Vec3 {
-    let option = mode_select_option_top_left(mode);
+fn mode_select_cursor_translation(option: ModeSelectOption) -> Vec3 {
+    let option = mode_select_option_top_left(option);
     board_object_center(
         60.0,
         option.y - 4.0 - BOARD_ORIGIN_Y,
@@ -5588,7 +5682,7 @@ fn mode_select_cursor_translation(mode: GameMode) -> Vec3 {
 
 fn update_mode_select_cursor(
     cursors: &mut Query<&mut Transform, With<ModeSelectCursor>>,
-    selected: GameMode,
+    selected: ModeSelectOption,
 ) {
     let translation = mode_select_cursor_translation(selected);
     for mut transform in cursors {
@@ -5617,6 +5711,20 @@ fn update_mode_select_battle_kind(
     arena: usize,
 ) {
     let text = battle_kind_label_for_arena(arena);
+    for (glyph, mut sprite) in glyphs {
+        let ch = text.chars().nth(glyph.digit).unwrap_or(' ');
+        if let Some(atlas) = &mut sprite.texture_atlas {
+            atlas.index = glyph_index(ch, glyph_manifest);
+        }
+    }
+}
+
+fn update_mode_select_music_value(
+    glyphs: &mut Query<(&ModeSelectMusicGlyph, &mut Sprite)>,
+    glyph_manifest: &GlyphManifest,
+    mode: AudioMode,
+) {
+    let text = audio_mode_label(mode);
     for (glyph, mut sprite) in glyphs {
         let ch = text.chars().nth(glyph.digit).unwrap_or(' ');
         if let Some(atlas) = &mut sprite.texture_atlas {
@@ -7176,12 +7284,12 @@ fn play_sound(commands: &mut Commands, sounds: &SoundAssets, kind: SoundKind) {
 
 fn sync_background_music(
     mut commands: Commands,
-    settings: Res<MusicSettings>,
+    mode_select: Res<ModeSelect>,
     sounds: Res<SoundAssets>,
     game_status: Res<GameStatus>,
     music: Query<Entity, With<BackgroundMusic>>,
 ) {
-    if background_music_should_play(*settings, game_status.phase) {
+    if background_music_should_play(mode_select.audio_mode, game_status.phase) {
         if music.is_empty() {
             play_background_music(&mut commands, &sounds);
         }
@@ -7193,8 +7301,8 @@ fn sync_background_music(
     }
 }
 
-fn background_music_should_play(settings: MusicSettings, phase: GamePhase) -> bool {
-    settings.enabled && matches!(phase, GamePhase::StageIntro | GamePhase::Playing)
+fn background_music_should_play(mode: AudioMode, phase: GamePhase) -> bool {
+    mode == AudioMode::Bgm && matches!(phase, GamePhase::StageIntro | GamePhase::Playing)
 }
 
 fn play_background_music(commands: &mut Commands, sounds: &SoundAssets) {
@@ -8506,40 +8614,50 @@ mod tests {
     }
 
     #[test]
-    fn background_music_setting_defaults_on_and_accepts_off_values() {
-        assert!(parse_background_music_enabled(None));
-        assert!(parse_background_music_enabled(Some("on")));
-        assert!(parse_background_music_enabled(Some("classic")));
-        for value in ["0", "false", "off", "no", "mute", "muted", "disabled"] {
-            assert!(!parse_background_music_enabled(Some(value)));
-        }
-        assert!(!parse_background_music_enabled(Some(" OFF ")));
+    fn music_menu_mode_defaults_to_bgm_and_toggles_classic() {
+        assert_eq!(ModeSelect::default().audio_mode, AudioMode::Bgm);
+        assert_eq!(next_audio_mode(AudioMode::Bgm), AudioMode::Classic);
+        assert_eq!(next_audio_mode(AudioMode::Classic), AudioMode::Bgm);
+        assert_eq!(audio_mode_label(AudioMode::Bgm), "BGM");
+        assert_eq!(audio_mode_label(AudioMode::Classic), "CLASSIC");
     }
 
     #[test]
     fn background_music_only_plays_during_active_rounds() {
-        let enabled = MusicSettings { enabled: true };
-        let disabled = MusicSettings { enabled: false };
-
-        assert!(background_music_should_play(enabled, GamePhase::StageIntro));
-        assert!(background_music_should_play(enabled, GamePhase::Playing));
+        assert!(background_music_should_play(
+            AudioMode::Bgm,
+            GamePhase::StageIntro
+        ));
+        assert!(background_music_should_play(
+            AudioMode::Bgm,
+            GamePhase::Playing
+        ));
         assert!(!background_music_should_play(
-            enabled,
+            AudioMode::Bgm,
             GamePhase::ModeSelect
         ));
-        assert!(!background_music_should_play(enabled, GamePhase::Paused));
         assert!(!background_music_should_play(
-            enabled,
+            AudioMode::Bgm,
+            GamePhase::Paused
+        ));
+        assert!(!background_music_should_play(
+            AudioMode::Bgm,
             GamePhase::LevelClear
         ));
-        assert!(!background_music_should_play(enabled, GamePhase::GameOver));
-        assert!(!background_music_should_play(disabled, GamePhase::Playing));
+        assert!(!background_music_should_play(
+            AudioMode::Bgm,
+            GamePhase::GameOver
+        ));
+        assert!(!background_music_should_play(
+            AudioMode::Classic,
+            GamePhase::Playing
+        ));
     }
 
     #[test]
     fn background_music_sync_spawns_and_stops_with_game_phase() {
         let mut app = App::new();
-        app.insert_resource(MusicSettings { enabled: true });
+        app.insert_resource(ModeSelect::default());
         app.insert_resource(test_sound_assets());
         app.insert_resource(GameStatus {
             phase: GamePhase::Playing,
@@ -8547,6 +8665,14 @@ mod tests {
         });
         app.add_systems(Update, sync_background_music);
 
+        app.update();
+        assert_eq!(background_music_entity_count(&mut app), 1);
+
+        app.world_mut().resource_mut::<ModeSelect>().audio_mode = AudioMode::Classic;
+        app.update();
+        assert_eq!(background_music_entity_count(&mut app), 0);
+
+        app.world_mut().resource_mut::<ModeSelect>().audio_mode = AudioMode::Bgm;
         app.update();
         assert_eq!(background_music_entity_count(&mut app), 1);
 
@@ -10710,13 +10836,26 @@ mod tests {
     }
 
     #[test]
-    fn mode_select_toggles_between_campaign_and_battle() {
-        assert_eq!(other_mode(GameMode::Campaign), GameMode::VersusDeathmatch);
-        assert_eq!(other_mode(GameMode::VersusDeathmatch), GameMode::Campaign);
-        assert_eq!(other_mode(GameMode::VersusBaseBattle), GameMode::Campaign);
+    fn mode_select_cycles_campaign_battle_and_music() {
+        assert_eq!(
+            next_mode_select_option(ModeSelectOption::Campaign),
+            ModeSelectOption::Battle
+        );
+        assert_eq!(
+            next_mode_select_option(ModeSelectOption::Battle),
+            ModeSelectOption::Music
+        );
+        assert_eq!(
+            next_mode_select_option(ModeSelectOption::Music),
+            ModeSelectOption::Campaign
+        );
+        assert_eq!(
+            previous_mode_select_option(ModeSelectOption::Campaign),
+            ModeSelectOption::Music
+        );
         assert_eq!(
             GameMode::VersusBaseBattle.mode_select_option(),
-            GameMode::VersusDeathmatch
+            ModeSelectOption::Battle
         );
     }
 
@@ -10765,10 +10904,12 @@ mod tests {
 
     #[test]
     fn mode_select_cursor_tracks_selected_option() {
-        let campaign = mode_select_cursor_translation(GameMode::Campaign);
-        let battle = mode_select_cursor_translation(GameMode::VersusDeathmatch);
+        let campaign = mode_select_cursor_translation(ModeSelectOption::Campaign);
+        let battle = mode_select_cursor_translation(ModeSelectOption::Battle);
+        let music = mode_select_cursor_translation(ModeSelectOption::Music);
         assert_eq!(campaign.x, battle.x);
         assert!(campaign.y > battle.y);
+        assert!(battle.y > music.y);
     }
 
     #[test]
@@ -10776,11 +10917,13 @@ mod tests {
         let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
         assert_eq!(
             MODE_SELECT_HINT_LINES,
-            ["WS ARROWS SELECT", "AD ARROWS PICK", "SPACE ENTER START"]
+            ["WS ARROWS SELECT", "AD ARROWS CHANGE", "SPACE ENTER START"]
         );
-        for line in ["STAGE", "ARENA", "37", "BASE", "DUEL"]
-            .into_iter()
-            .chain(MODE_SELECT_HINT_LINES)
+        for line in [
+            "STAGE", "ARENA", "37", "BASE", "DUEL", "MUSIC", "BGM", "CLASSIC",
+        ]
+        .into_iter()
+        .chain(MODE_SELECT_HINT_LINES)
         {
             assert!(
                 phase_text_width(line) <= 208.0,

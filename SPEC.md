@@ -620,7 +620,9 @@ Audio should be simple and era-appropriate:
 
 Background music configuration:
 
-- `TANK_BGM=off` disables background music for capture or quiet play.
+- Main menu includes a `MUSIC` setting.
+- `MUSIC BGM` plays the generated or personal background loop during active play.
+- `MUSIC CLASSIC` disables the continuous loop and keeps short jingle/effect playback for a more original Battle City-style audio profile.
 - `assets/personal/sounds/background.ogg` overrides the generated loop.
 - A personally supplied original soundtrack should be converted outside the project and placed at that path; do not commit or redistribute it.
 

@@ -3897,7 +3897,7 @@ fn spawn_enemies(
                 carried_powerup,
             },
             EnemyAi {
-                turn_timer: Timer::from_seconds(1.2, TimerMode::Repeating),
+                turn_timer: Timer::from_seconds(enemy_turn_interval(kind), TimerMode::Repeating),
                 fire_timer: Timer::from_seconds(enemy_fire_interval(kind), TimerMode::Repeating),
             },
             SpawnProtection::for_spawn_shimmer(assets.manifest.spawn_shimmer_frames()),
@@ -3919,6 +3919,7 @@ fn move_enemy_tanks(
         Query<
             (
                 &mut Tank,
+                &EnemyTank,
                 &mut Sprite,
                 &mut Transform,
                 &mut EnemyAi,
@@ -3944,10 +3945,13 @@ fn move_enemy_tanks(
     let occupied_positions: Vec<Vec2> = occupied.iter().map(|(top_left, _)| *top_left).collect();
     let base_center = base_center_from_grid(&grid);
 
-    for (mut tank, mut sprite, mut transform, mut ai, mut tank_sprite) in &mut tank_queries.p1() {
+    for (mut tank, enemy, mut sprite, mut transform, mut ai, mut tank_sprite) in
+        &mut tank_queries.p1()
+    {
         ai.turn_timer.tick(time.delta());
         if ai.turn_timer.just_finished() {
             tank.facing = preferred_enemy_direction(
+                enemy.kind,
                 tank.top_left,
                 tank.facing,
                 &player_top_lefts,
@@ -6471,6 +6475,7 @@ fn enemy_aim_direction(
 }
 
 fn preferred_enemy_direction(
+    kind: EnemyKind,
     top_left: Vec2,
     current: Direction,
     player_top_lefts: &[Vec2],
@@ -6495,36 +6500,39 @@ fn preferred_enemy_direction(
     if let Some(base_center) = base_center {
         let delta = base_center - own_center;
         if delta.length_squared() > TANK_SIZE * TANK_SIZE {
-            if enemy_should_roam(top_left, current) {
-                return enemy_patrol_direction(top_left, current);
+            if enemy_should_roam(kind, top_left, current) {
+                return enemy_patrol_direction(kind, top_left, current);
             }
             return axis_direction_toward(own_center, base_center);
         }
     }
 
-    enemy_patrol_direction(top_left, current)
+    enemy_patrol_direction(kind, top_left, current)
 }
 
-fn enemy_patrol_direction(top_left: Vec2, current: Direction) -> Direction {
+fn enemy_patrol_direction(kind: EnemyKind, top_left: Vec2, current: Direction) -> Direction {
     if top_left.y < 20.0 {
         Direction::Down
     } else {
-        enemy_roam_direction(top_left, current)
+        enemy_roam_direction(kind, top_left, current)
     }
 }
 
-fn enemy_should_roam(top_left: Vec2, current: Direction) -> bool {
-    enemy_roam_seed(top_left, current).is_multiple_of(4)
+fn enemy_should_roam(kind: EnemyKind, top_left: Vec2, current: Direction) -> bool {
+    enemy_roam_seed(kind, top_left, current).is_multiple_of(enemy_roam_rate(kind))
 }
 
-fn enemy_roam_direction(top_left: Vec2, current: Direction) -> Direction {
-    direction_from_index((enemy_roam_seed(top_left, current) / 4) % 4)
+fn enemy_roam_direction(kind: EnemyKind, top_left: Vec2, current: Direction) -> Direction {
+    direction_from_index((enemy_roam_seed(kind, top_left, current) / enemy_roam_rate(kind)) % 4)
 }
 
-fn enemy_roam_seed(top_left: Vec2, current: Direction) -> u32 {
+fn enemy_roam_seed(kind: EnemyKind, top_left: Vec2, current: Direction) -> u32 {
     let tile_x = (top_left.x / TILE_SIZE).round() as u32;
     let tile_y = (top_left.y / TILE_SIZE).round() as u32;
-    tile_x.wrapping_mul(31) ^ tile_y.wrapping_mul(17) ^ direction_index(current).wrapping_mul(13)
+    tile_x.wrapping_mul(31)
+        ^ tile_y.wrapping_mul(17)
+        ^ direction_index(current).wrapping_mul(13)
+        ^ enemy_kind_index(kind).wrapping_mul(23)
 }
 
 fn direction_index(direction: Direction) -> u32 {
@@ -6583,6 +6591,15 @@ fn enemy_kind_index(kind: EnemyKind) -> u32 {
     }
 }
 
+fn enemy_roam_rate(kind: EnemyKind) -> u32 {
+    match kind {
+        EnemyKind::Fast => 2,
+        EnemyKind::Power => 3,
+        EnemyKind::Basic => 4,
+        EnemyKind::Armor => 6,
+    }
+}
+
 fn next_direction(direction: Direction) -> Direction {
     match direction {
         Direction::Up => Direction::Right,
@@ -6613,6 +6630,15 @@ fn enemy_health(kind: EnemyKind) -> i32 {
     match kind {
         EnemyKind::Armor => 3,
         _ => 1,
+    }
+}
+
+fn enemy_turn_interval(kind: EnemyKind) -> f32 {
+    match kind {
+        EnemyKind::Fast => 0.8,
+        EnemyKind::Power => 1.0,
+        EnemyKind::Basic => 1.2,
+        EnemyKind::Armor => 1.5,
     }
 }
 
@@ -13450,6 +13476,7 @@ mod tests {
     fn preferred_enemy_direction_pressures_base_without_player() {
         assert_eq!(
             preferred_enemy_direction(
+                EnemyKind::Basic,
                 Vec2::new(24.0, 64.0),
                 Direction::Up,
                 &[],
@@ -13462,13 +13489,19 @@ mod tests {
     #[test]
     fn enemy_direction_can_roam_instead_of_always_pressuring_base() {
         let top_left = Vec2::new(80.0, 80.0);
-        assert!(enemy_should_roam(top_left, Direction::Up));
+        assert!(enemy_should_roam(EnemyKind::Basic, top_left, Direction::Up));
         assert_eq!(
-            enemy_patrol_direction(top_left, Direction::Up),
+            enemy_patrol_direction(EnemyKind::Basic, top_left, Direction::Up),
             Direction::Left
         );
         assert_eq!(
-            preferred_enemy_direction(top_left, Direction::Up, &[], Some(Vec2::new(104.0, 200.0))),
+            preferred_enemy_direction(
+                EnemyKind::Basic,
+                top_left,
+                Direction::Up,
+                &[],
+                Some(Vec2::new(104.0, 200.0))
+            ),
             Direction::Left
         );
     }
@@ -13476,9 +13509,28 @@ mod tests {
     #[test]
     fn enemy_patrol_still_pushes_top_spawns_downward() {
         assert_eq!(
-            enemy_patrol_direction(Vec2::new(96.0, 0.0), Direction::Left),
+            enemy_patrol_direction(EnemyKind::Armor, Vec2::new(96.0, 0.0), Direction::Left),
             Direction::Down
         );
+    }
+
+    #[test]
+    fn enemy_type_personality_tunes_turning_and_roaming() {
+        assert!(enemy_turn_interval(EnemyKind::Fast) < enemy_turn_interval(EnemyKind::Basic));
+        assert!(enemy_turn_interval(EnemyKind::Basic) < enemy_turn_interval(EnemyKind::Armor));
+        assert_eq!(enemy_turn_interval(EnemyKind::Power), 1.0);
+
+        assert!(enemy_roam_rate(EnemyKind::Fast) < enemy_roam_rate(EnemyKind::Basic));
+        assert!(enemy_roam_rate(EnemyKind::Basic) < enemy_roam_rate(EnemyKind::Armor));
+        assert_eq!(enemy_roam_rate(EnemyKind::Power), 3);
+
+        let top_left = Vec2::new(80.0, 80.0);
+        assert!(enemy_should_roam(EnemyKind::Basic, top_left, Direction::Up));
+        assert!(!enemy_should_roam(
+            EnemyKind::Armor,
+            top_left,
+            Direction::Up
+        ));
     }
 
     #[test]

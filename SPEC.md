@@ -776,6 +776,10 @@ Later AI improvements:
 - Enemy coordination to lure player away from base.
 - Distinct behavior per enemy type.
 
+Current implementation note:
+
+- Enemy types already differ in speed, health, score, bullet speed, fire cadence, movement turn cadence, and roam tendency. `Fast` enemies turn and roam more often, `Power` enemies fire and re-aim more aggressively, and `Armor` enemies move more deliberately while pressing objectives.
+
 ## 14. Power-Ups
 
 Initial power-ups:

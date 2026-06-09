@@ -90,12 +90,13 @@ assets/personal/sounds/game_over.ogg
 assets/personal/sounds/background.ogg
 ```
 
-Use the main menu `MUSIC` setting to choose `BGM` for the generated or personal
-background loop, or `CLASSIC` for original-style play with no continuous
-background loop. Use `SOUND` to enable or mute one-shot sound effects and short
-jingles. To use an original soundtrack for private local play, provide your own
-lawful copy converted to OGG at `assets/personal/sounds/background.ogg`; this
-repository intentionally does not include or distribute original game music.
+Use the main menu `MUSIC` setting to choose `BGM` for the generated background
+loop, `CUSTOM` for `assets/personal/sounds/background.ogg` when that file is
+present, or `CLASSIC` for original-style play with no continuous background
+loop. Use `SOUND` to enable or mute one-shot sound effects and short jingles. To
+use an original soundtrack for private local play, provide your own lawful copy
+converted to OGG at `assets/personal/sounds/background.ogg`; this repository
+intentionally does not include or distribute original game music.
 
 Supported personal map override paths:
 

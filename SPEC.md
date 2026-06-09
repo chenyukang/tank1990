@@ -628,11 +628,12 @@ Audio should be simple and era-appropriate:
 Background music configuration:
 
 - Main menu includes `MUSIC`, `SOUND`, and `SCALE` settings.
-- `MUSIC BGM` plays the generated or personal background loop during active play.
+- `MUSIC BGM` plays the generated background loop during active play.
+- `MUSIC CUSTOM` appears when `assets/personal/sounds/background.ogg` exists and plays that personally supplied loop during active play.
 - `MUSIC CLASSIC` disables the continuous loop and keeps short jingle/effect playback for a more original Battle City-style audio profile.
 - `SOUND ON/OFF` enables or mutes one-shot sound effects and short jingles without changing the continuous music profile.
 - `SCALE 2X/3X/4X` resizes the crisp integer-scaled window from the main menu.
-- `assets/personal/sounds/background.ogg` overrides the generated loop.
+- `assets/personal/sounds/background.ogg` does not override the generated loop automatically; it is selected through `MUSIC CUSTOM` in the main menu.
 - A personally supplied original soundtrack should be converted outside the project and placed at that path; do not commit or redistribute it.
 
 No original Tank 1990/Battle City audio should be copied.

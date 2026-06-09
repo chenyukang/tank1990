@@ -550,7 +550,8 @@ struct SoundAssets {
     stage_start: SoundHandle,
     level_clear: SoundHandle,
     game_over: SoundHandle,
-    background_music: SoundHandle,
+    generated_background_music: SoundHandle,
+    custom_background_music: Option<SoundHandle>,
 }
 
 #[derive(Clone)]
@@ -593,19 +594,52 @@ struct RetroSoundDecoder {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AudioMode {
     Bgm,
+    Custom,
     Classic,
 }
 
-fn next_audio_mode(mode: AudioMode) -> AudioMode {
+fn next_audio_mode(mode: AudioMode, custom_available: bool) -> AudioMode {
+    match (mode, custom_available) {
+        (AudioMode::Bgm, true) => AudioMode::Custom,
+        (AudioMode::Bgm, false) => AudioMode::Classic,
+        (AudioMode::Custom, _) => AudioMode::Classic,
+        (AudioMode::Classic, _) => AudioMode::Bgm,
+    }
+}
+
+fn previous_audio_mode(mode: AudioMode, custom_available: bool) -> AudioMode {
+    match (mode, custom_available) {
+        (AudioMode::Bgm, _) => AudioMode::Classic,
+        (AudioMode::Custom, _) => AudioMode::Bgm,
+        (AudioMode::Classic, true) => AudioMode::Custom,
+        (AudioMode::Classic, false) => AudioMode::Bgm,
+    }
+}
+
+fn custom_background_music_available(sounds: &SoundAssets) -> bool {
+    sounds.custom_background_music.is_some()
+}
+
+fn next_available_audio_mode(mode: AudioMode, sounds: &SoundAssets) -> AudioMode {
+    next_audio_mode(mode, custom_background_music_available(sounds))
+}
+
+fn previous_available_audio_mode(mode: AudioMode, sounds: &SoundAssets) -> AudioMode {
+    previous_audio_mode(mode, custom_background_music_available(sounds))
+}
+
+fn background_music_handle_for_mode(sounds: &SoundAssets, mode: AudioMode) -> Option<&SoundHandle> {
     match mode {
-        AudioMode::Bgm => AudioMode::Classic,
-        AudioMode::Classic => AudioMode::Bgm,
+        AudioMode::Bgm => Some(&sounds.generated_background_music),
+        AudioMode::Custom => sounds.custom_background_music.as_ref(),
+        AudioMode::Classic => None,
     }
 }
 
 fn audio_mode_label(mode: AudioMode) -> &'static str {
     match mode {
         AudioMode::Bgm => "BGM",
+        AudioMode::Custom => "CUSTOM",
         AudioMode::Classic => "CLASSIC",
     }
 }
@@ -619,7 +653,9 @@ fn sound_enabled_label(enabled: bool) -> &'static str {
 }
 
 #[derive(Component)]
-struct BackgroundMusic;
+struct BackgroundMusic {
+    mode: AudioMode,
+}
 
 impl Iterator for RetroSoundDecoder {
     type Item = f32;
@@ -1756,7 +1792,8 @@ fn handle_shared_controls(
                     );
                 }
                 ModeSelectOption::Music => {
-                    mode_select.audio_mode = next_audio_mode(mode_select.audio_mode);
+                    mode_select.audio_mode =
+                        previous_available_audio_mode(mode_select.audio_mode, &sounds);
                     update_mode_select_music_value(
                         &mut menu_queries.p5(),
                         &assets.manifest.glyphs,
@@ -1810,7 +1847,8 @@ fn handle_shared_controls(
                     );
                 }
                 ModeSelectOption::Music => {
-                    mode_select.audio_mode = next_audio_mode(mode_select.audio_mode);
+                    mode_select.audio_mode =
+                        next_available_audio_mode(mode_select.audio_mode, &sounds);
                     update_mode_select_music_value(
                         &mut menu_queries.p5(),
                         &assets.manifest.glyphs,
@@ -1884,7 +1922,8 @@ fn handle_shared_controls(
                     );
                 }
                 ModeSelectOption::Music => {
-                    mode_select.audio_mode = next_audio_mode(mode_select.audio_mode);
+                    mode_select.audio_mode =
+                        next_available_audio_mode(mode_select.audio_mode, &sounds);
                     update_mode_select_music_value(
                         &mut menu_queries.p5(),
                         &assets.manifest.glyphs,
@@ -7569,18 +7608,18 @@ fn create_sound_assets(
             PERSONAL_GAME_OVER_SOUND_PATH,
             &manifest.sounds.game_over,
         ),
-        background_music: background_music_handle_or_generated(asset_server, sounds),
+        generated_background_music: SoundHandle::Retro(sounds.add(make_background_music_sound())),
+        custom_background_music: custom_background_music_handle(asset_server),
     }
 }
 
-fn background_music_handle_or_generated(
-    asset_server: &AssetServer,
-    sounds: &mut Assets<RetroSound>,
-) -> SoundHandle {
+fn custom_background_music_handle(asset_server: &AssetServer) -> Option<SoundHandle> {
     if personal_asset_exists(PERSONAL_BACKGROUND_MUSIC_SOUND_PATH) {
-        SoundHandle::File(asset_server.load(PERSONAL_BACKGROUND_MUSIC_SOUND_PATH))
+        Some(SoundHandle::File(
+            asset_server.load(PERSONAL_BACKGROUND_MUSIC_SOUND_PATH),
+        ))
     } else {
-        SoundHandle::Retro(sounds.add(make_background_music_sound()))
+        None
     }
 }
 
@@ -7623,32 +7662,65 @@ fn sync_background_music(
     mode_select: Res<ModeSelect>,
     sounds: Res<SoundAssets>,
     game_status: Res<GameStatus>,
-    music: Query<Entity, With<BackgroundMusic>>,
+    music: Query<(Entity, &BackgroundMusic)>,
 ) {
-    if background_music_should_play(mode_select.audio_mode, game_status.phase) {
-        if music.is_empty() {
-            play_background_music(&mut commands, &sounds);
+    let should_play = background_music_should_play(
+        mode_select.audio_mode,
+        game_status.phase,
+        custom_background_music_available(&sounds),
+    );
+    if should_play {
+        let mut matching_music_is_playing = false;
+        for (entity, background_music) in &music {
+            if background_music.mode == mode_select.audio_mode {
+                matching_music_is_playing = true;
+            } else {
+                commands.entity(entity).despawn();
+            }
+        }
+        if !matching_music_is_playing {
+            play_background_music(&mut commands, &sounds, mode_select.audio_mode);
         }
         return;
     }
 
-    for entity in &music {
+    for (entity, _) in &music {
         commands.entity(entity).despawn();
     }
 }
 
-fn background_music_should_play(mode: AudioMode, phase: GamePhase) -> bool {
-    mode == AudioMode::Bgm && matches!(phase, GamePhase::StageIntro | GamePhase::Playing)
+fn background_music_should_play(mode: AudioMode, phase: GamePhase, custom_available: bool) -> bool {
+    matches!(phase, GamePhase::StageIntro | GamePhase::Playing)
+        && background_music_mode_has_loop(mode, custom_available)
 }
 
-fn play_background_music(commands: &mut Commands, sounds: &SoundAssets) {
+fn background_music_mode_has_loop(mode: AudioMode, custom_available: bool) -> bool {
+    match mode {
+        AudioMode::Bgm => true,
+        AudioMode::Custom => custom_available,
+        AudioMode::Classic => false,
+    }
+}
+
+fn play_background_music(commands: &mut Commands, sounds: &SoundAssets, mode: AudioMode) {
     let playback = PlaybackSettings::LOOP.with_volume(Volume::Linear(BACKGROUND_MUSIC_VOLUME));
-    match &sounds.background_music {
+    let Some(handle) = background_music_handle_for_mode(sounds, mode) else {
+        return;
+    };
+    match handle {
         SoundHandle::Retro(handle) => {
-            commands.spawn((AudioPlayer(handle.clone()), playback, BackgroundMusic));
+            commands.spawn((
+                AudioPlayer(handle.clone()),
+                playback,
+                BackgroundMusic { mode },
+            ));
         }
         SoundHandle::File(handle) => {
-            commands.spawn((AudioPlayer(handle.clone()), playback, BackgroundMusic));
+            commands.spawn((
+                AudioPlayer(handle.clone()),
+                playback,
+                BackgroundMusic { mode },
+            ));
         }
     }
 }
@@ -9016,8 +9088,15 @@ mod tests {
             stage_start: sound.clone(),
             level_clear: sound.clone(),
             game_over: sound.clone(),
-            background_music: sound,
+            generated_background_music: sound,
+            custom_background_music: None,
         }
+    }
+
+    fn test_sound_assets_with_custom_music() -> SoundAssets {
+        let mut sounds = test_sound_assets();
+        sounds.custom_background_music = Some(SoundHandle::Retro(Handle::<RetroSound>::default()));
+        sounds
     }
 
     fn test_bullet(previous_top_left: Vec2, top_left: Vec2, resolved: bool) -> Bullet {
@@ -9205,12 +9284,33 @@ mod tests {
     }
 
     #[test]
-    fn music_menu_mode_defaults_to_bgm_and_toggles_classic() {
+    fn music_menu_mode_defaults_to_bgm_and_cycles_available_modes() {
         assert_eq!(ModeSelect::default().audio_mode, AudioMode::Bgm);
         assert!(ModeSelect::default().sound_enabled);
-        assert_eq!(next_audio_mode(AudioMode::Bgm), AudioMode::Classic);
-        assert_eq!(next_audio_mode(AudioMode::Classic), AudioMode::Bgm);
+        assert_eq!(next_audio_mode(AudioMode::Bgm, false), AudioMode::Classic);
+        assert_eq!(next_audio_mode(AudioMode::Classic, false), AudioMode::Bgm);
+        assert_eq!(
+            previous_audio_mode(AudioMode::Bgm, false),
+            AudioMode::Classic
+        );
+        assert_eq!(
+            previous_audio_mode(AudioMode::Classic, false),
+            AudioMode::Bgm
+        );
+        assert_eq!(next_audio_mode(AudioMode::Bgm, true), AudioMode::Custom);
+        assert_eq!(next_audio_mode(AudioMode::Custom, true), AudioMode::Classic);
+        assert_eq!(next_audio_mode(AudioMode::Classic, true), AudioMode::Bgm);
+        assert_eq!(
+            previous_audio_mode(AudioMode::Bgm, true),
+            AudioMode::Classic
+        );
+        assert_eq!(
+            previous_audio_mode(AudioMode::Classic, true),
+            AudioMode::Custom
+        );
+        assert_eq!(previous_audio_mode(AudioMode::Custom, true), AudioMode::Bgm);
         assert_eq!(audio_mode_label(AudioMode::Bgm), "BGM");
+        assert_eq!(audio_mode_label(AudioMode::Custom), "CUSTOM");
         assert_eq!(audio_mode_label(AudioMode::Classic), "CLASSIC");
         assert!(!toggle_sound_enabled(true));
         assert!(toggle_sound_enabled(false));
@@ -9222,31 +9322,48 @@ mod tests {
     fn background_music_only_plays_during_active_rounds() {
         assert!(background_music_should_play(
             AudioMode::Bgm,
-            GamePhase::StageIntro
+            GamePhase::StageIntro,
+            false
         ));
         assert!(background_music_should_play(
             AudioMode::Bgm,
-            GamePhase::Playing
+            GamePhase::Playing,
+            false
         ));
         assert!(!background_music_should_play(
             AudioMode::Bgm,
-            GamePhase::ModeSelect
+            GamePhase::ModeSelect,
+            false
         ));
         assert!(!background_music_should_play(
             AudioMode::Bgm,
-            GamePhase::Paused
+            GamePhase::Paused,
+            false
         ));
         assert!(!background_music_should_play(
             AudioMode::Bgm,
-            GamePhase::LevelClear
+            GamePhase::LevelClear,
+            false
         ));
         assert!(!background_music_should_play(
             AudioMode::Bgm,
-            GamePhase::GameOver
+            GamePhase::GameOver,
+            false
+        ));
+        assert!(background_music_should_play(
+            AudioMode::Custom,
+            GamePhase::Playing,
+            true
+        ));
+        assert!(!background_music_should_play(
+            AudioMode::Custom,
+            GamePhase::Playing,
+            false
         ));
         assert!(!background_music_should_play(
             AudioMode::Classic,
-            GamePhase::Playing
+            GamePhase::Playing,
+            true
         ));
     }
 
@@ -9263,6 +9380,7 @@ mod tests {
 
         app.update();
         assert_eq!(background_music_entity_count(&mut app), 1);
+        assert_eq!(background_music_modes(&mut app), vec![AudioMode::Bgm]);
 
         app.world_mut().resource_mut::<ModeSelect>().audio_mode = AudioMode::Classic;
         app.update();
@@ -9271,10 +9389,34 @@ mod tests {
         app.world_mut().resource_mut::<ModeSelect>().audio_mode = AudioMode::Bgm;
         app.update();
         assert_eq!(background_music_entity_count(&mut app), 1);
+        assert_eq!(background_music_modes(&mut app), vec![AudioMode::Bgm]);
 
         app.world_mut().resource_mut::<GameStatus>().phase = GamePhase::Paused;
         app.update();
         assert_eq!(background_music_entity_count(&mut app), 0);
+    }
+
+    #[test]
+    fn background_music_sync_switches_to_custom_menu_source_when_available() {
+        let mut app = App::new();
+        app.insert_resource(ModeSelect::default());
+        app.insert_resource(test_sound_assets_with_custom_music());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.add_systems(Update, sync_background_music);
+
+        app.update();
+        assert_eq!(background_music_modes(&mut app), vec![AudioMode::Bgm]);
+
+        app.world_mut().resource_mut::<ModeSelect>().audio_mode = AudioMode::Custom;
+        app.update();
+        assert_eq!(background_music_modes(&mut app), vec![AudioMode::Custom]);
+
+        app.world_mut().resource_mut::<ModeSelect>().audio_mode = AudioMode::Classic;
+        app.update();
+        assert!(background_music_modes(&mut app).is_empty());
     }
 
     fn background_music_entity_count(app: &mut App) -> usize {
@@ -9282,6 +9424,11 @@ mod tests {
             .world_mut()
             .query_filtered::<Entity, With<BackgroundMusic>>();
         query.iter(app.world()).count()
+    }
+
+    fn background_music_modes(app: &mut App) -> Vec<AudioMode> {
+        let mut query = app.world_mut().query::<&BackgroundMusic>();
+        query.iter(app.world()).map(|music| music.mode).collect()
     }
 
     #[test]
@@ -11933,8 +12080,8 @@ mod tests {
             ["WS ARROWS SELECT", "AD ARROWS CHANGE", "SPACE ENTER START"]
         );
         for line in [
-            "STAGE", "ARENA", "37", "BASE", "DUEL", "MUSIC", "BGM", "CLASSIC", "SOUND", "ON",
-            "OFF", "SCALE", "2X", "3X", "4X",
+            "STAGE", "ARENA", "37", "BASE", "DUEL", "MUSIC", "BGM", "CUSTOM", "CLASSIC", "SOUND",
+            "ON", "OFF", "SCALE", "2X", "3X", "4X",
         ]
         .into_iter()
         .chain(MODE_SELECT_HINT_LINES)

@@ -6405,6 +6405,30 @@ fn bullet_sweep(start_top_left: Vec2, end_top_left: Vec2) -> (Vec2, Vec2, usize)
     (start, delta, steps)
 }
 
+fn bullet_overlapped_tile_range(top_left: Vec2) -> Option<(usize, usize, usize, usize)> {
+    let board_size = board_size();
+    if top_left.x + BULLET_SIZE <= 0.0
+        || top_left.y + BULLET_SIZE <= 0.0
+        || top_left.x >= board_size
+        || top_left.y >= board_size
+    {
+        return None;
+    }
+
+    let left = (top_left.x.max(0.0) / TILE_SIZE).floor() as usize;
+    let right_edge = (top_left.x + BULLET_SIZE - 0.1)
+        .max(0.0)
+        .min(board_size - 0.1);
+    let right = (right_edge / TILE_SIZE).floor() as usize;
+    let top = (top_left.y.max(0.0) / TILE_SIZE).floor() as usize;
+    let bottom_edge = (top_left.y + BULLET_SIZE - 0.1)
+        .max(0.0)
+        .min(board_size - 0.1);
+    let bottom = (bottom_edge / TILE_SIZE).floor() as usize;
+
+    Some((left, right, top, bottom))
+}
+
 fn bullet_blocking_tile_hit(
     grid: &TileGrid,
     start_top_left: Vec2,
@@ -6414,21 +6438,23 @@ fn bullet_blocking_tile_hit(
 
     for step in 1..=steps {
         let center = start + delta * (step as f32 / steps as f32);
-        if center.x < 0.0 || center.y < 0.0 || center.x >= board_size() || center.y >= board_size()
-        {
+        let impact_top_left = round_vec2(center - Vec2::splat(BULLET_SIZE / 2.0));
+        let Some((left, right, top, bottom)) = bullet_overlapped_tile_range(impact_top_left) else {
             continue;
-        }
+        };
 
-        let tile_x = (center.x / TILE_SIZE).floor() as usize;
-        let tile_y = (center.y / TILE_SIZE).floor() as usize;
-        let tile = grid.tiles[tile_y * BOARD_TILES + tile_x];
-        if tile.bullet_blocks() {
-            return Some(BulletTileHit {
-                x: tile_x,
-                y: tile_y,
-                tile,
-                impact_top_left: round_vec2(center - Vec2::splat(BULLET_SIZE / 2.0)),
-            });
+        for tile_y in top..=bottom {
+            for tile_x in left..=right {
+                let tile = grid.tiles[tile_y * BOARD_TILES + tile_x];
+                if tile.bullet_blocks() {
+                    return Some(BulletTileHit {
+                        x: tile_x,
+                        y: tile_y,
+                        tile,
+                        impact_top_left,
+                    });
+                }
+            }
         }
     }
 
@@ -9259,6 +9285,7 @@ mod tests {
         assert!(!TileKind::Brick.tank_passable());
         assert!(!TileKind::Water.tank_passable());
         assert!(TileKind::Forest.tank_passable());
+        assert!(TileKind::Ice.tank_passable());
         assert!(grid.can_tank_occupy(Vec2::new(8.0 * TILE_SIZE, 24.0 * TILE_SIZE)));
     }
 
@@ -9285,6 +9312,40 @@ mod tests {
         );
         assert!(
             grid.tank_overlaps_tile(Vec2::new(3.0 * TILE_SIZE, 4.0 * TILE_SIZE), TileKind::Ice)
+        );
+    }
+
+    #[test]
+    fn ice_tiles_allow_tanks_and_do_not_block_bullets() {
+        let mut grid = TileGrid::empty();
+        for y in 4..=5 {
+            for x in 4..=5 {
+                grid.set(x, y, TileKind::Ice);
+            }
+        }
+
+        assert!(grid.can_tank_occupy(Vec2::new(4.0 * TILE_SIZE, 4.0 * TILE_SIZE)));
+        assert!(!TileKind::Ice.bullet_blocks());
+        assert_eq!(
+            bullet_blocking_tile_hit(&grid, Vec2::new(20.0, 32.0), Vec2::new(48.0, 32.0)),
+            None
+        );
+    }
+
+    #[test]
+    fn water_tiles_block_tanks_but_do_not_block_bullets() {
+        let mut grid = TileGrid::empty();
+        for y in 4..=5 {
+            for x in 4..=5 {
+                grid.set(x, y, TileKind::Water);
+            }
+        }
+
+        assert!(!grid.can_tank_occupy(Vec2::new(4.0 * TILE_SIZE, 4.0 * TILE_SIZE)));
+        assert!(!TileKind::Water.bullet_blocks());
+        assert_eq!(
+            bullet_blocking_tile_hit(&grid, Vec2::new(20.0, 32.0), Vec2::new(48.0, 32.0)),
+            None
         );
     }
 
@@ -11065,6 +11126,20 @@ mod tests {
     }
 
     #[test]
+    fn bullet_tile_hit_uses_bullet_rect_for_grazing_bricks() {
+        let mut grid = TileGrid::empty();
+        grid.set(3, 1, TileKind::Brick);
+
+        let hit = bullet_blocking_tile_hit(&grid, Vec2::new(20.0, 5.0), Vec2::new(36.0, 5.0))
+            .expect("bullet rect should graze and hit the brick");
+
+        assert_eq!(hit.x, 3);
+        assert_eq!(hit.y, 1);
+        assert_eq!(hit.tile, TileKind::Brick);
+        assert_eq!(hit.impact_top_left, Vec2::new(24.0, 5.0));
+    }
+
+    #[test]
     fn bullet_tank_hit_uses_end_rect_for_normal_steps() {
         assert_eq!(
             bullet_tank_hit(
@@ -11118,6 +11193,27 @@ mod tests {
             Vec2::new(24.0, 8.0)
         );
         assert_eq!(tank_hit, Vec2::new(32.0, 8.0));
+        assert!(!bullet_hit_is_before_tile(start, tank_hit, tile_hit));
+    }
+
+    #[test]
+    fn bullet_tank_hit_is_blocked_by_grazed_tile_hit() {
+        let mut grid = TileGrid::empty();
+        let start = Vec2::new(20.0, 5.0);
+        let end = Vec2::new(52.0, 5.0);
+        grid.set(3, 1, TileKind::Brick);
+
+        let tile_hit = bullet_blocking_tile_hit(&grid, start, end);
+        let tank_hit =
+            bullet_tank_hit(start, end, Vec2::new(32.0, 0.0)).expect("tank is later on the path");
+
+        assert_eq!(
+            tile_hit
+                .expect("grazed brick should be the first blocking tile")
+                .impact_top_left,
+            Vec2::new(24.0, 5.0)
+        );
+        assert_eq!(tank_hit, Vec2::new(32.0, 5.0));
         assert!(!bullet_hit_is_before_tile(start, tank_hit, tile_hit));
     }
 

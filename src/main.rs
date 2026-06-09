@@ -220,6 +220,12 @@ fn main() {
                 .after(tick_powerup_effects)
                 .before(update_powerup_visuals),
         )
+        .add_systems(
+            FixedUpdate,
+            clear_terminal_transients
+                .after(check_game_phase)
+                .before(advance_after_level_clear),
+        )
         .add_systems(FixedUpdate, tick_destroyed_tanks.after(animate_sprites))
         .add_systems(
             FixedUpdate,
@@ -4802,6 +4808,28 @@ fn check_game_phase(
     }
 }
 
+fn clear_terminal_transients(
+    mut commands: Commands,
+    game_status: Res<GameStatus>,
+    bullets: Query<Entity, With<Bullet>>,
+    powerups: Query<Entity, With<PowerUp>>,
+    sparkles: Query<Entity, With<PowerUpSparkle>>,
+) {
+    if !terminal_phase_clears_transients(game_status.phase) {
+        return;
+    }
+
+    for entity in &bullets {
+        commands.entity(entity).despawn();
+    }
+    for entity in &powerups {
+        commands.entity(entity).despawn();
+    }
+    for entity in &sparkles {
+        commands.entity(entity).despawn();
+    }
+}
+
 fn advance_after_stage_intro(time: Res<Time>, mut game_status: ResMut<GameStatus>) {
     if game_status.phase != GamePhase::StageIntro {
         return;
@@ -5123,6 +5151,13 @@ fn toggle_pause_phase(phase: GamePhase) -> GamePhase {
 
 fn visual_effects_can_advance(phase: GamePhase) -> bool {
     phase != GamePhase::Paused
+}
+
+fn terminal_phase_clears_transients(phase: GamePhase) -> bool {
+    matches!(
+        phase,
+        GamePhase::GameOver | GamePhase::LevelClear | GamePhase::RoundOver | GamePhase::Victory
+    )
 }
 
 fn other_mode(mode: GameMode) -> GameMode {
@@ -9021,6 +9056,18 @@ mod tests {
         assert!(visual_effects_can_advance(GamePhase::GameOver));
         assert!(visual_effects_can_advance(GamePhase::RoundOver));
         assert!(visual_effects_can_advance(GamePhase::Victory));
+    }
+
+    #[test]
+    fn terminal_phases_clear_transient_bullets_and_powerups() {
+        assert!(!terminal_phase_clears_transients(GamePhase::ModeSelect));
+        assert!(!terminal_phase_clears_transients(GamePhase::StageIntro));
+        assert!(!terminal_phase_clears_transients(GamePhase::Playing));
+        assert!(!terminal_phase_clears_transients(GamePhase::Paused));
+        assert!(terminal_phase_clears_transients(GamePhase::LevelClear));
+        assert!(terminal_phase_clears_transients(GamePhase::GameOver));
+        assert!(terminal_phase_clears_transients(GamePhase::RoundOver));
+        assert!(terminal_phase_clears_transients(GamePhase::Victory));
     }
 
     #[test]

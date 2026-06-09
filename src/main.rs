@@ -1367,6 +1367,7 @@ struct Bullet {
     owner: Team,
     speed: f32,
     breaks_steel: bool,
+    resolved: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -3624,6 +3625,7 @@ fn fire_enemy_bullets(
                 owner: Team::Enemy,
                 speed: enemy_bullet_speed(enemy.kind),
                 breaks_steel: false,
+                resolved: false,
             },
             EnemyBulletSource {
                 shooter: enemy_entity,
@@ -3698,6 +3700,7 @@ fn fire_player_bullet(
                 owner,
                 speed: player_bullet_speed(upgrade.level),
                 breaks_steel: player_bullets_break_steel(upgrade.level, *stage_rules),
+                resolved: false,
             },
             GameEntity,
         ));
@@ -3765,7 +3768,7 @@ fn move_bullets(
         let center = bullet.top_left + Vec2::splat(BULLET_SIZE / 2.0);
         if center.x < 0.0 || center.y < 0.0 || center.x >= board_size() || center.y >= board_size()
         {
-            commands.entity(entity).despawn();
+            resolve_bullet(&mut commands, entity, &mut bullet);
             continue;
         }
 
@@ -3791,7 +3794,7 @@ fn move_bullets(
 
                     if spawn_protection.is_some() {
                         spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
-                        commands.entity(entity).despawn();
+                        resolve_bullet(&mut commands, entity, &mut bullet);
                         play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                         hit_enemy = true;
                         break;
@@ -3823,7 +3826,7 @@ fn move_bullets(
                         spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
                     }
                     play_sound(&mut commands, &sounds, hit_sound);
-                    commands.entity(entity).despawn();
+                    resolve_bullet(&mut commands, entity, &mut bullet);
                     hit_enemy = true;
                     break;
                 }
@@ -3883,7 +3886,7 @@ fn move_bullets(
                     spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
                     play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                 }
-                commands.entity(entity).despawn();
+                resolve_bullet(&mut commands, entity, &mut bullet);
                 hit_player = true;
                 break;
             }
@@ -3916,7 +3919,7 @@ fn move_bullets(
 
                 if shield.is_some() {
                     spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
-                    commands.entity(entity).despawn();
+                    resolve_bullet(&mut commands, entity, &mut bullet);
                     play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                     hit_player = true;
                     break;
@@ -3940,7 +3943,7 @@ fn move_bullets(
                     None,
                     GameMode::Campaign,
                 );
-                commands.entity(entity).despawn();
+                resolve_bullet(&mut commands, entity, &mut bullet);
                 hit_player = true;
                 break;
             }
@@ -4019,7 +4022,7 @@ fn move_bullets(
                 play_sound(&mut commands, &sounds, SoundKind::SteelHit);
             }
 
-            commands.entity(entity).despawn();
+            resolve_bullet(&mut commands, entity, &mut bullet);
             continue;
         }
 
@@ -4030,6 +4033,11 @@ fn move_bullets(
             7.0,
         );
     }
+}
+
+fn resolve_bullet(commands: &mut Commands, entity: Entity, bullet: &mut Bullet) {
+    bullet.resolved = true;
+    commands.entity(entity).despawn();
 }
 
 fn resolve_player_destroyed(
@@ -4196,6 +4204,7 @@ fn cancel_colliding_bullets(
 
     let bullets: Vec<(Entity, Vec2, Vec2)> = bullets
         .iter()
+        .filter(|(_, bullet)| !bullet.resolved)
         .map(|(entity, bullet)| (entity, bullet.previous_top_left, bullet.top_left))
         .collect();
     let mut destroyed = HashSet::new();
@@ -7771,6 +7780,18 @@ mod tests {
         }
     }
 
+    fn test_bullet(previous_top_left: Vec2, top_left: Vec2, resolved: bool) -> Bullet {
+        Bullet {
+            previous_top_left,
+            top_left,
+            facing: Direction::Right,
+            owner: Team::Player1,
+            speed: BULLET_SPEED,
+            breaks_steel: false,
+            resolved,
+        }
+    }
+
     fn spawn_player_with_initial_shield_for_test(
         mut commands: Commands,
         assets: Res<SpriteAssets>,
@@ -11142,6 +11163,57 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn cancel_colliding_bullets_despawns_live_crossing_bullets() {
+        let mut app = App::new();
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.world_mut().spawn(test_bullet(
+            Vec2::new(8.0, 8.0),
+            Vec2::new(36.0, 8.0),
+            false,
+        ));
+        app.world_mut().spawn(test_bullet(
+            Vec2::new(36.0, 8.0),
+            Vec2::new(8.0, 8.0),
+            false,
+        ));
+        app.add_systems(Update, cancel_colliding_bullets);
+
+        app.update();
+
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 0);
+    }
+
+    #[test]
+    fn cancel_colliding_bullets_ignores_already_resolved_bullets() {
+        let mut app = App::new();
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.world_mut()
+            .spawn(test_bullet(Vec2::new(8.0, 8.0), Vec2::new(36.0, 8.0), true));
+        app.world_mut().spawn(test_bullet(
+            Vec2::new(36.0, 8.0),
+            Vec2::new(8.0, 8.0),
+            false,
+        ));
+        app.add_systems(Update, cancel_colliding_bullets);
+
+        app.update();
+
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 2);
     }
 
     #[test]

@@ -9460,6 +9460,24 @@ mod tests {
     }
 
     #[test]
+    fn sound_effect_mute_does_not_disable_background_music() {
+        let mut sounds = test_sound_assets();
+        sounds.sound_enabled = false;
+        let mut app = App::new();
+        app.insert_resource(ModeSelect::default());
+        app.insert_resource(sounds);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.add_systems(Update, sync_background_music);
+
+        app.update();
+
+        assert_eq!(background_music_modes(&mut app), vec![AudioMode::Bgm]);
+    }
+
+    #[test]
     fn main_menu_music_setting_drives_custom_background_loop() {
         let mut keys = ButtonInput::<KeyCode>::default();
         keys.press(KeyCode::Enter);

@@ -3711,6 +3711,7 @@ fn spawn_player_tank(
         Shield {
             timer: Timer::from_seconds(spawn_invulnerability_secs, TimerMode::Once),
         },
+        PlayerRespawnDelay::for_spawn_shimmer(assets.manifest.spawn_shimmer_frames()),
         Player { id: player_id },
         GameEntity,
     ));
@@ -12128,10 +12129,19 @@ mod tests {
 
         app.update();
 
-        let mut players = app.world_mut().query::<(&Player, &Tank, &Shield)>();
-        let spawned: Vec<(PlayerId, Vec2, f32)> = players
+        let mut players = app
+            .world_mut()
+            .query::<(&Player, &Tank, &Shield, Option<&PlayerRespawnDelay>)>();
+        let spawned: Vec<(PlayerId, Vec2, f32, bool)> = players
             .iter(app.world())
-            .map(|(player, tank, shield)| (player.id, tank.top_left, shield.timer.remaining_secs()))
+            .map(|(player, tank, shield, delay)| {
+                (
+                    player.id,
+                    tank.top_left,
+                    shield.timer.remaining_secs(),
+                    delay.is_some(),
+                )
+            })
             .collect();
 
         assert_eq!(spawned.len(), 1);
@@ -12140,6 +12150,17 @@ mod tests {
         assert!(
             (spawned[0].2 - TEST_SPAWN_INVULNERABILITY_SECONDS).abs() <= f32::EPSILON,
             "initial shield should use the configured spawn invulnerability"
+        );
+        assert!(
+            spawned[0].3,
+            "initial spawn should delay control while the shimmer plays"
+        );
+
+        let mut effects = app.world_mut().query::<&SpriteAnimation>();
+        assert_eq!(
+            effects.iter(app.world()).count(),
+            1,
+            "initial spawn should show one shimmer effect"
         );
     }
 
@@ -12468,6 +12489,40 @@ mod tests {
         assert_eq!(bullet.speed, PLAYER_FAST_BULLET_SPEED);
         assert!(bullet.breaks_steel);
         assert!(!bullet.resolved);
+    }
+
+    #[test]
+    fn player_spawn_delay_blocks_firing_until_control_resumes() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(64.0, 80.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::Space);
+
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.world_mut().spawn((
+            Tank {
+                top_left: tank_top_left,
+                facing: Direction::Up,
+                speed: PLAYER_SPEED,
+            },
+            PlayerUpgrade { level: 0 },
+            Player { id: PlayerId::One },
+            PlayerRespawnDelay::for_spawn_shimmer(SpriteFrameRange { first: 4, last: 7 }),
+        ));
+        app.add_systems(Update, fire_player_bullet);
+
+        app.update();
+
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 0);
     }
 
     #[test]

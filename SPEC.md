@@ -246,6 +246,10 @@ Player upgrade behavior:
 - A respawning player tank plays a spawn animation before control resumes.
 - Invulnerable tanks should flicker or show a shield sprite.
 
+Current implementation note:
+
+- Player tanks now play the spawn shimmer on initial stage/arena entry and after respawn. Control and firing are delayed until the shimmer finishes, then the shield overlay remains for the configured invulnerability window.
+
 ### 7.4 Terrain
 
 Tiles:

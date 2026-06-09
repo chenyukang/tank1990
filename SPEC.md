@@ -248,7 +248,7 @@ Player upgrade behavior:
 
 Current implementation note:
 
-- Player tanks now play the spawn shimmer on initial stage/arena entry and after respawn. Control and firing are delayed until the shimmer finishes, then the shield overlay remains for the configured invulnerability window.
+- Player tanks now play the spawn shimmer on initial stage/arena entry and after respawn. Control and firing are delayed until the shimmer finishes, then the shield overlay remains for the configured invulnerability window during active or paused play and is cleared from terminal score/result screens.
 
 ### 7.4 Terrain
 

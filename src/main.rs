@@ -5290,6 +5290,7 @@ fn tick_shields(
 fn sync_shield_visuals(
     mut commands: Commands,
     assets: Res<SpriteAssets>,
+    game_status: Res<GameStatus>,
     shielded_players: Query<
         (Entity, &Tank, &Shield),
         (
@@ -5302,6 +5303,13 @@ fn sync_shield_visuals(
     >,
     mut visuals: Query<(Entity, &ShieldVisual, &mut Transform, &mut Sprite), Without<Player>>,
 ) {
+    if !shield_visuals_can_render(game_status.phase) {
+        for (visual_entity, _, _, _) in &mut visuals {
+            commands.entity(visual_entity).despawn();
+        }
+        return;
+    }
+
     let shielded: Vec<(Entity, Vec2, f32)> = shielded_players
         .iter()
         .map(|(entity, tank, shield)| (entity, tank.top_left, shield.timer.elapsed_secs()))
@@ -5338,6 +5346,10 @@ fn sync_shield_visuals(
             GameEntity,
         ));
     }
+}
+
+fn shield_visuals_can_render(phase: GamePhase) -> bool {
+    matches!(phase, GamePhase::Playing | GamePhase::Paused)
 }
 
 fn update_versus_frozen_player_visuals(
@@ -12275,6 +12287,10 @@ mod tests {
         let moved_top_left = Vec2::new(72.0, 96.0);
 
         app.insert_resource(test_sprite_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
         let player = app
             .world_mut()
             .spawn((
@@ -12335,6 +12351,43 @@ mod tests {
         assert_eq!(updated[0].2, shield_visual_color(0.11));
 
         app.world_mut().entity_mut(player).remove::<Shield>();
+        app.update();
+
+        let mut visuals = app.world_mut().query::<&ShieldVisual>();
+        assert_eq!(visuals.iter(app.world()).count(), 0);
+    }
+
+    #[test]
+    fn shield_visuals_clear_during_terminal_phases() {
+        let mut app = App::new();
+        let top_left = Vec2::new(64.0, 96.0);
+
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::LevelClear,
+            ..GameStatus::default()
+        });
+        let player = app
+            .world_mut()
+            .spawn((
+                Player { id: PlayerId::One },
+                Tank {
+                    top_left,
+                    facing: Direction::Up,
+                    speed: PLAYER_SPEED,
+                },
+                Shield {
+                    timer: Timer::from_seconds(2.0, TimerMode::Once),
+                },
+            ))
+            .id();
+        app.world_mut().spawn((
+            ShieldVisual { owner: player },
+            Transform::from_translation(shield_visual_translation(top_left)),
+            Sprite::default(),
+        ));
+        app.add_systems(Update, sync_shield_visuals);
+
         app.update();
 
         let mut visuals = app.world_mut().query::<&ShieldVisual>();

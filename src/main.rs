@@ -4265,6 +4265,7 @@ fn pickup_powerups(
             &mut Health,
             &mut Transform,
             &mut Sprite,
+            Option<&Shield>,
         ),
         (With<Player>, Without<EnemyTank>, Without<PowerUp>),
     >,
@@ -4295,6 +4296,7 @@ fn pickup_powerups(
             _health,
             _transform,
             mut sprite,
+            _shield,
         ) in &mut players
         {
             if !rects_overlap(
@@ -4385,10 +4387,19 @@ fn pickup_powerups(
                 mut target_health,
                 mut target_transform,
                 _target_sprite,
+                target_shield,
             ) in &mut players
             {
                 if target_player.id != target {
                     continue;
+                }
+
+                if target_shield.is_some() {
+                    let impact_top_left =
+                        target_tank.top_left + Vec2::splat((TANK_SIZE - BULLET_SIZE) / 2.0);
+                    spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
+                    play_sound(&mut commands, &sounds, SoundKind::SteelHit);
+                    break;
                 }
 
                 spawn_explosion(&mut commands, &assets, target_tank.top_left);
@@ -10144,6 +10155,99 @@ mod tests {
             .collect();
 
         assert_eq!(drops, [(PowerUpKind::Helmet, carrier_top_left)]);
+    }
+
+    #[test]
+    fn versus_grenade_respects_target_shield() {
+        let mut app = App::new();
+        let p1_top_left = Vec2::new(64.0, 64.0);
+        let p2_top_left = Vec2::new(96.0, 64.0);
+
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(GameMode::VersusDeathmatch);
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.insert_resource(BaseReinforcement::default());
+        app.insert_resource(ScoreBoard::versus(3, 5, 2.0));
+        app.world_mut().spawn((
+            Tank {
+                top_left: p1_top_left,
+                facing: Direction::Up,
+                speed: PLAYER_SPEED,
+            },
+            Player { id: PlayerId::One },
+            PlayerUpgrade { level: 0 },
+            PlayerLives { current: 3 },
+            Health { current: 1 },
+            Transform::from_translation(board_object_center(
+                p1_top_left.x,
+                p1_top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0,
+            )),
+            Sprite::default(),
+        ));
+        app.world_mut().spawn((
+            Tank {
+                top_left: p2_top_left,
+                facing: Direction::Down,
+                speed: PLAYER_SPEED,
+            },
+            Player { id: PlayerId::Two },
+            PlayerUpgrade { level: 0 },
+            PlayerLives { current: 3 },
+            Health { current: 1 },
+            Transform::from_translation(board_object_center(
+                p2_top_left.x,
+                p2_top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0,
+            )),
+            Sprite::default(),
+            Shield {
+                timer: Timer::from_seconds(2.0, TimerMode::Once),
+            },
+        ));
+        app.world_mut().spawn((
+            PowerUp {
+                kind: PowerUpKind::Grenade,
+            },
+            Transform::from_translation(board_object_center(
+                p1_top_left.x,
+                p1_top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0,
+            )),
+        ));
+        app.add_systems(Update, pickup_powerups);
+
+        app.update();
+
+        let status = app.world().resource::<GameStatus>();
+        assert_eq!(status.phase, GamePhase::Playing);
+        let score_board = app.world().resource::<ScoreBoard>();
+        assert_eq!(score_board.p1_score, 0);
+        assert_eq!(score_board.p2_lives, 3);
+
+        let mut players = app
+            .world_mut()
+            .query::<(&Player, &PlayerLives, Option<&Shield>, Option<&Tank>)>();
+        let target = players
+            .iter(app.world())
+            .find(|(player, _, _, _)| player.id == PlayerId::Two)
+            .expect("target player should remain");
+        assert_eq!(target.1.current, 3);
+        assert!(target.2.is_some());
+        assert!(target.3.is_some());
+
+        let mut powerups = app.world_mut().query::<&PowerUp>();
+        assert_eq!(powerups.iter(app.world()).count(), 0);
     }
 
     #[test]

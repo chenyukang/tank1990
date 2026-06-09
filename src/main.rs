@@ -9,10 +9,33 @@ use bevy::window::PresentMode;
 use serde::Deserialize;
 use std::collections::{HashSet, VecDeque};
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 const ASSET_MANIFEST_PATH: &str = "assets/manifest.ron";
+const ASSET_ROOT_DIR: &str = "assets";
+const PERSONAL_TANK_ATLAS_PATH: &str = "personal/tanks.png";
+const PERSONAL_TERRAIN_ATLAS_PATH: &str = "personal/terrain.png";
+const PERSONAL_BULLET_ATLAS_PATH: &str = "personal/bullets.png";
+const PERSONAL_EFFECT_ATLAS_PATH: &str = "personal/effects.png";
+const PERSONAL_POWERUP_ATLAS_PATH: &str = "personal/powerups.png";
+const PERSONAL_BASE_INTACT_PATH: &str = "personal/base_intact.png";
+const PERSONAL_BASE_DESTROYED_PATH: &str = "personal/base_destroyed.png";
+const PERSONAL_SCORE_BADGE_PATH: &str = "personal/score_badge.png";
+const PERSONAL_STAGE_FLAG_PATH: &str = "personal/stage_flag.png";
+#[cfg(test)]
+const PERSONAL_SPRITE_OVERRIDE_PATHS: [&str; 9] = [
+    PERSONAL_TANK_ATLAS_PATH,
+    PERSONAL_TERRAIN_ATLAS_PATH,
+    PERSONAL_BULLET_ATLAS_PATH,
+    PERSONAL_EFFECT_ATLAS_PATH,
+    PERSONAL_POWERUP_ATLAS_PATH,
+    PERSONAL_BASE_INTACT_PATH,
+    PERSONAL_BASE_DESTROYED_PATH,
+    PERSONAL_SCORE_BADGE_PATH,
+    PERSONAL_STAGE_FLAG_PATH,
+];
 const LEVEL_COUNT: usize = 35;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const LEVEL_CLEAR_SCORECARD_SECONDS: f32 = 4.0;
@@ -1480,13 +1503,14 @@ enum PowerUpKind {
 
 fn setup(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     mut atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut retro_sounds: ResMut<Assets<RetroSound>>,
 ) {
     commands.spawn(Camera2d);
 
-    let sprite_assets = create_sprite_assets(&mut images, &mut atlas_layouts);
+    let sprite_assets = create_sprite_assets(&asset_server, &mut images, &mut atlas_layouts);
     let sound_assets = create_sound_assets(&mut retro_sounds, &sprite_assets.manifest);
     spawn_mode_select_screen(
         &mut commands,
@@ -5983,12 +6007,37 @@ fn atlas_tile_size(manifest: GeneratedAtlasManifest) -> UVec2 {
     UVec2::new(manifest.tile_width as u32, manifest.tile_height as u32)
 }
 
+fn personal_asset_disk_path(asset_path: &str) -> PathBuf {
+    Path::new(ASSET_ROOT_DIR).join(asset_path)
+}
+
+fn personal_asset_exists(asset_path: &str) -> bool {
+    personal_asset_disk_path(asset_path).is_file()
+}
+
+fn image_handle_or_generated(
+    asset_server: &AssetServer,
+    images: &mut Assets<Image>,
+    asset_path: &'static str,
+    generated: impl FnOnce() -> Image,
+) -> Handle<Image> {
+    if personal_asset_exists(asset_path) {
+        asset_server.load(asset_path)
+    } else {
+        images.add(generated())
+    }
+}
+
 fn create_sprite_assets(
+    asset_server: &AssetServer,
     images: &mut Assets<Image>,
     atlas_layouts: &mut Assets<TextureAtlasLayout>,
 ) -> SpriteAssets {
     let manifest = load_asset_manifest(ASSET_MANIFEST_PATH).expect("asset manifest should load");
-    let terrain_image = images.add(create_terrain_atlas(manifest.atlases.terrain));
+    let terrain_image =
+        image_handle_or_generated(asset_server, images, PERSONAL_TERRAIN_ATLAS_PATH, || {
+            create_terrain_atlas(manifest.atlases.terrain)
+        });
     let terrain_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         atlas_tile_size(manifest.atlases.terrain),
         manifest.atlases.terrain.tiles as u32,
@@ -5997,7 +6046,10 @@ fn create_sprite_assets(
         None,
     ));
 
-    let tank_image = images.add(create_tank_atlas(manifest.atlases.tanks));
+    let tank_image =
+        image_handle_or_generated(asset_server, images, PERSONAL_TANK_ATLAS_PATH, || {
+            create_tank_atlas(manifest.atlases.tanks)
+        });
     let tank_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         atlas_tile_size(manifest.atlases.tanks),
         manifest.atlases.tanks.tiles as u32,
@@ -6006,7 +6058,10 @@ fn create_sprite_assets(
         None,
     ));
 
-    let bullet_image = images.add(create_bullet_atlas(manifest.atlases.bullets));
+    let bullet_image =
+        image_handle_or_generated(asset_server, images, PERSONAL_BULLET_ATLAS_PATH, || {
+            create_bullet_atlas(manifest.atlases.bullets)
+        });
     let bullet_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         atlas_tile_size(manifest.atlases.bullets),
         manifest.atlases.bullets.tiles as u32,
@@ -6015,7 +6070,10 @@ fn create_sprite_assets(
         None,
     ));
 
-    let effect_image = images.add(create_effect_atlas(manifest.atlases.effects));
+    let effect_image =
+        image_handle_or_generated(asset_server, images, PERSONAL_EFFECT_ATLAS_PATH, || {
+            create_effect_atlas(manifest.atlases.effects)
+        });
     let effect_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         atlas_tile_size(manifest.atlases.effects),
         manifest.atlases.effects.tiles as u32,
@@ -6024,7 +6082,10 @@ fn create_sprite_assets(
         None,
     ));
 
-    let powerup_image = images.add(create_powerup_atlas(manifest.atlases.powerups));
+    let powerup_image =
+        image_handle_or_generated(asset_server, images, PERSONAL_POWERUP_ATLAS_PATH, || {
+            create_powerup_atlas(manifest.atlases.powerups)
+        });
     let powerup_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         atlas_tile_size(manifest.atlases.powerups),
         manifest.atlases.powerups.tiles as u32,
@@ -6045,10 +6106,22 @@ fn create_sprite_assets(
         None,
     ));
 
-    let base_intact = images.add(create_base_image(manifest.base.intact, false));
-    let base_destroyed = images.add(create_base_image(manifest.base.destroyed, true));
-    let score_badge_icon = images.add(create_score_badge_icon(manifest.ui.score_badge));
-    let stage_flag_icon = images.add(create_stage_flag_icon(manifest.ui.stage_flag));
+    let base_intact =
+        image_handle_or_generated(asset_server, images, PERSONAL_BASE_INTACT_PATH, || {
+            create_base_image(manifest.base.intact, false)
+        });
+    let base_destroyed =
+        image_handle_or_generated(asset_server, images, PERSONAL_BASE_DESTROYED_PATH, || {
+            create_base_image(manifest.base.destroyed, true)
+        });
+    let score_badge_icon =
+        image_handle_or_generated(asset_server, images, PERSONAL_SCORE_BADGE_PATH, || {
+            create_score_badge_icon(manifest.ui.score_badge)
+        });
+    let stage_flag_icon =
+        image_handle_or_generated(asset_server, images, PERSONAL_STAGE_FLAG_PATH, || {
+            create_stage_flag_icon(manifest.ui.stage_flag)
+        });
 
     SpriteAssets {
         manifest,
@@ -6977,6 +7050,7 @@ mod tests {
     const ARENA_3: &str = include_str!("../assets/arenas/arena_03.ron");
     const ARENA_4: &str = include_str!("../assets/arenas/arena_04.ron");
     const ARENA_5: &str = include_str!("../assets/arenas/arena_05.ron");
+    const GITIGNORE: &str = include_str!("../.gitignore");
 
     fn authored_levels() -> [(usize, &'static str); LEVEL_COUNT] {
         [
@@ -7086,6 +7160,30 @@ mod tests {
         assert_eq!(virtual_window_size(2.0), (512, 480));
         assert_eq!(virtual_window_size(3.0), (768, 720));
         assert_eq!(virtual_window_size(4.0), (1024, 960));
+    }
+
+    #[test]
+    fn personal_sprite_override_paths_are_asset_root_relative_pngs() {
+        assert_eq!(PERSONAL_SPRITE_OVERRIDE_PATHS.len(), 9);
+        for asset_path in PERSONAL_SPRITE_OVERRIDE_PATHS {
+            assert!(asset_path.starts_with("personal/"));
+            assert!(asset_path.ends_with(".png"));
+            assert!(!asset_path.starts_with('/'));
+            assert!(!asset_path.contains(".."));
+            assert_eq!(
+                personal_asset_disk_path(asset_path),
+                Path::new(ASSET_ROOT_DIR).join(asset_path)
+            );
+        }
+    }
+
+    #[test]
+    fn personal_sprite_override_directory_is_gitignored() {
+        assert!(
+            GITIGNORE
+                .lines()
+                .any(|line| line.trim() == "assets/personal/")
+        );
     }
 
     fn assert_manifest_glyph_is_visible(manifest: &AssetManifest, ch: char) {

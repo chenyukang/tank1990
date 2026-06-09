@@ -511,6 +511,27 @@ assets/arenas/
 
 Use placeholder sprites first if final art is unavailable. Placeholders should still respect the final sprite dimensions and palette style, so gameplay tuning does not change when final art lands.
 
+Personal sprite overrides:
+
+- Runtime may load local-only PNG sheets from `assets/personal/` before falling back to generated placeholder sprites.
+- `assets/personal/` is gitignored and is meant for personal playtesting with copied or ROM-extracted assets.
+- Personal sheets must match the manifest atlas dimensions and index order, for example `personal/tanks.png` is a 48-frame `16x16` horizontal atlas.
+- Do not commit original Tank 1990, Battle City, or ROM-extracted assets to this repository.
+
+Supported personal override paths:
+
+```text
+assets/personal/tanks.png
+assets/personal/terrain.png
+assets/personal/bullets.png
+assets/personal/effects.png
+assets/personal/powerups.png
+assets/personal/base_intact.png
+assets/personal/base_destroyed.png
+assets/personal/score_badge.png
+assets/personal/stage_flag.png
+```
+
 ### 10.1 Asset Manifest
 
 Use an explicit asset manifest instead of hard-coding every atlas index in gameplay systems.

@@ -12933,6 +12933,54 @@ mod tests {
     }
 
     #[test]
+    fn star_powerup_caps_player_upgrade_level() {
+        let top_left = Vec2::new(64.0, 64.0);
+        let mut app = powerup_pickup_app(GameMode::Campaign, ScoreBoard::campaign(20));
+
+        app.world_mut().spawn((
+            Tank {
+                top_left,
+                facing: Direction::Up,
+                speed: PLAYER_SPEED,
+            },
+            Player { id: PlayerId::One },
+            PlayerUpgrade { level: 2 },
+            PlayerLives { current: 3 },
+            Health { current: 1 },
+            Transform::from_translation(board_object_center(
+                top_left.x,
+                top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0,
+            )),
+            Sprite {
+                color: player_upgrade_visual_color(2),
+                ..default()
+            },
+        ));
+        spawn_test_powerup(app.world_mut(), PowerUpKind::Star, top_left);
+
+        app.update();
+
+        let mut players = app.world_mut().query::<(&PlayerUpgrade, &Sprite)>();
+        let upgraded: Vec<(u8, Color)> = players
+            .iter(app.world())
+            .map(|(upgrade, sprite)| (upgrade.level, sprite.color))
+            .collect();
+        assert_eq!(upgraded, [(3, player_upgrade_visual_color(3))]);
+
+        spawn_test_powerup(app.world_mut(), PowerUpKind::Star, top_left);
+        app.update();
+
+        let mut players = app.world_mut().query::<&PlayerUpgrade>();
+        let capped: Vec<u8> = players
+            .iter(app.world())
+            .map(|upgrade| upgrade.level)
+            .collect();
+        assert_eq!(capped, [3]);
+    }
+
+    #[test]
     fn tank_powerup_caps_campaign_lives_to_status_digit() {
         let top_left = Vec2::new(64.0, 64.0);
         let mut score_board = ScoreBoard::campaign(20);

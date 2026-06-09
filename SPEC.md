@@ -786,7 +786,7 @@ Current implementation note:
 
 ## 14. Power-Ups
 
-Initial power-ups:
+Implemented power-ups:
 
 - `Star`: upgrade player firepower.
 - `Helmet`: temporary shield.
@@ -795,7 +795,7 @@ Initial power-ups:
 - `Shovel`: temporarily reinforce base walls.
 - `Tank`: extra life.
 
-MVP can include only `Star` and `Helmet`; the rest can be added once core gameplay is stable.
+Current implementation includes all six classic power-ups. `Star` caps at upgrade level 3, `Helmet` grants a timed shield, `Clock` freezes enemies in campaign or the opponent in versus, `Grenade` clears visible enemies or hits the opponent in versus, `Shovel` reinforces the relevant base where applicable, and `Tank` grants one life up to the visible life cap.
 
 Power-up spawn rule:
 

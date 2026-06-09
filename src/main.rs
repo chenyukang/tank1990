@@ -63,7 +63,7 @@ const PERSONAL_SOUND_OVERRIDE_PATHS: [&str; 9] = [
     PERSONAL_LEVEL_CLEAR_SOUND_PATH,
     PERSONAL_GAME_OVER_SOUND_PATH,
 ];
-const LEVEL_COUNT: usize = 36;
+const LEVEL_COUNT: usize = 37;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const LEVEL_CLEAR_SCORECARD_SECONDS: f32 = 4.0;
 const STAGE_INTRO_SECONDS: f32 = 1.2;
@@ -7822,6 +7822,7 @@ mod tests {
     const LEVEL_34: &str = include_str!("../assets/levels/034.level.ron");
     const LEVEL_35: &str = include_str!("../assets/levels/035.level.ron");
     const LEVEL_36: &str = include_str!("../assets/levels/036.level.ron");
+    const LEVEL_37: &str = include_str!("../assets/levels/037.level.ron");
     const ARENA_1: &str = include_str!("../assets/arenas/arena_01.ron");
     const ARENA_2: &str = include_str!("../assets/arenas/arena_02.ron");
     const ARENA_3: &str = include_str!("../assets/arenas/arena_03.ron");
@@ -7869,6 +7870,7 @@ mod tests {
             (34, LEVEL_34),
             (35, LEVEL_35),
             (36, LEVEL_36),
+            (37, LEVEL_37),
         ]
     }
 
@@ -8853,7 +8855,7 @@ mod tests {
             LEVEL_12, LEVEL_13, LEVEL_14, LEVEL_15, LEVEL_16, LEVEL_17, LEVEL_18, LEVEL_19,
             LEVEL_20, LEVEL_21, LEVEL_22, LEVEL_23, LEVEL_24, LEVEL_25, LEVEL_26, LEVEL_27,
             LEVEL_28, LEVEL_29, LEVEL_30, LEVEL_31, LEVEL_32, LEVEL_33, LEVEL_34, LEVEL_35,
-            LEVEL_36,
+            LEVEL_36, LEVEL_37,
         ] {
             let level = parse_level(contents).expect("level should parse");
             assert_eq!(
@@ -9539,6 +9541,19 @@ mod tests {
         assert!(grid.tiles.contains(&TileKind::Ice));
         assert_eq!(stage_36.spawn_interval_secs, 0.58);
         assert_eq!(stage_36.powerup_carriers.len(), 6);
+    }
+
+    #[test]
+    fn stage_thirty_seven_authors_extended_campaign_water_bulwark() {
+        let stage_37 = parse_level(LEVEL_37).expect("level should parse");
+        let grid = TileGrid::from_level(&stage_37).expect("grid should build");
+        assert!(grid.tiles.contains(&TileKind::Steel));
+        assert!(grid.tiles.contains(&TileKind::Brick));
+        assert!(grid.tiles.contains(&TileKind::Water));
+        assert!(grid.tiles.contains(&TileKind::Forest));
+        assert!(grid.tiles.contains(&TileKind::Ice));
+        assert_eq!(stage_37.spawn_interval_secs, 0.56);
+        assert_eq!(stage_37.powerup_carriers.len(), 6);
     }
 
     #[test]

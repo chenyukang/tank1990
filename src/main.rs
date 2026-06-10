@@ -152,6 +152,7 @@ const BACKGROUND_MUSIC_VOLUME: f32 = 0.18;
 const BACKGROUND_MUSIC_STEP_SECONDS: f32 = 0.12;
 const ICE_SPEED_MULTIPLIER: f32 = 1.18;
 const SPAWN_SHIMMER_FRAME_SECONDS: f32 = 0.08;
+const BULLET_CLASH_TIME_EPSILON: f32 = 0.0001;
 
 fn window_scale() -> f32 {
     WINDOW_SCALE_SETTING.load(Ordering::Relaxed) as f32
@@ -4725,15 +4726,33 @@ fn cancel_colliding_bullets(
     }
 
     clashes.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for (_, first, second, impact_top_left) in clashes {
-        if destroyed.contains(&first) || destroyed.contains(&second) {
-            continue;
+    let mut index = 0;
+    while index < clashes.len() {
+        let group_time = clashes[index].0;
+        let mut group_destroyed = HashSet::new();
+        let mut impact_top_lefts = Vec::new();
+
+        while index < clashes.len()
+            && (clashes[index].0 - group_time).abs() <= BULLET_CLASH_TIME_EPSILON
+        {
+            let (_, first, second, impact_top_left) = clashes[index];
+            if !destroyed.contains(&first) && !destroyed.contains(&second) {
+                group_destroyed.insert(first);
+                group_destroyed.insert(second);
+                if !impact_top_lefts.contains(&impact_top_left) {
+                    impact_top_lefts.push(impact_top_left);
+                }
+            }
+            index += 1;
         }
 
-        destroyed.insert(first);
-        destroyed.insert(second);
-        spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
-        play_sound(&mut commands, &sounds, SoundKind::SteelHit);
+        if !group_destroyed.is_empty() {
+            destroyed.extend(group_destroyed);
+            for impact_top_left in impact_top_lefts {
+                spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
+                play_sound(&mut commands, &sounds, SoundKind::SteelHit);
+            }
+        }
     }
 
     for entity in destroyed {
@@ -16047,8 +16066,8 @@ mod tests {
             false,
         ));
         app.world_mut().spawn(test_bullet(
-            Vec2::new(24.0, 24.0),
-            Vec2::new(24.0, -12.0),
+            Vec2::new(24.0, 32.0),
+            Vec2::new(24.0, -4.0),
             false,
         ));
         app.add_systems(Update, cancel_colliding_bullets);
@@ -16060,7 +16079,39 @@ mod tests {
             .iter(app.world())
             .map(|bullet| (bullet.previous_top_left, bullet.top_left))
             .collect();
-        assert_eq!(remaining, [(Vec2::new(44.0, 8.0), Vec2::new(8.0, 8.0))]);
+        assert_eq!(remaining, [(Vec2::new(24.0, 32.0), Vec2::new(24.0, -4.0))]);
+    }
+
+    #[test]
+    fn cancel_colliding_bullets_despawns_simultaneous_clash_cluster() {
+        let mut app = App::new();
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.world_mut().spawn(test_bullet(
+            Vec2::new(8.0, 8.0),
+            Vec2::new(20.0, 8.0),
+            false,
+        ));
+        app.world_mut().spawn(test_bullet(
+            Vec2::new(10.0, 8.0),
+            Vec2::new(10.0, 20.0),
+            false,
+        ));
+        app.world_mut().spawn(test_bullet(
+            Vec2::new(9.0, 10.0),
+            Vec2::new(20.0, 10.0),
+            false,
+        ));
+        app.add_systems(Update, cancel_colliding_bullets);
+
+        app.update();
+
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 0);
     }
 
     #[test]

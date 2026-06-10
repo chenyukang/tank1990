@@ -785,6 +785,7 @@ Later AI improvements:
 Current implementation note:
 
 - Enemy types already differ in speed, health, score, bullet speed, fire cadence, movement turn cadence, and roam tendency. `Fast` enemies turn and roam more often, `Power` enemies fire and re-aim more aggressively, and `Armor` enemies move more deliberately while pressing objectives.
+- Campaign levels may set `enemy_ai_strategy: Classic` or `enemy_ai_strategy: PathToObjective`, plus `difficulty_profile: Normal` or `difficulty_profile: Hard`. The mode select screen also exposes `AI` and `DIFF` rows; `AUTO` uses the level file values, while explicit menu choices override them for the current run. The default remains classic old-school behavior; `Hard` tightens spawn, turn, fire, and speed timing, while `PathToObjective` adds grid-based routing toward players or the base when not already lined up to shoot.
 
 ## 14. Power-Ups
 

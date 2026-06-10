@@ -123,10 +123,15 @@ const ENEMY_MARKER_TOP: f32 = 159.0;
 const ENEMY_MARKER_CELL_X: f32 = 9.0;
 const ENEMY_MARKER_CELL_Y: f32 = 9.0;
 const SNAP_DISTANCE: f32 = 2.0;
-const REQUIRED_GLYPHS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const REQUIRED_GLYPHS: &str = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const GENERATED_GLYPH_WIDTH: usize = 5;
 const GENERATED_GLYPH_HEIGHT: usize = 7;
 const GLYPH_ADVANCE: f32 = 6.0;
+const MODE_SELECT_WIDTH: f32 = 208.0;
+const MODE_SELECT_LEFT: f32 = (VIRTUAL_WIDTH - MODE_SELECT_WIDTH) / 2.0;
+const MODE_SELECT_TITLE_Y: f32 = 35.0;
+const MODE_SELECT_CURSOR_GAP: f32 = 22.0;
+const MODE_SELECT_HINT_TOP: f32 = 181.0;
 static PAUSED_BANNER_LINES: [&str; 4] = ["PAUSED", "ESC RESUME", "R RESTART", "M MENU"];
 static GAME_OVER_BANNER_LINES: [&str; 2] = ["GAME OVER", "PRESS R OR M"];
 static LEVEL_CLEAR_BANNER_LINES: [&str; 1] = ["LEVEL CLEAR"];
@@ -757,9 +762,27 @@ enum ModeSelectOption {
     Campaign,
     CoopCampaign,
     Battle,
+    AiStrategy,
+    Difficulty,
     Music,
     Sound,
     Scale,
+    Stage,
+    Arena,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ModeSelectAiStrategy {
+    Auto,
+    Classic,
+    PathToObjective,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ModeSelectDifficultyProfile {
+    Auto,
+    Normal,
+    Hard,
 }
 
 #[derive(Resource)]
@@ -767,6 +790,8 @@ struct ModeSelect {
     selected: ModeSelectOption,
     stage: usize,
     arena: usize,
+    ai_strategy: ModeSelectAiStrategy,
+    difficulty_profile: ModeSelectDifficultyProfile,
     audio_mode: AudioMode,
     sound_enabled: bool,
     window_scale: u32,
@@ -778,6 +803,8 @@ impl Default for ModeSelect {
             selected: ModeSelectOption::Campaign,
             stage: 1,
             arena: DEFAULT_VERSUS_ARENA,
+            ai_strategy: ModeSelectAiStrategy::Auto,
+            difficulty_profile: ModeSelectDifficultyProfile::Auto,
             audio_mode: AudioMode::Bgm,
             sound_enabled: true,
             window_scale: DEFAULT_WINDOW_SCALE,
@@ -1095,10 +1122,21 @@ struct EnemyDirector {
     max_active: usize,
     spawn_cursor: usize,
     spawned_count: usize,
+    ai_strategy: EnemyAiStrategy,
+    difficulty_profile: EnemyDifficultyProfile,
 }
 
 impl EnemyDirector {
+    #[cfg(test)]
     fn from_level(level: &LevelDefinition) -> Self {
+        Self::from_level_with_ai(level, level.enemy_ai_strategy, level.difficulty_profile)
+    }
+
+    fn from_level_with_ai(
+        level: &LevelDefinition,
+        ai_strategy: EnemyAiStrategy,
+        difficulty_profile: EnemyDifficultyProfile,
+    ) -> Self {
         Self {
             roster: level
                 .enemies
@@ -1110,10 +1148,15 @@ impl EnemyDirector {
                 })
                 .collect(),
             spawns: level.enemy_spawns.clone(),
-            spawn_timer: Timer::from_seconds(level.spawn_interval_secs, TimerMode::Repeating),
+            spawn_timer: Timer::from_seconds(
+                enemy_spawn_interval_for_profile(level.spawn_interval_secs, difficulty_profile),
+                TimerMode::Repeating,
+            ),
             max_active: level.max_enemies_on_screen,
             spawn_cursor: 0,
             spawned_count: 0,
+            ai_strategy,
+            difficulty_profile,
         }
     }
 
@@ -1125,6 +1168,8 @@ impl EnemyDirector {
             max_active: 0,
             spawn_cursor: 0,
             spawned_count: 0,
+            ai_strategy: EnemyAiStrategy::default(),
+            difficulty_profile: EnemyDifficultyProfile::default(),
         }
     }
 }
@@ -1354,6 +1399,10 @@ struct LevelDefinition {
     max_enemies_on_screen: usize,
     #[serde(default)]
     player_steel_destruction: bool,
+    #[serde(default)]
+    enemy_ai_strategy: EnemyAiStrategy,
+    #[serde(default)]
+    difficulty_profile: EnemyDifficultyProfile,
 }
 
 #[derive(Deserialize)]
@@ -1408,6 +1457,20 @@ enum EnemyKind {
     Armor,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+enum EnemyAiStrategy {
+    #[default]
+    Classic,
+    PathToObjective,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+enum EnemyDifficultyProfile {
+    #[default]
+    Normal,
+    Hard,
+}
+
 #[derive(Component)]
 struct Player {
     id: PlayerId,
@@ -1426,6 +1489,8 @@ struct EnemyTank {
 struct EnemyAi {
     turn_timer: Timer,
     fire_timer: Timer,
+    strategy: EnemyAiStrategy,
+    difficulty_profile: EnemyDifficultyProfile,
 }
 
 #[derive(Component)]
@@ -1744,6 +1809,8 @@ fn setup(
         mode_select.selected,
         mode_select.stage,
         mode_select.arena,
+        mode_select.ai_strategy,
+        mode_select.difficulty_profile,
         mode_select.audio_mode,
         mode_select.sound_enabled,
         mode_select.window_scale,
@@ -1787,17 +1854,25 @@ fn handle_shared_controls(
     if game_status.phase == GamePhase::ModeSelect {
         if keys.just_pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp) {
             mode_select.selected = previous_mode_select_option(mode_select.selected);
-            update_mode_select_cursor(&mut menu_queries.p1(), mode_select.selected);
+            update_mode_select_cursor(
+                &mut menu_queries.p1(),
+                &ModeSelectDisplay::from_mode_select(&mode_select),
+            );
         }
 
         if keys.just_pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ArrowDown) {
             mode_select.selected = next_mode_select_option(mode_select.selected);
-            update_mode_select_cursor(&mut menu_queries.p1(), mode_select.selected);
+            update_mode_select_cursor(
+                &mut menu_queries.p1(),
+                &ModeSelectDisplay::from_mode_select(&mode_select),
+            );
         }
 
         if keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft) {
             match mode_select.selected {
-                ModeSelectOption::Campaign | ModeSelectOption::CoopCampaign => {
+                ModeSelectOption::Campaign
+                | ModeSelectOption::CoopCampaign
+                | ModeSelectOption::Stage => {
                     mode_select.stage = previous_stage(mode_select.stage);
                     update_mode_select_stage_digits(
                         &mut menu_queries.p2(),
@@ -1805,7 +1880,7 @@ fn handle_shared_controls(
                         mode_select.stage,
                     );
                 }
-                ModeSelectOption::Battle => {
+                ModeSelectOption::Battle | ModeSelectOption::Arena => {
                     mode_select.arena = previous_arena(mode_select.arena);
                     update_mode_select_arena_digits(
                         &mut menu_queries.p3(),
@@ -1818,6 +1893,26 @@ fn handle_shared_controls(
                         mode_select.arena,
                     );
                 }
+                ModeSelectOption::AiStrategy => {
+                    mode_select.ai_strategy =
+                        previous_mode_select_ai_strategy(mode_select.ai_strategy);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
+                    );
+                }
+                ModeSelectOption::Difficulty => {
+                    mode_select.difficulty_profile =
+                        previous_mode_select_difficulty_profile(mode_select.difficulty_profile);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
+                    );
+                }
                 ModeSelectOption::Music => {
                     mode_select.audio_mode =
                         previous_available_audio_mode(mode_select.audio_mode, &sounds);
@@ -1825,6 +1920,12 @@ fn handle_shared_controls(
                         &mut menu_queries.p5(),
                         &assets.manifest.glyphs,
                         mode_select.audio_mode,
+                    );
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
                     );
                 }
                 ModeSelectOption::Sound => {
@@ -1834,6 +1935,12 @@ fn handle_shared_controls(
                         &mut menu_queries.p6(),
                         &assets.manifest.glyphs,
                         mode_select.sound_enabled,
+                    );
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
                     );
                 }
                 ModeSelectOption::Scale => {
@@ -1852,7 +1959,9 @@ fn handle_shared_controls(
 
         if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) {
             match mode_select.selected {
-                ModeSelectOption::Campaign | ModeSelectOption::CoopCampaign => {
+                ModeSelectOption::Campaign
+                | ModeSelectOption::CoopCampaign
+                | ModeSelectOption::Stage => {
                     mode_select.stage = next_stage(mode_select.stage);
                     update_mode_select_stage_digits(
                         &mut menu_queries.p2(),
@@ -1860,7 +1969,7 @@ fn handle_shared_controls(
                         mode_select.stage,
                     );
                 }
-                ModeSelectOption::Battle => {
+                ModeSelectOption::Battle | ModeSelectOption::Arena => {
                     mode_select.arena = next_arena(mode_select.arena);
                     update_mode_select_arena_digits(
                         &mut menu_queries.p3(),
@@ -1873,6 +1982,25 @@ fn handle_shared_controls(
                         mode_select.arena,
                     );
                 }
+                ModeSelectOption::AiStrategy => {
+                    mode_select.ai_strategy = next_mode_select_ai_strategy(mode_select.ai_strategy);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
+                    );
+                }
+                ModeSelectOption::Difficulty => {
+                    mode_select.difficulty_profile =
+                        next_mode_select_difficulty_profile(mode_select.difficulty_profile);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
+                    );
+                }
                 ModeSelectOption::Music => {
                     mode_select.audio_mode =
                         next_available_audio_mode(mode_select.audio_mode, &sounds);
@@ -1880,6 +2008,12 @@ fn handle_shared_controls(
                         &mut menu_queries.p5(),
                         &assets.manifest.glyphs,
                         mode_select.audio_mode,
+                    );
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
                     );
                 }
                 ModeSelectOption::Sound => {
@@ -1889,6 +2023,12 @@ fn handle_shared_controls(
                         &mut menu_queries.p6(),
                         &assets.manifest.glyphs,
                         mode_select.sound_enabled,
+                    );
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
                     );
                 }
                 ModeSelectOption::Scale => {
@@ -1927,6 +2067,7 @@ fn handle_shared_controls(
                         &mut enemy_freeze,
                         &mut versus_freeze,
                         &mut base_reinforcement,
+                        &mode_select,
                         &menu_queries.p0(),
                     );
                 }
@@ -1947,6 +2088,7 @@ fn handle_shared_controls(
                         &mut enemy_freeze,
                         &mut versus_freeze,
                         &mut base_reinforcement,
+                        &mode_select,
                         &menu_queries.p0(),
                     );
                 }
@@ -1969,6 +2111,25 @@ fn handle_shared_controls(
                         &menu_queries.p0(),
                     );
                 }
+                ModeSelectOption::AiStrategy => {
+                    mode_select.ai_strategy = next_mode_select_ai_strategy(mode_select.ai_strategy);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
+                    );
+                }
+                ModeSelectOption::Difficulty => {
+                    mode_select.difficulty_profile =
+                        next_mode_select_difficulty_profile(mode_select.difficulty_profile);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
+                    );
+                }
                 ModeSelectOption::Music => {
                     mode_select.audio_mode =
                         next_available_audio_mode(mode_select.audio_mode, &sounds);
@@ -1976,6 +2137,12 @@ fn handle_shared_controls(
                         &mut menu_queries.p5(),
                         &assets.manifest.glyphs,
                         mode_select.audio_mode,
+                    );
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
                     );
                 }
                 ModeSelectOption::Sound => {
@@ -1985,6 +2152,12 @@ fn handle_shared_controls(
                         &mut menu_queries.p6(),
                         &assets.manifest.glyphs,
                         mode_select.sound_enabled,
+                    );
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
                     );
                 }
                 ModeSelectOption::Scale => {
@@ -1996,6 +2169,27 @@ fn handle_shared_controls(
                         &assets,
                         &mode_select,
                         &menu_queries.p0(),
+                    );
+                }
+                ModeSelectOption::Stage => {
+                    mode_select.stage = next_stage(mode_select.stage);
+                    update_mode_select_stage_digits(
+                        &mut menu_queries.p2(),
+                        &assets.manifest.glyphs,
+                        mode_select.stage,
+                    );
+                }
+                ModeSelectOption::Arena => {
+                    mode_select.arena = next_arena(mode_select.arena);
+                    update_mode_select_arena_digits(
+                        &mut menu_queries.p3(),
+                        &assets.manifest.glyphs,
+                        mode_select.arena,
+                    );
+                    update_mode_select_battle_kind(
+                        &mut menu_queries.p4(),
+                        &assets.manifest.glyphs,
+                        mode_select.arena,
                     );
                 }
             }
@@ -2043,6 +2237,7 @@ fn handle_shared_controls(
                 &mut enemy_freeze,
                 &mut versus_freeze,
                 &mut base_reinforcement,
+                &mode_select,
                 &menu_queries.p0(),
             ),
             GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => start_versus_round(
@@ -2094,6 +2289,8 @@ fn enter_mode_select(
         mode_select.selected,
         mode_select.stage,
         mode_select.arena,
+        mode_select.ai_strategy,
+        mode_select.difficulty_profile,
         mode_select.audio_mode,
         mode_select.sound_enabled,
         mode_select.window_scale,
@@ -2140,6 +2337,8 @@ fn respawn_mode_select_screen(
         mode_select.selected,
         mode_select.stage,
         mode_select.arena,
+        mode_select.ai_strategy,
+        mode_select.difficulty_profile,
         mode_select.audio_mode,
         mode_select.sound_enabled,
         mode_select.window_scale,
@@ -2193,6 +2392,7 @@ fn restart_level(
     enemy_freeze: &mut EnemyFreeze,
     versus_freeze: &mut VersusPlayerFreeze,
     base_reinforcement: &mut BaseReinforcement,
+    mode_select: &ModeSelect,
     game_entities: &Query<Entity, With<GameEntity>>,
 ) {
     let (level, new_tile_grid) = load_stage_bundle_or_panic(game_status.stage);
@@ -2215,7 +2415,9 @@ fn restart_level(
     play_sound(commands, sounds, SoundKind::StageStart);
 
     *tile_grid = new_tile_grid;
-    *director = EnemyDirector::from_level(&level);
+    let ai_strategy = selected_enemy_ai_strategy(mode_select, &level);
+    let difficulty_profile = selected_enemy_difficulty_profile(mode_select, &level);
+    *director = EnemyDirector::from_level_with_ai(&level, ai_strategy, difficulty_profile);
     *score_board = campaign_score_board(game_mode, level.enemies.len());
     *stage_rules = StageRules::from_level(&level);
     *versus_powerups = VersusPowerUpDirector::inactive();
@@ -2630,7 +2832,7 @@ fn validate_glyph_manifest(manifest: &GlyphManifest) -> Result<(), String> {
                 manifest.tile_width, manifest.tile_height
             ));
         }
-        if !glyph_pattern_has_pixels(pattern) {
+        if ch != ' ' && !glyph_pattern_has_pixels(pattern) {
             return Err(format!(
                 "glyphs.characters includes unsupported blank glyph '{ch}'"
             ));
@@ -2883,12 +3085,40 @@ fn validate_battle_rules(grid: &TileGrid, rules: BattleRules) -> Result<(), Stri
     Ok(())
 }
 
+struct ModeSelectDisplay {
+    selected: ModeSelectOption,
+    stage: usize,
+    arena: usize,
+    ai_strategy: ModeSelectAiStrategy,
+    difficulty_profile: ModeSelectDifficultyProfile,
+    audio_mode: AudioMode,
+    sound_enabled: bool,
+    window_scale: u32,
+}
+
+impl ModeSelectDisplay {
+    fn from_mode_select(mode_select: &ModeSelect) -> Self {
+        Self {
+            selected: mode_select.selected,
+            stage: mode_select.stage,
+            arena: mode_select.arena,
+            ai_strategy: mode_select.ai_strategy,
+            difficulty_profile: mode_select.difficulty_profile,
+            audio_mode: mode_select.audio_mode,
+            sound_enabled: mode_select.sound_enabled,
+            window_scale: mode_select.window_scale,
+        }
+    }
+}
+
 fn spawn_mode_select_screen(
     commands: &mut Commands,
     assets: &SpriteAssets,
     selected: ModeSelectOption,
     stage: usize,
     arena: usize,
+    ai_strategy: ModeSelectAiStrategy,
+    difficulty_profile: ModeSelectDifficultyProfile,
     audio_mode: AudioMode,
     sound_enabled: bool,
     scale_setting: u32,
@@ -2899,74 +3129,76 @@ fn spawn_mode_select_screen(
             Vec2::new(208.0 * window_scale(), 208.0 * window_scale()),
         ),
         Transform::from_translation(virtual_center_scaled(
-            Vec2::new(0.0, 16.0),
+            Vec2::new(MODE_SELECT_LEFT, 16.0),
             Vec2::new(208.0, 208.0),
             0.0,
         )),
         GameEntity,
     ));
 
-    spawn_pixel_text(commands, assets, "TANK", Vec2::new(86.0, 66.0), 0.3);
-    spawn_pixel_text(commands, assets, "1990", Vec2::new(88.0, 79.0), 0.3);
     spawn_pixel_text(
         commands,
         assets,
-        "1 PLAYER",
-        mode_select_option_top_left(ModeSelectOption::Campaign),
+        "TANK 1990",
+        mode_select_centered_top_left("TANK 1990", MODE_SELECT_TITLE_Y),
         0.3,
     );
-    spawn_pixel_text(
-        commands,
-        assets,
-        "2 PLAYERS",
-        mode_select_option_top_left(ModeSelectOption::CoopCampaign),
-        0.3,
-    );
-    spawn_pixel_text(
-        commands,
-        assets,
-        "BATTLE",
-        mode_select_option_top_left(ModeSelectOption::Battle),
-        0.3,
-    );
-    spawn_pixel_text(
-        commands,
-        assets,
-        "MUSIC",
-        mode_select_option_top_left(ModeSelectOption::Music),
-        0.3,
-    );
-    spawn_mode_select_music_value(commands, assets, audio_mode, Vec2::new(124.0, 135.0), 0.3);
-    spawn_pixel_text(
-        commands,
-        assets,
-        "SOUND",
-        mode_select_option_top_left(ModeSelectOption::Sound),
-        0.3,
-    );
-    spawn_mode_select_sound_value(
-        commands,
-        assets,
+    let display = ModeSelectDisplay {
+        selected,
+        stage,
+        arena,
+        ai_strategy,
+        difficulty_profile,
+        audio_mode,
         sound_enabled,
-        Vec2::new(124.0, 149.0),
-        0.3,
-    );
-    spawn_pixel_text(
+        window_scale: scale_setting,
+    };
+    for option in [
+        ModeSelectOption::Campaign,
+        ModeSelectOption::CoopCampaign,
+        ModeSelectOption::Battle,
+        ModeSelectOption::AiStrategy,
+        ModeSelectOption::Difficulty,
+        ModeSelectOption::Music,
+        ModeSelectOption::Sound,
+        ModeSelectOption::Scale,
+    ] {
+        let text = mode_select_option_text(&display, option);
+        spawn_pixel_text(
+            commands,
+            assets,
+            &text,
+            mode_select_option_top_left(&display, option),
+            0.3,
+        );
+    }
+    let stage_top_left = mode_select_option_top_left(&display, ModeSelectOption::Stage);
+    spawn_pixel_text(commands, assets, "STAGE", stage_top_left, 0.3);
+    spawn_mode_select_stage_digits(
         commands,
         assets,
-        "SCALE",
-        mode_select_option_top_left(ModeSelectOption::Scale),
+        stage,
+        Vec2::new(stage_top_left.x + GLYPH_ADVANCE * 6.0, stage_top_left.y),
         0.3,
     );
-    let scale_label = window_scale_label(scale_setting);
-    spawn_pixel_text(commands, assets, &scale_label, Vec2::new(124.0, 163.0), 0.3);
-    spawn_pixel_text(commands, assets, "STAGE", Vec2::new(59.0, 175.0), 0.3);
-    spawn_mode_select_stage_digits(commands, assets, stage, Vec2::new(95.0, 175.0), 0.3);
-    spawn_pixel_text(commands, assets, "ARENA", Vec2::new(59.0, 187.0), 0.3);
-    spawn_mode_select_arena_digits(commands, assets, arena, Vec2::new(95.0, 187.0), 0.3);
-    spawn_mode_select_battle_kind(commands, assets, arena, Vec2::new(115.0, 187.0), 0.3);
+    let arena_top_left = mode_select_option_top_left(&display, ModeSelectOption::Arena);
+    spawn_pixel_text(commands, assets, "ARENA", arena_top_left, 0.3);
+    spawn_mode_select_arena_digits(
+        commands,
+        assets,
+        arena,
+        Vec2::new(arena_top_left.x + GLYPH_ADVANCE * 6.0, arena_top_left.y),
+        0.3,
+    );
+    spawn_mode_select_battle_kind(
+        commands,
+        assets,
+        arena,
+        Vec2::new(arena_top_left.x + GLYPH_ADVANCE * 9.0, arena_top_left.y),
+        0.3,
+    );
     spawn_mode_select_hints(commands, assets);
-    spawn_mode_select_cursor(commands, assets, selected);
+    spawn_mode_select_cursor(commands, assets, &display);
 }
 
 fn spawn_mode_select_hints(commands: &mut Commands, assets: &SpriteAssets) {
@@ -2976,7 +3208,10 @@ fn spawn_mode_select_hints(commands: &mut Commands, assets: &SpriteAssets) {
             commands,
             assets,
             line,
-            Vec2::new((208.0 - text_width) / 2.0, 197.0 + index as f32 * 9.0),
+            Vec2::new(
+                MODE_SELECT_LEFT + (MODE_SELECT_WIDTH - text_width) / 2.0,
+                MODE_SELECT_HINT_TOP + index as f32 * 9.0,
+            ),
             0.3,
         );
     }
@@ -3072,70 +3307,10 @@ fn spawn_mode_select_battle_kind(
     }
 }
 
-fn spawn_mode_select_music_value(
-    commands: &mut Commands,
-    assets: &SpriteAssets,
-    mode: AudioMode,
-    top_left: Vec2,
-    z: f32,
-) {
-    let text = audio_mode_label(mode);
-    for digit in 0..7 {
-        let ch = text.chars().nth(digit).unwrap_or(' ');
-        commands.spawn((
-            Sprite::from_atlas_image(
-                assets.glyph_image.clone(),
-                TextureAtlas {
-                    layout: assets.glyph_layout.clone(),
-                    index: glyph_index(ch, &assets.manifest.glyphs),
-                },
-            ),
-            Transform::from_translation(virtual_center_scaled(
-                Vec2::new(top_left.x + digit as f32 * GLYPH_ADVANCE, top_left.y),
-                glyph_size(&assets.manifest.glyphs),
-                z,
-            ))
-            .with_scale(Vec3::splat(window_scale())),
-            ModeSelectMusicGlyph { digit },
-            GameEntity,
-        ));
-    }
-}
-
-fn spawn_mode_select_sound_value(
-    commands: &mut Commands,
-    assets: &SpriteAssets,
-    enabled: bool,
-    top_left: Vec2,
-    z: f32,
-) {
-    let text = sound_enabled_label(enabled);
-    for digit in 0..3 {
-        let ch = text.chars().nth(digit).unwrap_or(' ');
-        commands.spawn((
-            Sprite::from_atlas_image(
-                assets.glyph_image.clone(),
-                TextureAtlas {
-                    layout: assets.glyph_layout.clone(),
-                    index: glyph_index(ch, &assets.manifest.glyphs),
-                },
-            ),
-            Transform::from_translation(virtual_center_scaled(
-                Vec2::new(top_left.x + digit as f32 * GLYPH_ADVANCE, top_left.y),
-                glyph_size(&assets.manifest.glyphs),
-                z,
-            ))
-            .with_scale(Vec3::splat(window_scale())),
-            ModeSelectSoundGlyph { digit },
-            GameEntity,
-        ));
-    }
-}
-
 fn spawn_mode_select_cursor(
     commands: &mut Commands,
     assets: &SpriteAssets,
-    selected: ModeSelectOption,
+    display: &ModeSelectDisplay,
 ) {
     commands.spawn((
         Sprite::from_atlas_image(
@@ -3150,7 +3325,7 @@ fn spawn_mode_select_cursor(
                 ),
             },
         ),
-        Transform::from_translation(mode_select_cursor_translation(selected))
+        Transform::from_translation(mode_select_cursor_translation(display))
             .with_scale(Vec3::splat(window_scale())),
         ModeSelectCursor,
         GameEntity,
@@ -4019,6 +4194,8 @@ fn spawn_enemies(
         director.spawned_count += 1;
         let kind = enemy.kind;
         let carried_powerup = enemy.carried_powerup;
+        let ai_strategy = director.ai_strategy;
+        let difficulty_profile = director.difficulty_profile;
 
         commands.spawn((
             Sprite::from_atlas_image(
@@ -4043,7 +4220,7 @@ fn spawn_enemies(
             Tank {
                 top_left,
                 facing: spawn.facing,
-                speed: enemy_speed(kind),
+                speed: enemy_speed_for_profile(kind, difficulty_profile),
             },
             Health {
                 current: enemy_health(kind),
@@ -4054,8 +4231,16 @@ fn spawn_enemies(
                 carried_powerup,
             },
             EnemyAi {
-                turn_timer: Timer::from_seconds(enemy_turn_interval(kind), TimerMode::Repeating),
-                fire_timer: Timer::from_seconds(enemy_fire_interval(kind), TimerMode::Repeating),
+                turn_timer: Timer::from_seconds(
+                    enemy_turn_interval_for_profile(kind, difficulty_profile),
+                    TimerMode::Repeating,
+                ),
+                fire_timer: Timer::from_seconds(
+                    enemy_fire_interval_for_profile(kind, difficulty_profile),
+                    TimerMode::Repeating,
+                ),
+                strategy: ai_strategy,
+                difficulty_profile,
             },
             SpawnProtection::for_spawn_shimmer(assets.manifest.spawn_shimmer_frames()),
             GameEntity,
@@ -4107,12 +4292,15 @@ fn move_enemy_tanks(
     {
         ai.turn_timer.tick(time.delta());
         if ai.turn_timer.just_finished() {
-            tank.facing = preferred_enemy_direction(
+            tank.facing = select_enemy_direction(
+                ai.strategy,
+                ai.difficulty_profile,
                 enemy.kind,
                 tank.top_left,
                 tank.facing,
                 &player_top_lefts,
                 base_center,
+                &grid,
             );
         }
 
@@ -4192,7 +4380,11 @@ fn fire_enemy_bullets(
 
         let aim_direction = enemy_aim_direction(tank.top_left, &player_top_lefts, base_center);
         let snap_fire_ready = aim_direction.is_some()
-            && enemy_alignment_fire_ready(enemy.kind, ai.fire_timer.elapsed_secs());
+            && enemy_alignment_fire_ready_for_profile(
+                enemy.kind,
+                ai.fire_timer.elapsed_secs(),
+                ai.difficulty_profile,
+            );
         if let Some(direction) = aim_direction {
             if !ai.fire_timer.just_finished() && !snap_fire_ready {
                 continue;
@@ -4200,7 +4392,12 @@ fn fire_enemy_bullets(
             tank.facing = direction;
             set_tank_sprite_direction(&mut sprite, tank_sprite, tank.facing, &assets.manifest);
         } else if !ai.fire_timer.just_finished()
-            || !enemy_random_fire_ready(tank.top_left, tank.facing, enemy.kind)
+            || !enemy_random_fire_ready_for_profile(
+                tank.top_left,
+                tank.facing,
+                enemy.kind,
+                ai.difficulty_profile,
+            )
         {
             continue;
         }
@@ -5685,6 +5882,7 @@ fn advance_after_level_clear(
     assets: Res<SpriteAssets>,
     sounds: Res<SoundAssets>,
     game_mode: Res<GameMode>,
+    mode_select: Res<ModeSelect>,
     mut game_status: ResMut<GameStatus>,
     mut tile_grid: ResMut<TileGrid>,
     mut director: ResMut<EnemyDirector>,
@@ -5740,7 +5938,9 @@ fn advance_after_level_clear(
     play_sound(&mut commands, &sounds, SoundKind::StageStart);
 
     *tile_grid = new_tile_grid;
-    *director = EnemyDirector::from_level(&level);
+    let ai_strategy = selected_enemy_ai_strategy(&mode_select, &level);
+    let difficulty_profile = selected_enemy_difficulty_profile(&mode_select, &level);
+    *director = EnemyDirector::from_level_with_ai(&level, ai_strategy, difficulty_profile);
     *stage_rules = StageRules::from_level(&level);
     score_board.enemies_destroyed = 0;
     score_board.total_enemies = level.enemies.len();
@@ -6113,25 +6313,107 @@ fn selected_campaign_stage(mode_select: &ModeSelect) -> usize {
     mode_select.stage.clamp(1, LEVEL_COUNT)
 }
 
+fn selected_enemy_ai_strategy(
+    mode_select: &ModeSelect,
+    level: &LevelDefinition,
+) -> EnemyAiStrategy {
+    match mode_select.ai_strategy {
+        ModeSelectAiStrategy::Auto => level.enemy_ai_strategy,
+        ModeSelectAiStrategy::Classic => EnemyAiStrategy::Classic,
+        ModeSelectAiStrategy::PathToObjective => EnemyAiStrategy::PathToObjective,
+    }
+}
+
+fn selected_enemy_difficulty_profile(
+    mode_select: &ModeSelect,
+    level: &LevelDefinition,
+) -> EnemyDifficultyProfile {
+    match mode_select.difficulty_profile {
+        ModeSelectDifficultyProfile::Auto => level.difficulty_profile,
+        ModeSelectDifficultyProfile::Normal => EnemyDifficultyProfile::Normal,
+        ModeSelectDifficultyProfile::Hard => EnemyDifficultyProfile::Hard,
+    }
+}
+
+fn next_mode_select_ai_strategy(strategy: ModeSelectAiStrategy) -> ModeSelectAiStrategy {
+    match strategy {
+        ModeSelectAiStrategy::Auto => ModeSelectAiStrategy::Classic,
+        ModeSelectAiStrategy::Classic => ModeSelectAiStrategy::PathToObjective,
+        ModeSelectAiStrategy::PathToObjective => ModeSelectAiStrategy::Auto,
+    }
+}
+
+fn previous_mode_select_ai_strategy(strategy: ModeSelectAiStrategy) -> ModeSelectAiStrategy {
+    match strategy {
+        ModeSelectAiStrategy::Auto => ModeSelectAiStrategy::PathToObjective,
+        ModeSelectAiStrategy::Classic => ModeSelectAiStrategy::Auto,
+        ModeSelectAiStrategy::PathToObjective => ModeSelectAiStrategy::Classic,
+    }
+}
+
+fn next_mode_select_difficulty_profile(
+    profile: ModeSelectDifficultyProfile,
+) -> ModeSelectDifficultyProfile {
+    match profile {
+        ModeSelectDifficultyProfile::Auto => ModeSelectDifficultyProfile::Normal,
+        ModeSelectDifficultyProfile::Normal => ModeSelectDifficultyProfile::Hard,
+        ModeSelectDifficultyProfile::Hard => ModeSelectDifficultyProfile::Auto,
+    }
+}
+
+fn previous_mode_select_difficulty_profile(
+    profile: ModeSelectDifficultyProfile,
+) -> ModeSelectDifficultyProfile {
+    match profile {
+        ModeSelectDifficultyProfile::Auto => ModeSelectDifficultyProfile::Hard,
+        ModeSelectDifficultyProfile::Normal => ModeSelectDifficultyProfile::Auto,
+        ModeSelectDifficultyProfile::Hard => ModeSelectDifficultyProfile::Normal,
+    }
+}
+
+fn mode_select_ai_strategy_label(strategy: ModeSelectAiStrategy) -> &'static str {
+    match strategy {
+        ModeSelectAiStrategy::Auto => "AUTO",
+        ModeSelectAiStrategy::Classic => "CLASSIC",
+        ModeSelectAiStrategy::PathToObjective => "PATH",
+    }
+}
+
+fn mode_select_difficulty_profile_label(profile: ModeSelectDifficultyProfile) -> &'static str {
+    match profile {
+        ModeSelectDifficultyProfile::Auto => "AUTO",
+        ModeSelectDifficultyProfile::Normal => "NORMAL",
+        ModeSelectDifficultyProfile::Hard => "HARD",
+    }
+}
+
 fn next_mode_select_option(option: ModeSelectOption) -> ModeSelectOption {
     match option {
         ModeSelectOption::Campaign => ModeSelectOption::CoopCampaign,
         ModeSelectOption::CoopCampaign => ModeSelectOption::Battle,
-        ModeSelectOption::Battle => ModeSelectOption::Music,
+        ModeSelectOption::Battle => ModeSelectOption::AiStrategy,
+        ModeSelectOption::AiStrategy => ModeSelectOption::Difficulty,
+        ModeSelectOption::Difficulty => ModeSelectOption::Music,
         ModeSelectOption::Music => ModeSelectOption::Sound,
         ModeSelectOption::Sound => ModeSelectOption::Scale,
-        ModeSelectOption::Scale => ModeSelectOption::Campaign,
+        ModeSelectOption::Scale => ModeSelectOption::Stage,
+        ModeSelectOption::Stage => ModeSelectOption::Arena,
+        ModeSelectOption::Arena => ModeSelectOption::Campaign,
     }
 }
 
 fn previous_mode_select_option(option: ModeSelectOption) -> ModeSelectOption {
     match option {
-        ModeSelectOption::Campaign => ModeSelectOption::Scale,
+        ModeSelectOption::Campaign => ModeSelectOption::Arena,
         ModeSelectOption::CoopCampaign => ModeSelectOption::Campaign,
         ModeSelectOption::Battle => ModeSelectOption::CoopCampaign,
-        ModeSelectOption::Music => ModeSelectOption::Battle,
+        ModeSelectOption::AiStrategy => ModeSelectOption::Battle,
+        ModeSelectOption::Difficulty => ModeSelectOption::AiStrategy,
+        ModeSelectOption::Music => ModeSelectOption::Difficulty,
         ModeSelectOption::Sound => ModeSelectOption::Music,
         ModeSelectOption::Scale => ModeSelectOption::Sound,
+        ModeSelectOption::Stage => ModeSelectOption::Scale,
+        ModeSelectOption::Arena => ModeSelectOption::Stage,
     }
 }
 
@@ -6150,21 +6432,68 @@ fn update_mode_select_stage_digits(
     }
 }
 
-fn mode_select_option_top_left(option: ModeSelectOption) -> Vec2 {
+fn mode_select_centered_x(text: &str) -> f32 {
+    MODE_SELECT_LEFT + (MODE_SELECT_WIDTH - phase_text_width(text)) / 2.0
+}
+
+fn mode_select_centered_top_left(text: &str, y: f32) -> Vec2 {
+    Vec2::new(mode_select_centered_x(text), y)
+}
+
+fn mode_select_option_text(display: &ModeSelectDisplay, option: ModeSelectOption) -> String {
     match option {
-        ModeSelectOption::Campaign => Vec2::new(82.0, 93.0),
-        ModeSelectOption::CoopCampaign => Vec2::new(82.0, 107.0),
-        ModeSelectOption::Battle => Vec2::new(88.0, 121.0),
-        ModeSelectOption::Music => Vec2::new(82.0, 135.0),
-        ModeSelectOption::Sound => Vec2::new(82.0, 149.0),
-        ModeSelectOption::Scale => Vec2::new(82.0, 163.0),
+        ModeSelectOption::Campaign => "1 PLAYER".to_string(),
+        ModeSelectOption::CoopCampaign => "2 PLAYERS".to_string(),
+        ModeSelectOption::Battle => "BATTLE".to_string(),
+        ModeSelectOption::AiStrategy => {
+            format!("AI {}", mode_select_ai_strategy_label(display.ai_strategy))
+        }
+        ModeSelectOption::Difficulty => {
+            format!(
+                "DIFF {}",
+                mode_select_difficulty_profile_label(display.difficulty_profile)
+            )
+        }
+        ModeSelectOption::Music => format!("MUSIC {}", audio_mode_label(display.audio_mode)),
+        ModeSelectOption::Sound => format!("SOUND {}", sound_enabled_label(display.sound_enabled)),
+        ModeSelectOption::Scale => format!("SCALE {}", window_scale_label(display.window_scale)),
+        ModeSelectOption::Stage => format!("STAGE {:02}", display.stage.min(99)),
+        ModeSelectOption::Arena => {
+            format!(
+                "ARENA {:02} {}",
+                display.arena.min(99),
+                battle_kind_label_for_arena(display.arena)
+            )
+        }
     }
 }
 
-fn mode_select_cursor_translation(option: ModeSelectOption) -> Vec3 {
-    let option = mode_select_option_top_left(option);
+fn mode_select_option_top_left(display: &ModeSelectDisplay, option: ModeSelectOption) -> Vec2 {
+    mode_select_centered_top_left(
+        &mode_select_option_text(display, option),
+        mode_select_option_y(option),
+    )
+}
+
+fn mode_select_option_y(option: ModeSelectOption) -> f32 {
+    match option {
+        ModeSelectOption::Campaign => 54.0,
+        ModeSelectOption::CoopCampaign => 65.0,
+        ModeSelectOption::Battle => 76.0,
+        ModeSelectOption::AiStrategy => 95.0,
+        ModeSelectOption::Difficulty => 106.0,
+        ModeSelectOption::Music => 117.0,
+        ModeSelectOption::Sound => 128.0,
+        ModeSelectOption::Scale => 139.0,
+        ModeSelectOption::Stage => 153.0,
+        ModeSelectOption::Arena => 164.0,
+    }
+}
+
+fn mode_select_cursor_translation(display: &ModeSelectDisplay) -> Vec3 {
+    let option = mode_select_option_top_left(display, display.selected);
     board_object_center(
-        60.0,
+        (option.x - MODE_SELECT_CURSOR_GAP).max(0.0),
         option.y - 4.0 - BOARD_ORIGIN_Y,
         Vec2::splat(TANK_SIZE),
         0.3,
@@ -6173,9 +6502,9 @@ fn mode_select_cursor_translation(option: ModeSelectOption) -> Vec3 {
 
 fn update_mode_select_cursor(
     cursors: &mut Query<&mut Transform, With<ModeSelectCursor>>,
-    selected: ModeSelectOption,
+    display: &ModeSelectDisplay,
 ) {
-    let translation = mode_select_cursor_translation(selected);
+    let translation = mode_select_cursor_translation(display);
     for mut transform in cursors {
         transform.translation = translation;
     }
@@ -6705,7 +7034,67 @@ fn enemy_aim_direction(
     base_center.and_then(|base| aligned_fire_direction(enemy_center, base))
 }
 
+fn select_enemy_direction(
+    strategy: EnemyAiStrategy,
+    difficulty_profile: EnemyDifficultyProfile,
+    kind: EnemyKind,
+    top_left: Vec2,
+    current: Direction,
+    player_top_lefts: &[Vec2],
+    base_center: Option<Vec2>,
+    grid: &TileGrid,
+) -> Direction {
+    match strategy {
+        EnemyAiStrategy::Classic => classic_enemy_direction(
+            difficulty_profile,
+            kind,
+            top_left,
+            current,
+            player_top_lefts,
+            base_center,
+        ),
+        EnemyAiStrategy::PathToObjective => path_to_objective_enemy_direction(
+            difficulty_profile,
+            kind,
+            top_left,
+            current,
+            player_top_lefts,
+            base_center,
+            grid,
+        )
+        .unwrap_or_else(|| {
+            classic_enemy_direction(
+                difficulty_profile,
+                kind,
+                top_left,
+                current,
+                player_top_lefts,
+                base_center,
+            )
+        }),
+    }
+}
+
+#[cfg(test)]
 fn preferred_enemy_direction(
+    kind: EnemyKind,
+    top_left: Vec2,
+    current: Direction,
+    player_top_lefts: &[Vec2],
+    base_center: Option<Vec2>,
+) -> Direction {
+    classic_enemy_direction(
+        EnemyDifficultyProfile::Normal,
+        kind,
+        top_left,
+        current,
+        player_top_lefts,
+        base_center,
+    )
+}
+
+fn classic_enemy_direction(
+    difficulty_profile: EnemyDifficultyProfile,
     kind: EnemyKind,
     top_left: Vec2,
     current: Direction,
@@ -6731,7 +7120,7 @@ fn preferred_enemy_direction(
     if let Some(base_center) = base_center {
         let delta = base_center - own_center;
         if delta.length_squared() > TANK_SIZE * TANK_SIZE {
-            if enemy_should_roam(kind, top_left, current) {
+            if enemy_should_roam_for_profile(kind, top_left, current, difficulty_profile) {
                 return enemy_patrol_direction(kind, top_left, current);
             }
             return axis_direction_toward(own_center, base_center);
@@ -6739,6 +7128,162 @@ fn preferred_enemy_direction(
     }
 
     enemy_patrol_direction(kind, top_left, current)
+}
+
+fn path_to_objective_enemy_direction(
+    difficulty_profile: EnemyDifficultyProfile,
+    kind: EnemyKind,
+    top_left: Vec2,
+    current: Direction,
+    player_top_lefts: &[Vec2],
+    base_center: Option<Vec2>,
+    grid: &TileGrid,
+) -> Option<Direction> {
+    if let Some(direction) = enemy_aim_direction(top_left, player_top_lefts, base_center) {
+        return Some(direction);
+    }
+    if enemy_should_roam_for_profile(kind, top_left, current, difficulty_profile) {
+        return Some(enemy_patrol_direction(kind, top_left, current));
+    }
+
+    let targets = enemy_objective_targets(grid, player_top_lefts);
+    path_direction_to_targets(grid, top_left, &targets)
+}
+
+fn enemy_objective_targets(grid: &TileGrid, player_top_lefts: &[Vec2]) -> Vec<GridPoint> {
+    let mut targets = Vec::new();
+    for player_top_left in player_top_lefts {
+        if let Some(point) = tank_grid_position(*player_top_left) {
+            targets.push(point);
+        }
+    }
+    if let Some(base_top_left) = base_top_left_from_grid(grid) {
+        targets.extend(base_approach_positions(grid, base_top_left));
+    }
+    targets
+}
+
+fn base_approach_positions(grid: &TileGrid, base_top_left: Vec2) -> Vec<GridPoint> {
+    let Some(base) = tank_grid_position(base_top_left) else {
+        return Vec::new();
+    };
+    let mut positions = Vec::new();
+    let min_x = base.x.saturating_sub(1);
+    let max_x = (base.x + 2).min(BOARD_TILES - 2);
+    for x in min_x..=max_x {
+        if base.y >= 2 {
+            positions.push(GridPoint { x, y: base.y - 2 });
+        }
+        if base.y + 2 <= BOARD_TILES - 2 {
+            positions.push(GridPoint { x, y: base.y + 2 });
+        }
+    }
+
+    let min_y = base.y.saturating_sub(1);
+    let max_y = (base.y + 2).min(BOARD_TILES - 2);
+    for y in min_y..=max_y {
+        if base.x >= 2 {
+            positions.push(GridPoint { x: base.x - 2, y });
+        }
+        if base.x + 2 <= BOARD_TILES - 2 {
+            positions.push(GridPoint { x: base.x + 2, y });
+        }
+    }
+
+    positions
+        .into_iter()
+        .filter(|point| grid.can_tank_occupy(grid_point_top_left(point)))
+        .collect()
+}
+
+fn path_direction_to_targets(
+    grid: &TileGrid,
+    top_left: Vec2,
+    targets: &[GridPoint],
+) -> Option<Direction> {
+    let start = tank_grid_position(top_left)?;
+    if targets.iter().any(|target| *target == start) {
+        return None;
+    }
+    let target_set: HashSet<(usize, usize)> =
+        targets.iter().map(|target| (target.x, target.y)).collect();
+    if target_set.is_empty() {
+        return None;
+    }
+
+    let mut visited = vec![false; BOARD_TILES * BOARD_TILES];
+    let mut queue = VecDeque::new();
+    visited[grid_point_index(start)] = true;
+    queue.push_back((start, None));
+
+    while let Some((point, first_direction)) = queue.pop_front() {
+        for direction in path_neighbor_directions(first_direction) {
+            let Some(next) = neighbor_grid_point(point, direction) else {
+                continue;
+            };
+            let index = grid_point_index(next);
+            if visited[index] || !grid.can_tank_occupy(grid_point_top_left(&next)) {
+                continue;
+            }
+            let first_direction = first_direction.unwrap_or(direction);
+            if target_set.contains(&(next.x, next.y)) {
+                return Some(first_direction);
+            }
+            visited[index] = true;
+            queue.push_back((next, Some(first_direction)));
+        }
+    }
+
+    None
+}
+
+fn path_neighbor_directions(first_direction: Option<Direction>) -> [Direction; 4] {
+    match first_direction {
+        Some(direction) => [
+            direction,
+            next_direction(direction),
+            opposite_direction(direction),
+            previous_direction(direction),
+        ],
+        None => [
+            Direction::Down,
+            Direction::Left,
+            Direction::Right,
+            Direction::Up,
+        ],
+    }
+}
+
+fn tank_grid_position(top_left: Vec2) -> Option<GridPoint> {
+    let x = (top_left.x / TILE_SIZE).round() as i32;
+    let y = (top_left.y / TILE_SIZE).round() as i32;
+    if x < 0 || y < 0 || x as usize > BOARD_TILES - 2 || y as usize > BOARD_TILES - 2 {
+        return None;
+    }
+    Some(GridPoint {
+        x: x as usize,
+        y: y as usize,
+    })
+}
+
+fn grid_point_index(point: GridPoint) -> usize {
+    point.y * BOARD_TILES + point.x
+}
+
+fn neighbor_grid_point(point: GridPoint, direction: Direction) -> Option<GridPoint> {
+    match direction {
+        Direction::Up => point.y.checked_sub(1).map(|y| GridPoint { y, ..point }),
+        Direction::Down if point.y < BOARD_TILES - 2 => Some(GridPoint {
+            y: point.y + 1,
+            ..point
+        }),
+        Direction::Left => point.x.checked_sub(1).map(|x| GridPoint { x, ..point }),
+        Direction::Right if point.x < BOARD_TILES - 2 => Some(GridPoint {
+            x: point.x + 1,
+            ..point
+        }),
+        Direction::Down | Direction::Right => None,
+    }
 }
 
 fn enemy_patrol_direction(kind: EnemyKind, top_left: Vec2, current: Direction) -> Direction {
@@ -6749,8 +7294,19 @@ fn enemy_patrol_direction(kind: EnemyKind, top_left: Vec2, current: Direction) -
     }
 }
 
+#[cfg(test)]
 fn enemy_should_roam(kind: EnemyKind, top_left: Vec2, current: Direction) -> bool {
-    enemy_roam_seed(kind, top_left, current).is_multiple_of(enemy_roam_rate(kind))
+    enemy_should_roam_for_profile(kind, top_left, current, EnemyDifficultyProfile::Normal)
+}
+
+fn enemy_should_roam_for_profile(
+    kind: EnemyKind,
+    top_left: Vec2,
+    current: Direction,
+    difficulty_profile: EnemyDifficultyProfile,
+) -> bool {
+    enemy_roam_seed(kind, top_left, current)
+        .is_multiple_of(enemy_roam_rate_for_profile(kind, difficulty_profile))
 }
 
 fn enemy_roam_direction(kind: EnemyKind, top_left: Vec2, current: Direction) -> Direction {
@@ -6784,23 +7340,56 @@ fn direction_from_index(index: u32) -> Direction {
     }
 }
 
+#[cfg(test)]
 fn enemy_alignment_fire_ready(kind: EnemyKind, elapsed_secs: f32) -> bool {
-    elapsed_secs >= enemy_fire_interval(kind) * ENEMY_ALIGNMENT_FIRE_FRACTION
+    enemy_alignment_fire_ready_for_profile(kind, elapsed_secs, EnemyDifficultyProfile::Normal)
+}
+
+fn enemy_alignment_fire_ready_for_profile(
+    kind: EnemyKind,
+    elapsed_secs: f32,
+    difficulty_profile: EnemyDifficultyProfile,
+) -> bool {
+    elapsed_secs
+        >= enemy_fire_interval_for_profile(kind, difficulty_profile) * ENEMY_ALIGNMENT_FIRE_FRACTION
 }
 
 fn enemy_fire_slot_available(active_enemy_bullets: usize, active_for_tank: usize) -> bool {
     active_enemy_bullets < ENEMY_BULLET_LIMIT && active_for_tank < ENEMY_BULLET_LIMIT_PER_TANK
 }
 
+#[cfg(test)]
 fn enemy_random_fire_ready(top_left: Vec2, facing: Direction, kind: EnemyKind) -> bool {
-    enemy_fire_seed(top_left, facing, kind).is_multiple_of(enemy_random_fire_rate(kind))
+    enemy_random_fire_ready_for_profile(top_left, facing, kind, EnemyDifficultyProfile::Normal)
 }
 
+fn enemy_random_fire_ready_for_profile(
+    top_left: Vec2,
+    facing: Direction,
+    kind: EnemyKind,
+    difficulty_profile: EnemyDifficultyProfile,
+) -> bool {
+    enemy_fire_seed(top_left, facing, kind)
+        .is_multiple_of(enemy_random_fire_rate_for_profile(kind, difficulty_profile))
+}
+
+#[cfg(test)]
 fn enemy_random_fire_rate(kind: EnemyKind) -> u32 {
-    match kind {
+    enemy_random_fire_rate_for_profile(kind, EnemyDifficultyProfile::Normal)
+}
+
+fn enemy_random_fire_rate_for_profile(
+    kind: EnemyKind,
+    difficulty_profile: EnemyDifficultyProfile,
+) -> u32 {
+    let normal = match kind {
         EnemyKind::Power => 2,
         EnemyKind::Fast => 3,
         EnemyKind::Basic | EnemyKind::Armor => 4,
+    };
+    match difficulty_profile {
+        EnemyDifficultyProfile::Normal => normal,
+        EnemyDifficultyProfile::Hard => normal.saturating_sub(1).max(1),
     }
 }
 
@@ -6823,11 +7412,19 @@ fn enemy_kind_index(kind: EnemyKind) -> u32 {
 }
 
 fn enemy_roam_rate(kind: EnemyKind) -> u32 {
-    match kind {
+    enemy_roam_rate_for_profile(kind, EnemyDifficultyProfile::Normal)
+}
+
+fn enemy_roam_rate_for_profile(kind: EnemyKind, difficulty_profile: EnemyDifficultyProfile) -> u32 {
+    let normal = match kind {
         EnemyKind::Fast => 2,
         EnemyKind::Power => 3,
         EnemyKind::Basic => 4,
         EnemyKind::Armor => 6,
+    };
+    match difficulty_profile {
+        EnemyDifficultyProfile::Normal => normal,
+        EnemyDifficultyProfile::Hard => normal + 2,
     }
 }
 
@@ -6840,6 +7437,24 @@ fn next_direction(direction: Direction) -> Direction {
     }
 }
 
+fn previous_direction(direction: Direction) -> Direction {
+    match direction {
+        Direction::Up => Direction::Left,
+        Direction::Left => Direction::Down,
+        Direction::Down => Direction::Right,
+        Direction::Right => Direction::Up,
+    }
+}
+
+fn opposite_direction(direction: Direction) -> Direction {
+    match direction {
+        Direction::Up => Direction::Down,
+        Direction::Down => Direction::Up,
+        Direction::Left => Direction::Right,
+        Direction::Right => Direction::Left,
+    }
+}
+
 fn tank_move_speed(base_speed: f32, grid: &TileGrid, top_left: Vec2) -> f32 {
     if grid.tank_overlaps_tile(top_left, TileKind::Ice) {
         base_speed * ICE_SPEED_MULTIPLIER
@@ -6848,13 +7463,51 @@ fn tank_move_speed(base_speed: f32, grid: &TileGrid, top_left: Vec2) -> f32 {
     }
 }
 
+#[cfg(test)]
 fn enemy_speed(kind: EnemyKind) -> f32 {
-    match kind {
+    enemy_speed_for_profile(kind, EnemyDifficultyProfile::Normal)
+}
+
+fn enemy_speed_for_profile(kind: EnemyKind, difficulty_profile: EnemyDifficultyProfile) -> f32 {
+    let normal = match kind {
         EnemyKind::Fast => 72.0,
         EnemyKind::Power => 56.0,
         EnemyKind::Armor => 48.0,
         EnemyKind::Basic => 52.0,
+    };
+    normal * enemy_ai_tuning(difficulty_profile).speed_multiplier
+}
+
+fn enemy_spawn_interval_for_profile(
+    spawn_interval_secs: f32,
+    difficulty_profile: EnemyDifficultyProfile,
+) -> f32 {
+    spawn_interval_secs * enemy_ai_tuning(difficulty_profile).spawn_interval_multiplier
+}
+
+fn enemy_ai_tuning(profile: EnemyDifficultyProfile) -> EnemyAiTuning {
+    match profile {
+        EnemyDifficultyProfile::Normal => EnemyAiTuning {
+            speed_multiplier: 1.0,
+            turn_interval_multiplier: 1.0,
+            fire_interval_multiplier: 1.0,
+            spawn_interval_multiplier: 1.0,
+        },
+        EnemyDifficultyProfile::Hard => EnemyAiTuning {
+            speed_multiplier: 1.08,
+            turn_interval_multiplier: 0.75,
+            fire_interval_multiplier: 0.78,
+            spawn_interval_multiplier: 0.75,
+        },
     }
+}
+
+#[derive(Clone, Copy)]
+struct EnemyAiTuning {
+    speed_multiplier: f32,
+    turn_interval_multiplier: f32,
+    fire_interval_multiplier: f32,
+    spawn_interval_multiplier: f32,
 }
 
 fn enemy_health(kind: EnemyKind) -> i32 {
@@ -6864,7 +7517,19 @@ fn enemy_health(kind: EnemyKind) -> i32 {
     }
 }
 
+#[cfg(test)]
 fn enemy_turn_interval(kind: EnemyKind) -> f32 {
+    enemy_turn_interval_for_profile(kind, EnemyDifficultyProfile::Normal)
+}
+
+fn enemy_turn_interval_for_profile(
+    kind: EnemyKind,
+    difficulty_profile: EnemyDifficultyProfile,
+) -> f32 {
+    base_enemy_turn_interval(kind) * enemy_ai_tuning(difficulty_profile).turn_interval_multiplier
+}
+
+fn base_enemy_turn_interval(kind: EnemyKind) -> f32 {
     match kind {
         EnemyKind::Fast => 0.8,
         EnemyKind::Power => 1.0,
@@ -6873,7 +7538,19 @@ fn enemy_turn_interval(kind: EnemyKind) -> f32 {
     }
 }
 
+#[cfg(test)]
 fn enemy_fire_interval(kind: EnemyKind) -> f32 {
+    enemy_fire_interval_for_profile(kind, EnemyDifficultyProfile::Normal)
+}
+
+fn enemy_fire_interval_for_profile(
+    kind: EnemyKind,
+    difficulty_profile: EnemyDifficultyProfile,
+) -> f32 {
+    base_enemy_fire_interval(kind) * enemy_ai_tuning(difficulty_profile).fire_interval_multiplier
+}
+
+fn base_enemy_fire_interval(kind: EnemyKind) -> f32 {
     match kind {
         EnemyKind::Power => 1.0,
         EnemyKind::Fast => 1.5,
@@ -8785,6 +9462,9 @@ fn glyph_pattern_has_pixels(pattern: [&str; GENERATED_GLYPH_HEIGHT]) -> bool {
 
 fn glyph_pattern(ch: char) -> [&'static str; 7] {
     match ch {
+        ' ' => [
+            ".....", ".....", ".....", ".....", ".....", ".....", ".....",
+        ],
         '0' => [
             "#####", "#...#", "#...#", "#...#", "#...#", "#...#", "#####",
         ],
@@ -9380,6 +10060,8 @@ mod tests {
                         enemy_fire_interval(kind),
                         TimerMode::Repeating,
                     ),
+                    strategy: EnemyAiStrategy::default(),
+                    difficulty_profile: EnemyDifficultyProfile::default(),
                 },
                 TankSpriteState::new(TankSpriteSet::enemy(kind)),
                 Transform::from_translation(board_object_center(
@@ -10342,9 +11024,10 @@ mod tests {
         assert_eq!(manifest.glyphs.characters, REQUIRED_GLYPHS);
         assert_eq!(manifest.glyphs.tile_width, GENERATED_GLYPH_WIDTH);
         assert_eq!(manifest.glyphs.tile_height, GENERATED_GLYPH_HEIGHT);
-        assert_eq!(glyph_index('0', &manifest.glyphs), 0);
-        assert_eq!(glyph_index('A', &manifest.glyphs), 10);
-        assert_eq!(glyph_index('Z', &manifest.glyphs), 35);
+        assert_eq!(glyph_index(' ', &manifest.glyphs), 0);
+        assert_eq!(glyph_index('0', &manifest.glyphs), 1);
+        assert_eq!(glyph_index('A', &manifest.glyphs), 11);
+        assert_eq!(glyph_index('Z', &manifest.glyphs), 36);
 
         assert!(matches!(
             manifest.sounds.fire,
@@ -10700,8 +11383,8 @@ mod tests {
         );
 
         let invalid = MANIFEST.replacen(
-            "characters: \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"",
-            "characters: \"00123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"",
+            "characters: \" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"",
+            "characters: \" 00123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"",
             1,
         );
         assert!(
@@ -10711,8 +11394,8 @@ mod tests {
         );
 
         let invalid = MANIFEST.replacen(
-            "characters: \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"",
-            "characters: \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXY?\"",
+            "characters: \" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"",
+            "characters: \" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXY?\"",
             1,
         );
         assert!(
@@ -10722,8 +11405,8 @@ mod tests {
         );
 
         let invalid = MANIFEST.replacen(
-            "characters: \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"",
-            "characters: \"0123456789ABCDEFGHIJKLMNOPQRSTUVWXY\"",
+            "characters: \" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\"",
+            "characters: \" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXY\"",
             1,
         );
         assert!(
@@ -10779,6 +11462,8 @@ mod tests {
                     .all(|row| row.chars().count() == BOARD_TILES)
             );
             assert_eq!(level.enemies.len(), 20);
+            assert_eq!(level.enemy_ai_strategy, EnemyAiStrategy::Classic);
+            assert_eq!(level.difficulty_profile, EnemyDifficultyProfile::Normal);
             assert_eq!(level.enemy_spawns.len(), 3);
             assert_eq!(
                 level
@@ -10832,6 +11517,29 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn level_parses_optional_enemy_ai_strategy_and_difficulty_profile() {
+        let hard_pathing = LEVEL_1.replacen(
+            "max_enemies_on_screen: 4,",
+            "max_enemies_on_screen: 4,\n  enemy_ai_strategy: PathToObjective,\n  difficulty_profile: Hard,",
+            1,
+        );
+        let level = parse_level(&hard_pathing).expect("level should parse");
+        assert_eq!(level.enemy_ai_strategy, EnemyAiStrategy::PathToObjective);
+        assert_eq!(level.difficulty_profile, EnemyDifficultyProfile::Hard);
+
+        let director = EnemyDirector::from_level(&level);
+        assert_eq!(director.ai_strategy, EnemyAiStrategy::PathToObjective);
+        assert_eq!(director.difficulty_profile, EnemyDifficultyProfile::Hard);
+        assert_eq!(
+            director.spawn_timer.duration().as_secs_f32(),
+            enemy_spawn_interval_for_profile(
+                level.spawn_interval_secs,
+                EnemyDifficultyProfile::Hard
+            )
+        );
     }
 
     #[test]
@@ -12160,6 +12868,11 @@ mod tests {
         app.insert_resource(StageRules {
             player_steel_destruction: true,
         });
+        app.insert_resource(ModeSelect {
+            ai_strategy: ModeSelectAiStrategy::PathToObjective,
+            difficulty_profile: ModeSelectDifficultyProfile::Hard,
+            ..ModeSelect::default()
+        });
         app.insert_resource(enemy_freeze);
         app.insert_resource(versus_freeze);
         app.insert_resource(base_reinforcement);
@@ -12189,6 +12902,8 @@ mod tests {
         assert_eq!(director.roster.len(), next_level.enemies.len());
         assert_eq!(director.spawns.len(), next_level.enemy_spawns.len());
         assert_eq!(director.max_active, next_level.max_enemies_on_screen);
+        assert_eq!(director.ai_strategy, EnemyAiStrategy::PathToObjective);
+        assert_eq!(director.difficulty_profile, EnemyDifficultyProfile::Hard);
         assert_eq!(
             *app.world().resource::<StageRules>(),
             StageRules::from_level(&next_level)
@@ -12341,6 +13056,8 @@ mod tests {
             selected: ModeSelectOption::Scale,
             stage: 1,
             arena: 1,
+            ai_strategy: ModeSelectAiStrategy::Auto,
+            difficulty_profile: ModeSelectDifficultyProfile::Auto,
             audio_mode: AudioMode::Classic,
             sound_enabled: false,
             window_scale: DEFAULT_WINDOW_SCALE,
@@ -12977,7 +13694,7 @@ mod tests {
     }
 
     #[test]
-    fn mode_select_cycles_campaign_coop_battle_music_sound_and_scale() {
+    fn mode_select_cycles_campaign_coop_battle_ai_difficulty_music_sound_scale_stage_and_arena() {
         assert_eq!(
             next_mode_select_option(ModeSelectOption::Campaign),
             ModeSelectOption::CoopCampaign
@@ -12988,6 +13705,14 @@ mod tests {
         );
         assert_eq!(
             next_mode_select_option(ModeSelectOption::Battle),
+            ModeSelectOption::AiStrategy
+        );
+        assert_eq!(
+            next_mode_select_option(ModeSelectOption::AiStrategy),
+            ModeSelectOption::Difficulty
+        );
+        assert_eq!(
+            next_mode_select_option(ModeSelectOption::Difficulty),
             ModeSelectOption::Music
         );
         assert_eq!(
@@ -13000,10 +13725,26 @@ mod tests {
         );
         assert_eq!(
             next_mode_select_option(ModeSelectOption::Scale),
+            ModeSelectOption::Stage
+        );
+        assert_eq!(
+            next_mode_select_option(ModeSelectOption::Stage),
+            ModeSelectOption::Arena
+        );
+        assert_eq!(
+            next_mode_select_option(ModeSelectOption::Arena),
             ModeSelectOption::Campaign
         );
         assert_eq!(
             previous_mode_select_option(ModeSelectOption::Campaign),
+            ModeSelectOption::Arena
+        );
+        assert_eq!(
+            previous_mode_select_option(ModeSelectOption::Arena),
+            ModeSelectOption::Stage
+        );
+        assert_eq!(
+            previous_mode_select_option(ModeSelectOption::Stage),
             ModeSelectOption::Scale
         );
         assert_eq!(
@@ -13013,6 +13754,18 @@ mod tests {
         assert_eq!(
             previous_mode_select_option(ModeSelectOption::Battle),
             ModeSelectOption::CoopCampaign
+        );
+        assert_eq!(
+            previous_mode_select_option(ModeSelectOption::AiStrategy),
+            ModeSelectOption::Battle
+        );
+        assert_eq!(
+            previous_mode_select_option(ModeSelectOption::Difficulty),
+            ModeSelectOption::AiStrategy
+        );
+        assert_eq!(
+            previous_mode_select_option(ModeSelectOption::Music),
+            ModeSelectOption::Difficulty
         );
         assert_eq!(
             previous_mode_select_option(ModeSelectOption::Scale),
@@ -13030,6 +13783,143 @@ mod tests {
             GameMode::VersusBaseBattle.mode_select_option(),
             ModeSelectOption::Battle
         );
+    }
+
+    #[test]
+    fn mode_select_ai_and_difficulty_values_cycle_and_label() {
+        assert_eq!(
+            next_mode_select_ai_strategy(ModeSelectAiStrategy::Auto),
+            ModeSelectAiStrategy::Classic
+        );
+        assert_eq!(
+            next_mode_select_ai_strategy(ModeSelectAiStrategy::Classic),
+            ModeSelectAiStrategy::PathToObjective
+        );
+        assert_eq!(
+            next_mode_select_ai_strategy(ModeSelectAiStrategy::PathToObjective),
+            ModeSelectAiStrategy::Auto
+        );
+        assert_eq!(
+            previous_mode_select_ai_strategy(ModeSelectAiStrategy::Auto),
+            ModeSelectAiStrategy::PathToObjective
+        );
+        assert_eq!(
+            previous_mode_select_ai_strategy(ModeSelectAiStrategy::Classic),
+            ModeSelectAiStrategy::Auto
+        );
+        assert_eq!(
+            mode_select_ai_strategy_label(ModeSelectAiStrategy::PathToObjective),
+            "PATH"
+        );
+
+        assert_eq!(
+            next_mode_select_difficulty_profile(ModeSelectDifficultyProfile::Auto),
+            ModeSelectDifficultyProfile::Normal
+        );
+        assert_eq!(
+            next_mode_select_difficulty_profile(ModeSelectDifficultyProfile::Normal),
+            ModeSelectDifficultyProfile::Hard
+        );
+        assert_eq!(
+            next_mode_select_difficulty_profile(ModeSelectDifficultyProfile::Hard),
+            ModeSelectDifficultyProfile::Auto
+        );
+        assert_eq!(
+            previous_mode_select_difficulty_profile(ModeSelectDifficultyProfile::Auto),
+            ModeSelectDifficultyProfile::Hard
+        );
+        assert_eq!(
+            previous_mode_select_difficulty_profile(ModeSelectDifficultyProfile::Hard),
+            ModeSelectDifficultyProfile::Normal
+        );
+        assert_eq!(
+            mode_select_difficulty_profile_label(ModeSelectDifficultyProfile::Normal),
+            "NORMAL"
+        );
+    }
+
+    #[test]
+    fn mode_select_auto_ai_uses_level_defaults_and_explicit_values_override() {
+        let level_contents = LEVEL_1.replacen(
+            "max_enemies_on_screen: 4,",
+            "max_enemies_on_screen: 4,\n  enemy_ai_strategy: PathToObjective,\n  difficulty_profile: Hard,",
+            1,
+        );
+        let level = parse_level(&level_contents).expect("level should parse");
+        let mode_select = ModeSelect::default();
+        assert_eq!(
+            selected_enemy_ai_strategy(&mode_select, &level),
+            EnemyAiStrategy::PathToObjective
+        );
+        assert_eq!(
+            selected_enemy_difficulty_profile(&mode_select, &level),
+            EnemyDifficultyProfile::Hard
+        );
+
+        let mode_select = ModeSelect {
+            ai_strategy: ModeSelectAiStrategy::Classic,
+            difficulty_profile: ModeSelectDifficultyProfile::Normal,
+            ..ModeSelect::default()
+        };
+        assert_eq!(
+            selected_enemy_ai_strategy(&mode_select, &level),
+            EnemyAiStrategy::Classic
+        );
+        assert_eq!(
+            selected_enemy_difficulty_profile(&mode_select, &level),
+            EnemyDifficultyProfile::Normal
+        );
+    }
+
+    #[test]
+    fn main_menu_ai_and_difficulty_settings_cycle_from_ui() {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::ArrowRight);
+
+        let mut app = App::new();
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus::default());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(EnemyDirector::inactive());
+        app.insert_resource(ScoreBoard::campaign(0));
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPowerUpDirector::inactive());
+        app.insert_resource(ModeSelect {
+            selected: ModeSelectOption::AiStrategy,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.insert_resource(BaseReinforcement::default());
+        app.add_systems(Update, handle_shared_controls);
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ModeSelect>().ai_strategy,
+            ModeSelectAiStrategy::Classic
+        );
+        let mut cursors = app.world_mut().query::<&ModeSelectCursor>();
+        assert_eq!(cursors.iter(app.world()).count(), 1);
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowLeft);
+        app.world_mut().resource_mut::<ModeSelect>().selected = ModeSelectOption::Difficulty;
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ModeSelect>().difficulty_profile,
+            ModeSelectDifficultyProfile::Hard
+        );
+        let mut cursors = app.world_mut().query::<&ModeSelectCursor>();
+        assert_eq!(cursors.iter(app.world()).count(), 1);
     }
 
     #[test]
@@ -13051,6 +13941,37 @@ mod tests {
         assert_eq!(previous_arena(6), 5);
         assert_eq!(previous_arena(7), 6);
         assert_eq!(previous_arena(8), 7);
+    }
+
+    #[test]
+    fn main_menu_arena_row_changes_selected_arena() {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::ArrowRight);
+
+        let mut app = App::new();
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::VersusDeathmatch);
+        app.insert_resource(GameStatus::default());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(EnemyDirector::inactive());
+        app.insert_resource(ScoreBoard::campaign(0));
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPowerUpDirector::inactive());
+        app.insert_resource(ModeSelect {
+            selected: ModeSelectOption::Arena,
+            arena: 1,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.insert_resource(BaseReinforcement::default());
+        app.add_systems(Update, handle_shared_controls);
+
+        app.update();
+
+        assert_eq!(app.world().resource::<ModeSelect>().arena, 2);
     }
 
     #[test]
@@ -13081,19 +14002,80 @@ mod tests {
 
     #[test]
     fn mode_select_cursor_tracks_selected_option() {
-        let campaign = mode_select_cursor_translation(ModeSelectOption::Campaign);
-        let coop = mode_select_cursor_translation(ModeSelectOption::CoopCampaign);
-        let battle = mode_select_cursor_translation(ModeSelectOption::Battle);
-        let music = mode_select_cursor_translation(ModeSelectOption::Music);
-        let sound = mode_select_cursor_translation(ModeSelectOption::Sound);
-        let scale = mode_select_cursor_translation(ModeSelectOption::Scale);
-        assert_eq!(campaign.x, battle.x);
-        assert_eq!(campaign.x, coop.x);
+        let cursor = |selected| {
+            let mode_select = ModeSelect {
+                selected,
+                ..ModeSelect::default()
+            };
+            mode_select_cursor_translation(&ModeSelectDisplay::from_mode_select(&mode_select))
+        };
+        let campaign = cursor(ModeSelectOption::Campaign);
+        let coop = cursor(ModeSelectOption::CoopCampaign);
+        let battle = cursor(ModeSelectOption::Battle);
+        let ai = cursor(ModeSelectOption::AiStrategy);
+        let difficulty = cursor(ModeSelectOption::Difficulty);
+        let music = cursor(ModeSelectOption::Music);
+        let sound = cursor(ModeSelectOption::Sound);
+        let scale = cursor(ModeSelectOption::Scale);
+        let stage = cursor(ModeSelectOption::Stage);
+        let arena = cursor(ModeSelectOption::Arena);
         assert!(campaign.y > coop.y);
         assert!(coop.y > battle.y);
-        assert!(battle.y > music.y);
+        assert!(battle.y > ai.y);
+        assert!(ai.y > difficulty.y);
+        assert!(difficulty.y > music.y);
         assert!(music.y > sound.y);
         assert!(sound.y > scale.y);
+        assert!(scale.y > stage.y);
+        assert!(stage.y > arena.y);
+    }
+
+    #[test]
+    fn mode_select_text_rows_are_centered_on_the_virtual_screen() {
+        let mode_select = ModeSelect::default();
+        let display = ModeSelectDisplay::from_mode_select(&mode_select);
+        let center_x = VIRTUAL_WIDTH / 2.0;
+        assert_eq!(
+            mode_select_centered_x("TANK 1990") + phase_text_width("TANK 1990") / 2.0,
+            center_x
+        );
+
+        for option in [
+            ModeSelectOption::Campaign,
+            ModeSelectOption::CoopCampaign,
+            ModeSelectOption::Battle,
+            ModeSelectOption::AiStrategy,
+            ModeSelectOption::Difficulty,
+            ModeSelectOption::Music,
+            ModeSelectOption::Sound,
+            ModeSelectOption::Scale,
+            ModeSelectOption::Stage,
+            ModeSelectOption::Arena,
+        ] {
+            let text = mode_select_option_text(&display, option);
+            let top_left = mode_select_option_top_left(&display, option);
+            assert_eq!(
+                top_left.x + phase_text_width(&text) / 2.0,
+                center_x,
+                "{text} should be centered"
+            );
+        }
+    }
+
+    #[test]
+    fn mode_select_separates_mode_choices_from_settings() {
+        let campaign_to_coop = mode_select_option_y(ModeSelectOption::CoopCampaign)
+            - mode_select_option_y(ModeSelectOption::Campaign);
+        let coop_to_battle = mode_select_option_y(ModeSelectOption::Battle)
+            - mode_select_option_y(ModeSelectOption::CoopCampaign);
+        let battle_to_ai = mode_select_option_y(ModeSelectOption::AiStrategy)
+            - mode_select_option_y(ModeSelectOption::Battle);
+        let ai_to_difficulty = mode_select_option_y(ModeSelectOption::Difficulty)
+            - mode_select_option_y(ModeSelectOption::AiStrategy);
+
+        assert_eq!(campaign_to_coop, coop_to_battle);
+        assert_eq!(ai_to_difficulty, campaign_to_coop);
+        assert!(battle_to_ai > campaign_to_coop);
     }
 
     #[test]
@@ -13104,13 +14086,23 @@ mod tests {
             ["WS ARROWS SELECT", "AD ARROWS CHANGE", "SPACE ENTER START"]
         );
         for line in [
+            "TANK 1990",
             "1 PLAYER",
             "2 PLAYERS",
+            "BATTLE",
             "STAGE",
+            "STAGE 50",
             "ARENA",
+            "ARENA 08 DUEL",
             "37",
             "BASE",
             "DUEL",
+            "AI",
+            "DIFF",
+            "AUTO",
+            "PATH",
+            "NORMAL",
+            "HARD",
             "MUSIC",
             "BGM",
             "CUSTOM",
@@ -16437,6 +17429,43 @@ mod tests {
     }
 
     #[test]
+    fn path_to_objective_strategy_routes_around_simple_obstacles() {
+        let mut grid = TileGrid::empty();
+        grid.set(2, 0, TileKind::Water);
+        grid.set(2, 1, TileKind::Water);
+        let enemy_top_left = Vec2::new(0.0, 0.0);
+        let player_top_lefts = [Vec2::new(32.0, 16.0)];
+
+        assert_eq!(
+            path_direction_to_targets(&grid, enemy_top_left, &[GridPoint { x: 4, y: 2 }]),
+            Some(Direction::Down)
+        );
+        assert_eq!(
+            select_enemy_direction(
+                EnemyAiStrategy::PathToObjective,
+                EnemyDifficultyProfile::Normal,
+                EnemyKind::Basic,
+                enemy_top_left,
+                Direction::Right,
+                &player_top_lefts,
+                None,
+                &grid,
+            ),
+            Direction::Down
+        );
+        assert_eq!(
+            preferred_enemy_direction(
+                EnemyKind::Basic,
+                enemy_top_left,
+                Direction::Right,
+                &player_top_lefts,
+                None,
+            ),
+            Direction::Right
+        );
+    }
+
+    #[test]
     fn enemy_patrol_still_pushes_top_spawns_downward() {
         assert_eq!(
             enemy_patrol_direction(EnemyKind::Armor, Vec2::new(96.0, 0.0), Direction::Left),
@@ -16449,10 +17478,30 @@ mod tests {
         assert!(enemy_turn_interval(EnemyKind::Fast) < enemy_turn_interval(EnemyKind::Basic));
         assert!(enemy_turn_interval(EnemyKind::Basic) < enemy_turn_interval(EnemyKind::Armor));
         assert_eq!(enemy_turn_interval(EnemyKind::Power), 1.0);
+        assert!(
+            enemy_turn_interval_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Hard)
+                < enemy_turn_interval(EnemyKind::Basic)
+        );
+        assert!(
+            enemy_fire_interval_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Hard)
+                < enemy_fire_interval(EnemyKind::Basic)
+        );
+        assert!(
+            enemy_speed_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Hard)
+                > enemy_speed(EnemyKind::Basic)
+        );
 
         assert!(enemy_roam_rate(EnemyKind::Fast) < enemy_roam_rate(EnemyKind::Basic));
         assert!(enemy_roam_rate(EnemyKind::Basic) < enemy_roam_rate(EnemyKind::Armor));
         assert_eq!(enemy_roam_rate(EnemyKind::Power), 3);
+        assert!(
+            enemy_roam_rate_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Hard)
+                > enemy_roam_rate(EnemyKind::Basic)
+        );
+        assert!(
+            enemy_random_fire_rate_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Hard)
+                < enemy_random_fire_rate(EnemyKind::Basic)
+        );
 
         let top_left = Vec2::new(80.0, 80.0);
         assert!(enemy_should_roam(EnemyKind::Basic, top_left, Direction::Up));

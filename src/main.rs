@@ -13877,6 +13877,53 @@ mod tests {
     }
 
     #[test]
+    fn enemy_move_system_blocks_tank_from_entering_player() {
+        let mut app = App::new();
+        let enemy_top_left = Vec2::new(16.0, 16.0);
+        let player_top_left = Vec2::new(32.0, 16.0);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(
+            TILE_SIZE / enemy_speed(EnemyKind::Basic),
+        ));
+
+        app.insert_resource(time);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(EnemyFreeze::default());
+        spawn_test_player(app.world_mut(), PlayerId::One, player_top_left, 3);
+        spawn_test_enemy_tank(
+            app.world_mut(),
+            EnemyKind::Basic,
+            enemy_top_left,
+            Direction::Right,
+        );
+        app.add_systems(Update, move_enemy_tanks);
+
+        app.update();
+
+        let mut enemies = app
+            .world_mut()
+            .query::<(&EnemyTank, &Tank, &Transform, &TankSpriteState)>();
+        let (_, tank, transform, sprite_state) = enemies.single(app.world()).unwrap();
+        assert_eq!(tank.top_left, enemy_top_left);
+        assert_eq!(tank.facing, Direction::Down);
+        assert_eq!(
+            transform.translation,
+            board_object_center(
+                enemy_top_left.x,
+                enemy_top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0
+            )
+        );
+        assert_eq!(sprite_state.frame, 0);
+    }
+
+    #[test]
     fn versus_move_controls_drive_players_independently() {
         let mut app = App::new();
         let p1_top_left = Vec2::new(16.0, 16.0);

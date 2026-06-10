@@ -112,6 +112,8 @@ const ENEMY_BULLET_LIMIT_PER_TANK: usize = 1;
 const CLASSIC_MAX_ACTIVE_ENEMIES: usize = 4;
 const CLASSIC_BASE_X: usize = 12;
 const CLASSIC_BASE_Y: usize = 24;
+const CLASSIC_COOP_P2_SPAWN_X: usize = 16;
+const CLASSIC_COOP_P2_SPAWN_Y: usize = 24;
 const ENEMY_MARKER_COUNT: usize = 20;
 const ENEMY_MARKER_COLUMNS: usize = 4;
 const ENEMY_MARKER_SIZE: f32 = 8.0;
@@ -723,11 +725,20 @@ impl Default for PlayerControl {
 #[derive(Resource, Clone, Copy, Debug, Eq, PartialEq)]
 enum GameMode {
     Campaign,
+    CoopCampaign,
     VersusDeathmatch,
     VersusBaseBattle,
 }
 
 impl GameMode {
+    fn is_campaign(self) -> bool {
+        matches!(self, Self::Campaign | Self::CoopCampaign)
+    }
+
+    fn is_coop_campaign(self) -> bool {
+        matches!(self, Self::CoopCampaign)
+    }
+
     fn is_versus(self) -> bool {
         matches!(self, Self::VersusDeathmatch | Self::VersusBaseBattle)
     }
@@ -735,6 +746,7 @@ impl GameMode {
     fn mode_select_option(self) -> ModeSelectOption {
         match self {
             Self::Campaign => ModeSelectOption::Campaign,
+            Self::CoopCampaign => ModeSelectOption::CoopCampaign,
             Self::VersusDeathmatch | Self::VersusBaseBattle => ModeSelectOption::Battle,
         }
     }
@@ -743,6 +755,7 @@ impl GameMode {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ModeSelectOption {
     Campaign,
+    CoopCampaign,
     Battle,
     Music,
     Sound,
@@ -865,6 +878,14 @@ impl ScoreBoard {
         }
     }
 
+    fn coop_campaign(total_enemies: usize) -> Self {
+        Self {
+            p2_lives: 3,
+            lives: 6,
+            ..Self::campaign(total_enemies)
+        }
+    }
+
     fn versus(lives: i32, target_score: u32, respawn_invulnerability_secs: f32) -> Self {
         Self {
             score: 0,
@@ -906,6 +927,11 @@ impl ScoreBoard {
             PlayerId::One => self.p1_lives = lives,
             PlayerId::Two => self.p2_lives = lives,
         }
+    }
+
+    fn set_coop_player_lives(&mut self, player: PlayerId, lives: i32) {
+        self.set_player_lives(player, lives);
+        self.lives = self.p1_lives.max(0) + self.p2_lives.max(0);
     }
 }
 
@@ -1771,7 +1797,7 @@ fn handle_shared_controls(
 
         if keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft) {
             match mode_select.selected {
-                ModeSelectOption::Campaign => {
+                ModeSelectOption::Campaign | ModeSelectOption::CoopCampaign => {
                     mode_select.stage = previous_stage(mode_select.stage);
                     update_mode_select_stage_digits(
                         &mut menu_queries.p2(),
@@ -1826,7 +1852,7 @@ fn handle_shared_controls(
 
         if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) {
             match mode_select.selected {
-                ModeSelectOption::Campaign => {
+                ModeSelectOption::Campaign | ModeSelectOption::CoopCampaign => {
                     mode_select.stage = next_stage(mode_select.stage);
                     update_mode_select_stage_digits(
                         &mut menu_queries.p2(),
@@ -1891,6 +1917,27 @@ fn handle_shared_controls(
                         &mut commands,
                         &assets,
                         &sounds,
+                        *game_mode,
+                        &mut game_status,
+                        &mut tile_grid,
+                        &mut director,
+                        &mut score_board,
+                        &mut stage_rules,
+                        &mut versus_powerups,
+                        &mut enemy_freeze,
+                        &mut versus_freeze,
+                        &mut base_reinforcement,
+                        &menu_queries.p0(),
+                    );
+                }
+                ModeSelectOption::CoopCampaign => {
+                    game_status.stage = selected_campaign_stage(&mode_select);
+                    *game_mode = GameMode::CoopCampaign;
+                    restart_level(
+                        &mut commands,
+                        &assets,
+                        &sounds,
+                        *game_mode,
                         &mut game_status,
                         &mut tile_grid,
                         &mut director,
@@ -1982,10 +2029,11 @@ fn handle_shared_controls(
 
     if keys.just_pressed(KeyCode::KeyR) {
         match *game_mode {
-            GameMode::Campaign => restart_level(
+            GameMode::Campaign | GameMode::CoopCampaign => restart_level(
                 &mut commands,
                 &assets,
                 &sounds,
+                *game_mode,
                 &mut game_status,
                 &mut tile_grid,
                 &mut director,
@@ -2098,10 +2146,44 @@ fn respawn_mode_select_screen(
     );
 }
 
+fn campaign_score_board(game_mode: GameMode, total_enemies: usize) -> ScoreBoard {
+    if game_mode.is_coop_campaign() {
+        ScoreBoard::coop_campaign(total_enemies)
+    } else {
+        ScoreBoard::campaign(total_enemies)
+    }
+}
+
+fn campaign_player_spawns_for_restart(game_mode: GameMode) -> Vec<(PlayerId, i32)> {
+    if game_mode.is_coop_campaign() {
+        vec![(PlayerId::One, 3), (PlayerId::Two, 3)]
+    } else {
+        vec![(PlayerId::One, 3)]
+    }
+}
+
+fn campaign_player_spawns_from_score(
+    game_mode: GameMode,
+    score_board: &ScoreBoard,
+) -> Vec<(PlayerId, i32)> {
+    if game_mode.is_coop_campaign() {
+        [
+            (PlayerId::One, score_board.p1_lives.max(0)),
+            (PlayerId::Two, score_board.p2_lives.max(0)),
+        ]
+        .into_iter()
+        .filter(|(_, lives)| *lives > 0)
+        .collect()
+    } else {
+        vec![(PlayerId::One, score_board.lives.max(1))]
+    }
+}
+
 fn restart_level(
     commands: &mut Commands,
     assets: &SpriteAssets,
     sounds: &SoundAssets,
+    game_mode: GameMode,
     game_status: &mut GameStatus,
     tile_grid: &mut TileGrid,
     director: &mut EnemyDirector,
@@ -2120,20 +2202,21 @@ fn restart_level(
         commands.entity(entity).despawn();
     }
 
-    spawn_screen_frame(commands, assets, GameMode::Campaign);
+    spawn_screen_frame(commands, assets, game_mode);
+    let player_spawns = campaign_player_spawns_for_restart(game_mode);
     spawn_level(
         commands,
         assets,
         &level,
         &new_tile_grid,
-        3,
+        &player_spawns,
         DEFAULT_RESPAWN_INVULNERABILITY_SECONDS,
     );
     play_sound(commands, sounds, SoundKind::StageStart);
 
     *tile_grid = new_tile_grid;
     *director = EnemyDirector::from_level(&level);
-    *score_board = ScoreBoard::campaign(level.enemies.len());
+    *score_board = campaign_score_board(game_mode, level.enemies.len());
     *stage_rules = StageRules::from_level(&level);
     *versus_powerups = VersusPowerUpDirector::inactive();
     enemy_freeze.reset();
@@ -2835,6 +2918,13 @@ fn spawn_mode_select_screen(
     spawn_pixel_text(
         commands,
         assets,
+        "2 PLAYERS",
+        mode_select_option_top_left(ModeSelectOption::CoopCampaign),
+        0.3,
+    );
+    spawn_pixel_text(
+        commands,
+        assets,
         "BATTLE",
         mode_select_option_top_left(ModeSelectOption::Battle),
         0.3,
@@ -2846,7 +2936,7 @@ fn spawn_mode_select_screen(
         mode_select_option_top_left(ModeSelectOption::Music),
         0.3,
     );
-    spawn_mode_select_music_value(commands, assets, audio_mode, Vec2::new(124.0, 131.0), 0.3);
+    spawn_mode_select_music_value(commands, assets, audio_mode, Vec2::new(124.0, 135.0), 0.3);
     spawn_pixel_text(
         commands,
         assets,
@@ -2858,7 +2948,7 @@ fn spawn_mode_select_screen(
         commands,
         assets,
         sound_enabled,
-        Vec2::new(124.0, 145.0),
+        Vec2::new(124.0, 149.0),
         0.3,
     );
     spawn_pixel_text(
@@ -2869,12 +2959,12 @@ fn spawn_mode_select_screen(
         0.3,
     );
     let scale_label = window_scale_label(scale_setting);
-    spawn_pixel_text(commands, assets, &scale_label, Vec2::new(124.0, 159.0), 0.3);
-    spawn_pixel_text(commands, assets, "STAGE", Vec2::new(59.0, 171.0), 0.3);
-    spawn_mode_select_stage_digits(commands, assets, stage, Vec2::new(95.0, 171.0), 0.3);
-    spawn_pixel_text(commands, assets, "ARENA", Vec2::new(59.0, 183.0), 0.3);
-    spawn_mode_select_arena_digits(commands, assets, arena, Vec2::new(95.0, 183.0), 0.3);
-    spawn_mode_select_battle_kind(commands, assets, arena, Vec2::new(115.0, 183.0), 0.3);
+    spawn_pixel_text(commands, assets, &scale_label, Vec2::new(124.0, 163.0), 0.3);
+    spawn_pixel_text(commands, assets, "STAGE", Vec2::new(59.0, 175.0), 0.3);
+    spawn_mode_select_stage_digits(commands, assets, stage, Vec2::new(95.0, 175.0), 0.3);
+    spawn_pixel_text(commands, assets, "ARENA", Vec2::new(59.0, 187.0), 0.3);
+    spawn_mode_select_arena_digits(commands, assets, arena, Vec2::new(95.0, 187.0), 0.3);
+    spawn_mode_select_battle_kind(commands, assets, arena, Vec2::new(115.0, 187.0), 0.3);
     spawn_mode_select_hints(commands, assets);
     spawn_mode_select_cursor(commands, assets, selected);
 }
@@ -3095,13 +3185,14 @@ fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets, mode: Game
     ));
 
     match mode {
-        GameMode::Campaign => spawn_campaign_status_panel(commands, assets),
+        GameMode::Campaign => spawn_campaign_status_panel(commands, assets, false),
+        GameMode::CoopCampaign => spawn_campaign_status_panel(commands, assets, true),
         GameMode::VersusDeathmatch => spawn_versus_status_panel(commands, assets, true),
         GameMode::VersusBaseBattle => spawn_versus_status_panel(commands, assets, false),
     }
 }
 
-fn spawn_campaign_status_panel(commands: &mut Commands, assets: &SpriteAssets) {
+fn spawn_campaign_status_panel(commands: &mut Commands, assets: &SpriteAssets, show_p2: bool) {
     spawn_pixel_text(commands, assets, "P1", Vec2::new(214.0, 26.0), 0.3);
     spawn_pixel_text(commands, assets, "SCORE", Vec2::new(214.0, 38.0), 0.3);
     spawn_score_badge_icon(commands, assets);
@@ -3130,7 +3221,7 @@ fn spawn_campaign_status_panel(commands: &mut Commands, assets: &SpriteAssets) {
         commands,
         assets,
         PlayerId::One,
-        campaign_life_icon_top_left(),
+        campaign_life_icon_top_left(PlayerId::One),
     );
     spawn_status_digits(
         commands,
@@ -3140,6 +3231,22 @@ fn spawn_campaign_status_panel(commands: &mut Commands, assets: &SpriteAssets) {
         Vec2::new(234.0, 123.0),
         0.3,
     );
+    if show_p2 {
+        spawn_player_life_icon(
+            commands,
+            assets,
+            PlayerId::Two,
+            campaign_life_icon_top_left(PlayerId::Two),
+        );
+        spawn_status_digits(
+            commands,
+            assets,
+            StatusValue::P2Lives,
+            1,
+            Vec2::new(234.0, 135.0),
+            0.3,
+        );
+    }
 
     spawn_pixel_text(commands, assets, "ENEMY", Vec2::new(214.0, 148.0), 0.3);
     for index in 0..ENEMY_MARKER_COUNT {
@@ -3435,21 +3542,34 @@ fn spawn_level(
     assets: &SpriteAssets,
     level: &LevelDefinition,
     tile_grid: &TileGrid,
-    player_lives: i32,
+    player_lives: &[(PlayerId, i32)],
     spawn_invulnerability_secs: f32,
 ) {
     spawn_terrain(commands, assets, tile_grid);
 
     spawn_base_sprite(commands, assets, &level.base_position, None);
 
-    spawn_player_tank(
-        commands,
-        assets,
-        &level.player_spawn,
-        PlayerId::One,
-        player_lives,
-        spawn_invulnerability_secs,
-    );
+    for (player, lives) in player_lives {
+        spawn_player_tank(
+            commands,
+            assets,
+            &campaign_spawn_for_player(level, *player),
+            *player,
+            *lives,
+            spawn_invulnerability_secs,
+        );
+    }
+}
+
+fn campaign_spawn_for_player(level: &LevelDefinition, player: PlayerId) -> SpawnPoint {
+    match player {
+        PlayerId::One => level.player_spawn.clone(),
+        PlayerId::Two => SpawnPoint {
+            x: CLASSIC_COOP_P2_SPAWN_X,
+            y: CLASSIC_COOP_P2_SPAWN_Y,
+            facing: Direction::Up,
+        },
+    }
 }
 
 fn spawn_arena(
@@ -4257,7 +4377,7 @@ fn move_bullets(
 
         let tile_hit = bullet_blocking_tile_hit(&grid, previous_top_left, bullet.top_left);
 
-        if *game_mode == GameMode::Campaign && bullet.owner.is_player() {
+        if game_mode.is_campaign() && bullet.owner.is_player() {
             let mut hit_enemy = false;
             for (
                 enemy_entity,
@@ -4424,7 +4544,7 @@ fn move_bullets(
                     &mut upgrade,
                     player.id,
                     None,
-                    GameMode::Campaign,
+                    *game_mode,
                 );
                 resolve_bullet(&mut commands, entity, &mut bullet);
                 hit_player = true;
@@ -4482,7 +4602,7 @@ fn move_bullets(
                 if can_destroy_base {
                     let sound_sequence = base_destroyed_sounds(*game_mode, base_owner);
                     match *game_mode {
-                        GameMode::Campaign => {
+                        GameMode::Campaign | GameMode::CoopCampaign => {
                             game_status.phase = GamePhase::GameOver;
                         }
                         GameMode::VersusBaseBattle => {
@@ -4548,6 +4668,23 @@ fn resolve_player_destroyed(
             if lives.current <= 0 {
                 game_status.phase = GamePhase::GameOver;
                 play_sound(commands, sounds, SoundKind::GameOver);
+                mark_player_tank_destroyed_terminal(
+                    commands,
+                    assets,
+                    player_entity,
+                    tank,
+                    transform,
+                );
+                return;
+            }
+        }
+        GameMode::CoopCampaign => {
+            score_board.set_coop_player_lives(target, lives.current);
+            if lives.current <= 0 {
+                if score_board.lives <= 0 {
+                    game_status.phase = GamePhase::GameOver;
+                    play_sound(commands, sounds, SoundKind::GameOver);
+                }
                 mark_player_tank_destroyed_terminal(
                     commands,
                     assets,
@@ -4641,7 +4778,7 @@ fn base_can_be_destroyed_by_bullet(
     base_owner: Option<PlayerId>,
 ) -> bool {
     match game_mode {
-        GameMode::Campaign => true,
+        GameMode::Campaign | GameMode::CoopCampaign => true,
         GameMode::VersusBaseBattle => {
             matches!((bullet_owner.player_id(), base_owner), (Some(shooter), Some(owner)) if shooter != owner)
         }
@@ -4654,7 +4791,7 @@ fn base_destroyed_sounds(
     base_owner: Option<PlayerId>,
 ) -> &'static [SoundKind] {
     match game_mode {
-        GameMode::Campaign => &CAMPAIGN_BASE_DESTROYED_SOUNDS,
+        GameMode::Campaign | GameMode::CoopCampaign => &CAMPAIGN_BASE_DESTROYED_SOUNDS,
         GameMode::VersusBaseBattle if base_owner.is_some() => &VERSUS_BASE_DESTROYED_SOUNDS,
         GameMode::VersusBaseBattle | GameMode::VersusDeathmatch => &NO_BASE_DESTROYED_SOUNDS,
     }
@@ -4662,14 +4799,14 @@ fn base_destroyed_sounds(
 
 fn clock_freeze_target(game_mode: GameMode, collector: PlayerId) -> Option<PlayerId> {
     match game_mode {
-        GameMode::Campaign => None,
+        GameMode::Campaign | GameMode::CoopCampaign => None,
         GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => Some(collector.opponent()),
     }
 }
 
 fn grenade_player_target(game_mode: GameMode, collector: PlayerId) -> Option<PlayerId> {
     match game_mode {
-        GameMode::Campaign => None,
+        GameMode::Campaign | GameMode::CoopCampaign => None,
         GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => Some(collector.opponent()),
     }
 }
@@ -4684,6 +4821,9 @@ fn grant_extra_life(
     match game_mode {
         GameMode::Campaign => {
             score_board.lives = lives.current;
+        }
+        GameMode::CoopCampaign => {
+            score_board.set_coop_player_lives(player, lives.current);
         }
         GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
             score_board.set_player_lives(player, lives.current);
@@ -5084,7 +5224,7 @@ fn shovel_reinforcement_positions<'a>(
     bases: impl IntoIterator<Item = &'a BaseSprite>,
 ) -> Vec<(usize, usize)> {
     match mode {
-        GameMode::Campaign => base_wall_positions(tile_grid),
+        GameMode::Campaign | GameMode::CoopCampaign => base_wall_positions(tile_grid),
         GameMode::VersusBaseBattle => bases
             .into_iter()
             .find(|base| base.owner == Some(player))
@@ -5474,7 +5614,7 @@ fn check_game_phase(
     director: Res<EnemyDirector>,
     active_enemies: Query<&EnemyTank>,
 ) {
-    if *game_mode != GameMode::Campaign || !game_status.is_playing() {
+    if !game_mode.is_campaign() || !game_status.is_playing() {
         return;
     }
 
@@ -5544,6 +5684,7 @@ fn advance_after_level_clear(
     time: Res<Time>,
     assets: Res<SpriteAssets>,
     sounds: Res<SoundAssets>,
+    game_mode: Res<GameMode>,
     mut game_status: ResMut<GameStatus>,
     mut tile_grid: ResMut<TileGrid>,
     mut director: ResMut<EnemyDirector>,
@@ -5586,13 +5727,14 @@ fn advance_after_level_clear(
         commands.entity(entity).despawn();
     }
 
-    spawn_screen_frame(&mut commands, &assets, GameMode::Campaign);
+    spawn_screen_frame(&mut commands, &assets, *game_mode);
+    let player_spawns = campaign_player_spawns_from_score(*game_mode, &score_board);
     spawn_level(
         &mut commands,
         &assets,
         &level,
         &new_tile_grid,
-        score_board.lives.max(1),
+        &player_spawns,
         DEFAULT_RESPAWN_INVULNERABILITY_SECONDS,
     );
     play_sound(&mut commands, &sounds, SoundKind::StageStart);
@@ -5692,14 +5834,18 @@ fn status_value_text(
 ) -> String {
     match kind {
         StatusValue::Score => match mode {
-            GameMode::Campaign => format!("{:06}", score_board.score.min(999_999)),
+            GameMode::Campaign | GameMode::CoopCampaign => {
+                format!("{:06}", score_board.score.min(999_999))
+            }
             GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
                 format!("{:02}", score_board.p1_score.min(99))
             }
         },
         StatusValue::Lives => match mode {
-            GameMode::Campaign => format!("{}", score_board.lives.clamp(0, MAX_PLAYER_LIVES)),
-            GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
+            GameMode::Campaign => {
+                format!("{}", score_board.lives.clamp(0, MAX_PLAYER_LIVES))
+            }
+            GameMode::CoopCampaign | GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
                 format!("{}", score_board.p1_lives.clamp(0, MAX_PLAYER_LIVES))
             }
         },
@@ -5728,8 +5874,11 @@ fn enemy_marker_tank_index(manifest: &AssetManifest) -> usize {
     animated_tank_sprite_index(manifest, TankSpriteSet::EnemyBasic, Direction::Down, 0)
 }
 
-fn campaign_life_icon_top_left() -> Vec2 {
-    Vec2::new(222.0, 123.0)
+fn campaign_life_icon_top_left(player: PlayerId) -> Vec2 {
+    match player {
+        PlayerId::One => Vec2::new(222.0, 123.0),
+        PlayerId::Two => Vec2::new(222.0, 135.0),
+    }
 }
 
 fn versus_life_icon_top_left(player: PlayerId) -> Vec2 {
@@ -5850,7 +5999,7 @@ fn arena_intro_kind_label(mode: GameMode) -> &'static str {
     match mode {
         GameMode::VersusDeathmatch => "DUEL",
         GameMode::VersusBaseBattle => "BASE BATTLE",
-        GameMode::Campaign => "READY",
+        GameMode::Campaign | GameMode::CoopCampaign => "READY",
     }
 }
 
@@ -5861,7 +6010,7 @@ fn phase_banner_text(
 ) -> Option<Vec<String>> {
     if status.phase == GamePhase::StageIntro {
         return Some(match mode {
-            GameMode::Campaign => stage_intro_banner_text(status.stage),
+            GameMode::Campaign | GameMode::CoopCampaign => stage_intro_banner_text(status.stage),
             GameMode::VersusDeathmatch | GameMode::VersusBaseBattle => {
                 arena_intro_banner_text(status.arena, mode)
             }
@@ -5966,7 +6115,8 @@ fn selected_campaign_stage(mode_select: &ModeSelect) -> usize {
 
 fn next_mode_select_option(option: ModeSelectOption) -> ModeSelectOption {
     match option {
-        ModeSelectOption::Campaign => ModeSelectOption::Battle,
+        ModeSelectOption::Campaign => ModeSelectOption::CoopCampaign,
+        ModeSelectOption::CoopCampaign => ModeSelectOption::Battle,
         ModeSelectOption::Battle => ModeSelectOption::Music,
         ModeSelectOption::Music => ModeSelectOption::Sound,
         ModeSelectOption::Sound => ModeSelectOption::Scale,
@@ -5977,7 +6127,8 @@ fn next_mode_select_option(option: ModeSelectOption) -> ModeSelectOption {
 fn previous_mode_select_option(option: ModeSelectOption) -> ModeSelectOption {
     match option {
         ModeSelectOption::Campaign => ModeSelectOption::Scale,
-        ModeSelectOption::Battle => ModeSelectOption::Campaign,
+        ModeSelectOption::CoopCampaign => ModeSelectOption::Campaign,
+        ModeSelectOption::Battle => ModeSelectOption::CoopCampaign,
         ModeSelectOption::Music => ModeSelectOption::Battle,
         ModeSelectOption::Sound => ModeSelectOption::Music,
         ModeSelectOption::Scale => ModeSelectOption::Sound,
@@ -6001,11 +6152,12 @@ fn update_mode_select_stage_digits(
 
 fn mode_select_option_top_left(option: ModeSelectOption) -> Vec2 {
     match option {
-        ModeSelectOption::Campaign => Vec2::new(82.0, 95.0),
-        ModeSelectOption::Battle => Vec2::new(88.0, 113.0),
-        ModeSelectOption::Music => Vec2::new(82.0, 131.0),
-        ModeSelectOption::Sound => Vec2::new(82.0, 145.0),
-        ModeSelectOption::Scale => Vec2::new(82.0, 159.0),
+        ModeSelectOption::Campaign => Vec2::new(82.0, 93.0),
+        ModeSelectOption::CoopCampaign => Vec2::new(82.0, 107.0),
+        ModeSelectOption::Battle => Vec2::new(88.0, 121.0),
+        ModeSelectOption::Music => Vec2::new(82.0, 135.0),
+        ModeSelectOption::Sound => Vec2::new(82.0, 149.0),
+        ModeSelectOption::Scale => Vec2::new(82.0, 163.0),
     }
 }
 
@@ -9216,6 +9368,9 @@ mod tests {
                     kind,
                     carried_powerup: None,
                 },
+                Health {
+                    current: enemy_health(kind),
+                },
                 EnemyAi {
                     turn_timer: Timer::from_seconds(
                         enemy_turn_interval(kind),
@@ -10646,6 +10801,14 @@ mod tests {
                     y: CLASSIC_BASE_Y
                 }
             );
+            let grid = TileGrid::from_level(&level).expect("level grid should build");
+            assert!(
+                grid.can_tank_occupy(Vec2::new(
+                    CLASSIC_COOP_P2_SPAWN_X as f32 * TILE_SIZE,
+                    CLASSIC_COOP_P2_SPAWN_Y as f32 * TILE_SIZE
+                )),
+                "Stage {stage} must leave the co-op P2 spawn open"
+            );
         }
     }
 
@@ -11645,11 +11808,15 @@ mod tests {
 
     #[test]
     fn campaign_life_icon_fits_status_panel() {
-        let top_left = campaign_life_icon_top_left();
-        assert_eq!(top_left, Vec2::new(222.0, 123.0));
-        assert!(top_left.x >= 212.0);
-        assert!(top_left.x + PLAYER_LIFE_ICON_SIZE < 234.0);
-        assert!(top_left.y + PLAYER_LIFE_ICON_SIZE < ENEMY_MARKER_TOP);
+        let p1_top_left = campaign_life_icon_top_left(PlayerId::One);
+        let p2_top_left = campaign_life_icon_top_left(PlayerId::Two);
+        assert_eq!(p1_top_left, Vec2::new(222.0, 123.0));
+        assert_eq!(p2_top_left, Vec2::new(222.0, 135.0));
+        for top_left in [p1_top_left, p2_top_left] {
+            assert!(top_left.x >= 212.0);
+            assert!(top_left.x + PLAYER_LIFE_ICON_SIZE < 234.0);
+            assert!(top_left.y + PLAYER_LIFE_ICON_SIZE < ENEMY_MARKER_TOP);
+        }
     }
 
     #[test]
@@ -11658,6 +11825,10 @@ mod tests {
         assert_eq!(
             player_life_icon_tank_index(&manifest, PlayerId::One),
             manifest.tank_index(TankSpriteSet::Player1, Direction::Up, 0)
+        );
+        assert_eq!(
+            player_life_icon_tank_index(&manifest, PlayerId::Two),
+            manifest.tank_index(TankSpriteSet::Player2, Direction::Up, 0)
         );
     }
 
@@ -11976,6 +12147,7 @@ mod tests {
         app.insert_resource(time);
         app.insert_resource(test_sprite_assets());
         app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::Campaign);
         app.insert_resource(GameStatus {
             phase: GamePhase::LevelClear,
             stage: 1,
@@ -12054,6 +12226,54 @@ mod tests {
         assert_eq!(score_board.enemy_kills.count(EnemyKind::Power), 1);
         assert_eq!(score_board.enemy_kills.count(EnemyKind::Armor), 1);
         assert_eq!(score_board.enemy_kills.total(), 5);
+    }
+
+    #[test]
+    fn coop_campaign_score_board_tracks_separate_lives_and_total() {
+        let mut score_board = ScoreBoard::coop_campaign(20);
+
+        assert_eq!(score_board.p1_lives, 3);
+        assert_eq!(score_board.p2_lives, 3);
+        assert_eq!(score_board.lives, 6);
+
+        score_board.set_coop_player_lives(PlayerId::One, 1);
+        assert_eq!(score_board.p1_lives, 1);
+        assert_eq!(score_board.p2_lives, 3);
+        assert_eq!(score_board.lives, 4);
+        assert_eq!(
+            status_value_text(
+                StatusValue::Lives,
+                GameMode::CoopCampaign,
+                &GameStatus::default(),
+                &score_board,
+            ),
+            "1"
+        );
+        assert_eq!(
+            status_value_text(
+                StatusValue::P2Lives,
+                GameMode::CoopCampaign,
+                &GameStatus::default(),
+                &score_board,
+            ),
+            "3"
+        );
+    }
+
+    #[test]
+    fn coop_campaign_next_stage_spawns_only_surviving_players() {
+        let mut score_board = ScoreBoard::coop_campaign(20);
+        score_board.set_coop_player_lives(PlayerId::One, 0);
+        score_board.set_coop_player_lives(PlayerId::Two, 2);
+
+        assert_eq!(
+            campaign_player_spawns_from_score(GameMode::CoopCampaign, &score_board),
+            vec![(PlayerId::Two, 2)]
+        );
+        assert_eq!(
+            campaign_player_spawns_from_score(GameMode::Campaign, &score_board),
+            vec![(PlayerId::One, 2)]
+        );
     }
 
     #[test]
@@ -12757,9 +12977,13 @@ mod tests {
     }
 
     #[test]
-    fn mode_select_cycles_campaign_battle_music_sound_and_scale() {
+    fn mode_select_cycles_campaign_coop_battle_music_sound_and_scale() {
         assert_eq!(
             next_mode_select_option(ModeSelectOption::Campaign),
+            ModeSelectOption::CoopCampaign
+        );
+        assert_eq!(
+            next_mode_select_option(ModeSelectOption::CoopCampaign),
             ModeSelectOption::Battle
         );
         assert_eq!(
@@ -12783,12 +13007,24 @@ mod tests {
             ModeSelectOption::Scale
         );
         assert_eq!(
+            previous_mode_select_option(ModeSelectOption::CoopCampaign),
+            ModeSelectOption::Campaign
+        );
+        assert_eq!(
+            previous_mode_select_option(ModeSelectOption::Battle),
+            ModeSelectOption::CoopCampaign
+        );
+        assert_eq!(
             previous_mode_select_option(ModeSelectOption::Scale),
             ModeSelectOption::Sound
         );
         assert_eq!(
             previous_mode_select_option(ModeSelectOption::Sound),
             ModeSelectOption::Music
+        );
+        assert_eq!(
+            GameMode::CoopCampaign.mode_select_option(),
+            ModeSelectOption::CoopCampaign
         );
         assert_eq!(
             GameMode::VersusBaseBattle.mode_select_option(),
@@ -12846,12 +13082,15 @@ mod tests {
     #[test]
     fn mode_select_cursor_tracks_selected_option() {
         let campaign = mode_select_cursor_translation(ModeSelectOption::Campaign);
+        let coop = mode_select_cursor_translation(ModeSelectOption::CoopCampaign);
         let battle = mode_select_cursor_translation(ModeSelectOption::Battle);
         let music = mode_select_cursor_translation(ModeSelectOption::Music);
         let sound = mode_select_cursor_translation(ModeSelectOption::Sound);
         let scale = mode_select_cursor_translation(ModeSelectOption::Scale);
         assert_eq!(campaign.x, battle.x);
-        assert!(campaign.y > battle.y);
+        assert_eq!(campaign.x, coop.x);
+        assert!(campaign.y > coop.y);
+        assert!(coop.y > battle.y);
         assert!(battle.y > music.y);
         assert!(music.y > sound.y);
         assert!(sound.y > scale.y);
@@ -12865,8 +13104,24 @@ mod tests {
             ["WS ARROWS SELECT", "AD ARROWS CHANGE", "SPACE ENTER START"]
         );
         for line in [
-            "STAGE", "ARENA", "37", "BASE", "DUEL", "MUSIC", "BGM", "CUSTOM", "CLASSIC", "SOUND",
-            "ON", "OFF", "SCALE", "2X", "3X", "4X",
+            "1 PLAYER",
+            "2 PLAYERS",
+            "STAGE",
+            "ARENA",
+            "37",
+            "BASE",
+            "DUEL",
+            "MUSIC",
+            "BGM",
+            "CUSTOM",
+            "CLASSIC",
+            "SOUND",
+            "ON",
+            "OFF",
+            "SCALE",
+            "2X",
+            "3X",
+            "4X",
         ]
         .into_iter()
         .chain(MODE_SELECT_HINT_LINES)
@@ -13175,6 +13430,109 @@ mod tests {
         let score_board = app.world().resource::<ScoreBoard>();
         assert_eq!(score_board.score, 0);
         assert_eq!(score_board.enemies_destroyed, 0);
+    }
+
+    #[test]
+    fn coop_campaign_player_two_bullet_destroys_enemy() {
+        let enemy_top_left = Vec2::new(96.0, 64.0);
+        let mut app = App::new();
+
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::CoopCampaign);
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ScoreBoard::coop_campaign(20));
+        spawn_test_enemy_tank(
+            app.world_mut(),
+            EnemyKind::Basic,
+            enemy_top_left,
+            Direction::Down,
+        );
+        app.world_mut().spawn((
+            Bullet {
+                previous_top_left: enemy_top_left,
+                top_left: enemy_top_left,
+                facing: Direction::Down,
+                owner: Team::Player2,
+                speed: BULLET_SPEED,
+                breaks_steel: false,
+                resolved: false,
+            },
+            Transform::from_translation(board_object_center(
+                enemy_top_left.x,
+                enemy_top_left.y,
+                Vec2::splat(BULLET_SIZE),
+                7.0,
+            )),
+        ));
+        app.add_systems(Update, move_bullets);
+
+        app.update();
+
+        let score_board = app.world().resource::<ScoreBoard>();
+        assert_eq!(score_board.score, enemy_score(EnemyKind::Basic));
+        assert_eq!(score_board.enemies_destroyed, 1);
+        let mut enemies = app.world_mut().query::<&EnemyTank>();
+        assert_eq!(enemies.iter(app.world()).count(), 0);
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 0);
+    }
+
+    #[test]
+    fn coop_campaign_player_bullets_do_not_hit_teammates() {
+        let p2_top_left = Vec2::new(80.0, 96.0);
+        let mut app = App::new();
+
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::CoopCampaign);
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ScoreBoard::coop_campaign(20));
+        spawn_test_player(app.world_mut(), PlayerId::Two, p2_top_left, 3);
+        app.world_mut().spawn((
+            Bullet {
+                previous_top_left: p2_top_left,
+                top_left: p2_top_left,
+                facing: Direction::Right,
+                owner: Team::Player1,
+                speed: BULLET_SPEED,
+                breaks_steel: false,
+                resolved: false,
+            },
+            Transform::from_translation(board_object_center(
+                p2_top_left.x,
+                p2_top_left.y,
+                Vec2::splat(BULLET_SIZE),
+                7.0,
+            )),
+        ));
+        app.add_systems(Update, move_bullets);
+
+        app.update();
+
+        let status = app.world().resource::<GameStatus>();
+        assert_eq!(status.phase, GamePhase::Playing);
+        let score_board = app.world().resource::<ScoreBoard>();
+        assert_eq!(score_board.p2_lives, 3);
+        assert_eq!(score_board.lives, 6);
+        let mut players = app.world_mut().query::<(&Player, &PlayerLives, &Tank)>();
+        let p2 = players
+            .iter(app.world())
+            .find(|(player, _, _)| player.id == PlayerId::Two)
+            .expect("P2 should remain active");
+        assert_eq!(p2.1.current, 3);
+        let mut bullets = app.world_mut().query::<&Bullet>();
+        assert_eq!(bullets.iter(app.world()).count(), 1);
     }
 
     #[test]

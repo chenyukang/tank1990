@@ -3617,7 +3617,7 @@ fn base_wall_positions_around_rect(
     let left = min_x.saturating_sub(2);
     let right = (max_x + 2).min(BOARD_TILES - 1);
     let top = min_y.saturating_sub(2);
-    let bottom = max_y.min(BOARD_TILES - 1);
+    let bottom = (max_y + 2).min(BOARD_TILES - 1);
     let mut positions = Vec::new();
 
     for y in top..=bottom {
@@ -15633,6 +15633,7 @@ mod tests {
             &bases,
         );
         assert!(p2_positions.contains(&(22, 0)));
+        assert!(p2_positions.contains(&(24, 2)));
         assert!(!p2_positions.contains(&(2, 24)));
 
         assert!(

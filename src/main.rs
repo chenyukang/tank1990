@@ -14081,6 +14081,59 @@ mod tests {
     }
 
     #[test]
+    fn player_held_fire_refires_after_previous_bullet_is_gone() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(64.0, 80.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::Space);
+
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        spawn_test_player(app.world_mut(), PlayerId::One, tank_top_left, 3);
+        app.add_systems(Update, fire_player_bullet);
+
+        app.update();
+
+        let expected_top_left = spawn_bullet_position(tank_top_left, Direction::Up);
+        let mut bullets = app.world_mut().query::<(Entity, &Bullet)>();
+        let first_bullets: Vec<(Entity, Team, Vec2)> = bullets
+            .iter(app.world())
+            .map(|(entity, bullet)| (entity, bullet.owner, bullet.top_left))
+            .collect();
+        assert_eq!(first_bullets.len(), 1);
+        assert_eq!(first_bullets[0].1, Team::Player1);
+        assert_eq!(first_bullets[0].2, expected_top_left);
+
+        app.update();
+
+        let mut bullets = app.world_mut().query_filtered::<Entity, With<Bullet>>();
+        assert_eq!(bullets.iter(app.world()).count(), 1);
+
+        app.world_mut().entity_mut(first_bullets[0].0).despawn();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear_just_pressed(KeyCode::Space);
+        app.update();
+
+        let mut bullets = app.world_mut().query::<(Entity, &Bullet)>();
+        let bullets: Vec<(Entity, Team, Vec2)> = bullets
+            .iter(app.world())
+            .map(|(entity, bullet)| (entity, bullet.owner, bullet.top_left))
+            .collect();
+        assert_eq!(bullets.len(), 1);
+        assert_ne!(bullets[0].0, first_bullets[0].0);
+        assert_eq!(bullets[0].1, Team::Player1);
+        assert_eq!(bullets[0].2, expected_top_left);
+    }
+
+    #[test]
     fn player_fire_system_respects_upgrade_bullet_limit() {
         let mut app = App::new();
         let tank_top_left = Vec2::new(64.0, 80.0);

@@ -628,6 +628,7 @@ Audio should be simple and era-appropriate:
 Background music configuration:
 
 - Main menu includes `MUSIC`, `SOUND`, and `SCALE` settings.
+- Music, sound, and scale must be controlled through visible main menu settings, not environment variables.
 - `MUSIC BGM` plays the generated background loop during active play.
 - `MUSIC CUSTOM` appears when `assets/personal/sounds/background.ogg` exists and plays that personally supplied loop during active play.
 - `MUSIC CLASSIC` disables the continuous loop and keeps short jingle/effect playback for a more original Battle City-style audio profile.

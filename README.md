@@ -11,8 +11,10 @@ gitignored personal asset overrides for private playtesting.
 cargo run
 ```
 
-The default window scale is 3x. For capture or small displays, force a crisp
-integer scale from the main menu `SCALE` setting: `2X`, `3X`, or `4X`.
+The default window scale is 3x. Music, sound, and scale are controlled from the
+main menu settings, not environment variables. For capture or small displays,
+choose a crisp integer scale from the main menu `SCALE` setting: `2X`, `3X`, or
+`4X`.
 
 ## Controls
 

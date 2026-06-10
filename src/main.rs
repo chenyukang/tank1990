@@ -9424,6 +9424,24 @@ mod tests {
     }
 
     #[test]
+    fn runtime_settings_do_not_read_hidden_environment_switches() {
+        let source = include_str!("main.rs");
+        let forbidden_reads = [
+            ["std", "::", "env", "::", "var", "("].concat(),
+            ["std", "::", "env", "::", "var_os", "("].concat(),
+            ["env", "::", "var", "("].concat(),
+            ["env", "::", "var_os", "("].concat(),
+        ];
+
+        for forbidden in forbidden_reads {
+            assert!(
+                !source.contains(&forbidden),
+                "runtime settings must use the main menu, not hidden environment reads: {forbidden}"
+            );
+        }
+    }
+
+    #[test]
     fn background_music_only_plays_during_active_rounds() {
         assert!(background_music_should_play(
             AudioMode::Bgm,

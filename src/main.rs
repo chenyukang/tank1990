@@ -13447,6 +13447,144 @@ mod tests {
     }
 
     #[test]
+    fn shield_timer_waits_through_intro_and_pause_then_ticks_in_playing() {
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(2.0));
+        let mut app = App::new();
+
+        app.insert_resource(time);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::StageIntro,
+            ..GameStatus::default()
+        });
+        let player = app
+            .world_mut()
+            .spawn((
+                Player { id: PlayerId::One },
+                PlayerUpgrade { level: 0 },
+                Shield {
+                    timer: Timer::from_seconds(2.0, TimerMode::Once),
+                },
+                Sprite::default(),
+            ))
+            .id();
+        app.add_systems(Update, tick_shields);
+
+        app.update();
+
+        assert!(
+            app.world().get::<Shield>(player).is_some(),
+            "stage intro should not consume spawn invulnerability"
+        );
+        assert!(
+            (app.world()
+                .get::<Shield>(player)
+                .expect("shield should remain")
+                .timer
+                .remaining_secs()
+                - 2.0)
+                .abs()
+                <= f32::EPSILON
+        );
+
+        app.world_mut().resource_mut::<GameStatus>().phase = GamePhase::Paused;
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(2.0));
+        app.update();
+
+        assert!(
+            app.world().get::<Shield>(player).is_some(),
+            "paused play should preserve spawn invulnerability"
+        );
+        assert!(
+            (app.world()
+                .get::<Shield>(player)
+                .expect("shield should remain")
+                .timer
+                .remaining_secs()
+                - 2.0)
+                .abs()
+                <= f32::EPSILON
+        );
+
+        app.world_mut().resource_mut::<GameStatus>().phase = GamePhase::Playing;
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(2.0));
+        app.update();
+
+        assert!(
+            app.world().get::<Shield>(player).is_none(),
+            "active play should consume and eventually remove the shield"
+        );
+        assert_eq!(
+            app.world()
+                .get::<Sprite>(player)
+                .expect("player sprite should remain")
+                .color,
+            player_upgrade_visual_color(0)
+        );
+    }
+
+    #[test]
+    fn paused_shield_visual_renders_without_ticking_timer() {
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(1.0));
+        let mut app = App::new();
+        let top_left = Vec2::new(64.0, 96.0);
+
+        app.insert_resource(time);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Paused,
+            ..GameStatus::default()
+        });
+        let player = app
+            .world_mut()
+            .spawn((
+                Player { id: PlayerId::One },
+                PlayerUpgrade { level: 0 },
+                Tank {
+                    top_left,
+                    facing: Direction::Up,
+                    speed: PLAYER_SPEED,
+                },
+                Shield {
+                    timer: Timer::from_seconds(2.0, TimerMode::Once),
+                },
+                Sprite::default(),
+            ))
+            .id();
+        app.add_systems(Update, (tick_shields, sync_shield_visuals).chain());
+
+        app.update();
+
+        assert!(
+            (app.world()
+                .get::<Shield>(player)
+                .expect("paused shield should remain")
+                .timer
+                .remaining_secs()
+                - 2.0)
+                .abs()
+                <= f32::EPSILON
+        );
+        let mut visuals = app
+            .world_mut()
+            .query::<(&ShieldVisual, &Transform, &Sprite)>();
+        let spawned: Vec<(Entity, Vec3, Color)> = visuals
+            .iter(app.world())
+            .map(|(visual, transform, sprite)| (visual.owner, transform.translation, sprite.color))
+            .collect();
+
+        assert_eq!(spawned.len(), 1);
+        assert_eq!(spawned[0].0, player);
+        assert_eq!(spawned[0].1, shield_visual_translation(top_left));
+        assert_eq!(spawned[0].2, shield_visual_color(0.0));
+    }
+
+    #[test]
     fn shield_visuals_follow_active_player_shields_and_cleanup() {
         let mut app = App::new();
         let top_left = Vec2::new(64.0, 96.0);

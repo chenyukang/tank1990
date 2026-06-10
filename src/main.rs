@@ -5248,65 +5248,73 @@ fn tick_player_respawns(
     active_tanks: Query<&Tank>,
     mut respawning_players: Query<(Entity, &mut PlayerRespawnDelay)>,
 ) {
-    if !game_status.is_playing() {
+    let can_process_pending_respawns = game_status.is_playing();
+    let can_tick_spawn_delay = player_spawn_delay_can_tick(game_status.phase);
+
+    if !can_process_pending_respawns && !can_tick_spawn_delay {
         return;
     }
 
-    let mut occupied_positions: Vec<Vec2> = active_tanks.iter().map(|tank| tank.top_left).collect();
+    if can_process_pending_respawns {
+        let mut occupied_positions: Vec<Vec2> =
+            active_tanks.iter().map(|tank| tank.top_left).collect();
 
-    for (
-        entity,
-        mut pending_respawn,
-        respawn,
-        mut upgrade,
-        mut transform,
-        mut sprite,
-        mut tank_sprite,
-    ) in &mut pending_players
-    {
-        if !pending_respawn.tick(time.delta()) {
-            continue;
+        for (
+            entity,
+            mut pending_respawn,
+            respawn,
+            mut upgrade,
+            mut transform,
+            mut sprite,
+            mut tank_sprite,
+        ) in &mut pending_players
+        {
+            if !pending_respawn.tick(time.delta()) {
+                continue;
+            }
+            if !tank_spawn_position_free(respawn.top_left, &occupied_positions) {
+                continue;
+            }
+
+            tank_sprite.frame = 0;
+            tank_sprite.timer.reset();
+            reset_player_upgrade(&mut upgrade, &mut sprite);
+            set_tank_sprite_direction(&mut sprite, &tank_sprite, respawn.facing, &assets.manifest);
+            transform.translation = board_object_center(
+                respawn.top_left.x,
+                respawn.top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0,
+            );
+
+            commands
+                .entity(entity)
+                .remove::<PlayerRespawnPending>()
+                .insert((
+                    Tank {
+                        top_left: respawn.top_left,
+                        facing: respawn.facing,
+                        speed: PLAYER_SPEED,
+                    },
+                    Health { current: 1 },
+                    Shield {
+                        timer: Timer::from_seconds(
+                            score_board.respawn_invulnerability_secs,
+                            TimerMode::Once,
+                        ),
+                    },
+                    PlayerRespawnDelay::for_spawn_shimmer(assets.manifest.spawn_shimmer_frames()),
+                ));
+            occupied_positions.push(respawn.top_left);
+            spawn_spawn_effect(&mut commands, &assets, respawn.top_left);
         }
-        if !tank_spawn_position_free(respawn.top_left, &occupied_positions) {
-            continue;
-        }
-
-        tank_sprite.frame = 0;
-        tank_sprite.timer.reset();
-        reset_player_upgrade(&mut upgrade, &mut sprite);
-        set_tank_sprite_direction(&mut sprite, &tank_sprite, respawn.facing, &assets.manifest);
-        transform.translation = board_object_center(
-            respawn.top_left.x,
-            respawn.top_left.y,
-            Vec2::splat(TANK_SIZE),
-            6.0,
-        );
-
-        commands
-            .entity(entity)
-            .remove::<PlayerRespawnPending>()
-            .insert((
-                Tank {
-                    top_left: respawn.top_left,
-                    facing: respawn.facing,
-                    speed: PLAYER_SPEED,
-                },
-                Health { current: 1 },
-                Shield {
-                    timer: Timer::from_seconds(
-                        score_board.respawn_invulnerability_secs,
-                        TimerMode::Once,
-                    ),
-                },
-                PlayerRespawnDelay::for_spawn_shimmer(assets.manifest.spawn_shimmer_frames()),
-            ));
-        occupied_positions.push(respawn.top_left);
-        spawn_spawn_effect(&mut commands, &assets, respawn.top_left);
     }
 
-    for (entity, mut respawn_delay) in &mut respawning_players {
-        if respawn_delay.tick(time.delta()) {
-            commands.entity(entity).remove::<PlayerRespawnDelay>();
+    if can_tick_spawn_delay {
+        for (entity, mut respawn_delay) in &mut respawning_players {
+            if respawn_delay.tick(time.delta()) {
+                commands.entity(entity).remove::<PlayerRespawnDelay>();
+            }
         }
     }
 }
@@ -5907,6 +5915,10 @@ fn toggle_pause_phase(phase: GamePhase) -> GamePhase {
 
 fn visual_effects_can_advance(phase: GamePhase) -> bool {
     phase != GamePhase::Paused
+}
+
+fn player_spawn_delay_can_tick(phase: GamePhase) -> bool {
+    matches!(phase, GamePhase::StageIntro | GamePhase::Playing)
 }
 
 fn terminal_phase_clears_transients(phase: GamePhase) -> bool {
@@ -12396,6 +12408,18 @@ mod tests {
     }
 
     #[test]
+    fn player_spawn_delay_ticks_with_visible_spawn_shimmer() {
+        assert!(!player_spawn_delay_can_tick(GamePhase::ModeSelect));
+        assert!(player_spawn_delay_can_tick(GamePhase::StageIntro));
+        assert!(player_spawn_delay_can_tick(GamePhase::Playing));
+        assert!(!player_spawn_delay_can_tick(GamePhase::Paused));
+        assert!(!player_spawn_delay_can_tick(GamePhase::LevelClear));
+        assert!(!player_spawn_delay_can_tick(GamePhase::GameOver));
+        assert!(!player_spawn_delay_can_tick(GamePhase::RoundOver));
+        assert!(!player_spawn_delay_can_tick(GamePhase::Victory));
+    }
+
+    #[test]
     fn terminal_phases_clear_transient_bullets_and_powerups() {
         assert!(!terminal_phase_clears_transients(GamePhase::ModeSelect));
         assert!(!terminal_phase_clears_transients(GamePhase::StageIntro));
@@ -13167,6 +13191,34 @@ mod tests {
     }
 
     #[test]
+    fn initial_spawn_delay_expires_during_stage_intro() {
+        let frames = SpriteFrameRange { first: 4, last: 7 };
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(spawn_shimmer_duration_secs(frames)));
+        let mut app = App::new();
+
+        app.insert_resource(time);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::StageIntro,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ScoreBoard::campaign(20));
+        let player = app
+            .world_mut()
+            .spawn(PlayerRespawnDelay::for_spawn_shimmer(frames))
+            .id();
+        app.add_systems(Update, tick_player_respawns);
+
+        app.update();
+
+        assert!(
+            app.world().get::<PlayerRespawnDelay>(player).is_none(),
+            "stage intro should consume the control delay while the visible shimmer plays"
+        );
+    }
+
+    #[test]
     fn explosion_duration_matches_animation_frames() {
         assert_eq!(
             explosion_duration_secs(SpriteFrameRange { first: 0, last: 3 }),
@@ -13203,6 +13255,48 @@ mod tests {
             explosion_duration_secs(frames) - 0.01
         )));
         assert!(pending_respawn.tick(Duration::from_secs_f32(0.02)));
+    }
+
+    #[test]
+    fn pending_player_respawn_waits_for_playing_phase() {
+        let frames = SpriteFrameRange { first: 0, last: 3 };
+        let respawn_top_left = Vec2::new(64.0, 192.0);
+        let mut pending_respawn = PlayerRespawnPending::for_explosion(frames);
+        assert!(pending_respawn.tick(Duration::from_secs_f32(explosion_duration_secs(frames))));
+
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::StageIntro,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ScoreBoard::versus(3, 5, 1.5));
+        let player = app
+            .world_mut()
+            .spawn((
+                Player { id: PlayerId::One },
+                PlayerUpgrade { level: 3 },
+                RespawnPoint {
+                    top_left: respawn_top_left,
+                    facing: Direction::Up,
+                },
+                pending_respawn,
+                Transform::default(),
+                Sprite::default(),
+                TankSpriteState::new(TankSpriteSet::Player1),
+            ))
+            .id();
+        app.add_systems(Update, tick_player_respawns);
+
+        app.update();
+
+        assert!(
+            app.world().get::<PlayerRespawnPending>(player).is_some(),
+            "pending respawns should not materialize before active play resumes"
+        );
+        assert!(app.world().get::<Tank>(player).is_none());
+        assert!(app.world().get::<PlayerRespawnDelay>(player).is_none());
     }
 
     #[test]

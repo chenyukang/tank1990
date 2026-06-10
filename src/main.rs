@@ -9641,6 +9641,41 @@ mod tests {
         assert_eq!(retro_audio_player_count(&mut muted_app), 0);
     }
 
+    #[test]
+    fn main_menu_sound_setting_mutes_one_shot_audio() {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::Enter);
+
+        let mut app = App::new();
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus::default());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(EnemyDirector::inactive());
+        app.insert_resource(ScoreBoard::campaign(0));
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPowerUpDirector::inactive());
+        app.insert_resource(ModeSelect {
+            selected: ModeSelectOption::Sound,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.insert_resource(BaseReinforcement::default());
+        app.add_systems(
+            Update,
+            (handle_shared_controls, spawn_fire_sound_for_test).chain(),
+        );
+
+        app.update();
+
+        assert!(!app.world().resource::<ModeSelect>().sound_enabled);
+        assert!(!app.world().resource::<SoundAssets>().sound_enabled);
+        assert_eq!(retro_audio_player_count(&mut app), 0);
+    }
+
     fn spawn_fire_sound_for_test(mut commands: Commands, sounds: Res<SoundAssets>) {
         play_sound(&mut commands, &sounds, SoundKind::Fire);
     }

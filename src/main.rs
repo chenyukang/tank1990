@@ -9693,6 +9693,62 @@ mod tests {
     }
 
     #[test]
+    fn main_menu_scale_setting_resizes_primary_window() {
+        set_window_scale(DEFAULT_WINDOW_SCALE);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::ArrowLeft);
+
+        let mut app = App::new();
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus::default());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(EnemyDirector::inactive());
+        app.insert_resource(ScoreBoard::campaign(0));
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPowerUpDirector::inactive());
+        app.insert_resource(ModeSelect {
+            selected: ModeSelectOption::Scale,
+            window_scale: MAX_WINDOW_SCALE,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.insert_resource(BaseReinforcement::default());
+        app.world_mut().spawn((
+            Window {
+                resolution: virtual_window_size(MAX_WINDOW_SCALE as f32).into(),
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        app.world_mut().spawn((GameEntity, OldStageEntity));
+        app.add_systems(Update, handle_shared_controls);
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ModeSelect>().window_scale,
+            DEFAULT_WINDOW_SCALE
+        );
+        let mut windows = app.world_mut().query::<&Window>();
+        let window = windows
+            .single(app.world())
+            .expect("primary window should exist");
+        let (width, height) = virtual_window_size(DEFAULT_WINDOW_SCALE as f32);
+        assert_eq!(window.resolution.width(), width as f32);
+        assert_eq!(window.resolution.height(), height as f32);
+        assert_eq!(window_scale(), DEFAULT_WINDOW_SCALE as f32);
+
+        let mut old_entities = app.world_mut().query::<&OldStageEntity>();
+        assert_eq!(old_entities.iter(app.world()).count(), 0);
+        let mut cursors = app.world_mut().query::<&ModeSelectCursor>();
+        assert_eq!(cursors.iter(app.world()).count(), 1);
+    }
+
+    #[test]
     fn personal_sprite_override_paths_are_asset_root_relative_pngs() {
         assert_eq!(PERSONAL_SPRITE_OVERRIDE_PATHS.len(), 11);
         assert!(PERSONAL_SPRITE_OVERRIDE_PATHS.contains(&PERSONAL_SHIELD_PATH));

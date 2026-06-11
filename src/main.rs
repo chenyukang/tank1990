@@ -8,7 +8,7 @@ use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::window::{PresentMode, PrimaryWindow};
+use bevy::window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode};
 use serde::Deserialize;
 use std::collections::{HashSet, VecDeque};
 use std::fs;
@@ -95,6 +95,7 @@ const DEFAULT_WINDOW_SCALE: u32 = 3;
 const MIN_WINDOW_SCALE: u32 = 2;
 const MAX_WINDOW_SCALE: u32 = 4;
 static WINDOW_SCALE_SETTING: AtomicU32 = AtomicU32::new(DEFAULT_WINDOW_SCALE);
+static WINDOWED_SCALE_SETTING: AtomicU32 = AtomicU32::new(DEFAULT_WINDOW_SCALE);
 
 const BOARD_ORIGIN_X: f32 = 0.0;
 const BOARD_ORIGIN_Y: f32 = 16.0;
@@ -269,6 +270,10 @@ fn main() {
                 .before(advance_after_level_clear),
         )
         .add_systems(FixedUpdate, tick_destroyed_tanks.after(animate_sprites))
+        .add_systems(
+            FixedUpdate,
+            handle_fullscreen_toggle.before(handle_shared_controls),
+        )
         .add_systems(
             FixedUpdate,
             (
@@ -1824,6 +1829,41 @@ fn setup(
     commands.insert_resource(ScoreBoard::campaign(0));
 }
 
+fn handle_fullscreen_toggle(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    assets: Res<SpriteAssets>,
+    game_status: Res<GameStatus>,
+    mut mode_select: ResMut<ModeSelect>,
+    mut fullscreen_queries: ParamSet<(
+        Query<Entity, With<GameEntity>>,
+        Query<&mut Window, With<PrimaryWindow>>,
+        Query<&mut Transform, With<GameEntity>>,
+    )>,
+) {
+    if !keys.just_pressed(KeyCode::KeyF) {
+        return;
+    }
+
+    let toggle_result = {
+        let mut windows = fullscreen_queries.p1();
+        toggle_primary_window_fullscreen(&mut windows, &mut mode_select)
+    };
+
+    if let Some((old_scale, new_scale)) = toggle_result {
+        if game_status.phase == GamePhase::ModeSelect {
+            respawn_mode_select_screen(
+                &mut commands,
+                &assets,
+                &mode_select,
+                &fullscreen_queries.p0(),
+            );
+        } else {
+            rescale_game_entity_transforms(&mut fullscreen_queries.p2(), old_scale, new_scale);
+        }
+    }
+}
+
 fn handle_shared_controls(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
@@ -2318,6 +2358,64 @@ fn resize_primary_window(primary_window: &mut Query<&mut Window, With<PrimaryWin
     if let Ok(mut window) = primary_window.single_mut() {
         let (width, height) = virtual_window_size(scale as f32);
         window.resolution.set(width as f32, height as f32);
+    }
+}
+
+fn toggle_window_mode(mode: WindowMode) -> WindowMode {
+    match mode {
+        WindowMode::Windowed => WindowMode::BorderlessFullscreen(MonitorSelection::Current),
+        WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(_, _) => WindowMode::Windowed,
+    }
+}
+
+fn toggle_window_fullscreen(window: &mut Window, mode_select: &mut ModeSelect) -> (u32, u32) {
+    let old_scale = window_scale() as u32;
+    window.mode = toggle_window_mode(window.mode);
+    match window.mode {
+        WindowMode::Windowed => {
+            let scale = clamp_window_scale(WINDOWED_SCALE_SETTING.load(Ordering::Relaxed));
+            mode_select.window_scale = scale;
+            set_window_scale(scale);
+            let (width, height) = virtual_window_size(scale as f32);
+            window.resolution.set(width as f32, height as f32);
+        }
+        WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(_, _) => {
+            WINDOWED_SCALE_SETTING.store(
+                clamp_window_scale(mode_select.window_scale),
+                Ordering::Relaxed,
+            );
+            mode_select.window_scale = MAX_WINDOW_SCALE;
+            set_window_scale(MAX_WINDOW_SCALE);
+        }
+    }
+    (old_scale, window_scale() as u32)
+}
+
+fn toggle_primary_window_fullscreen(
+    primary_window: &mut Query<&mut Window, With<PrimaryWindow>>,
+    mode_select: &mut ModeSelect,
+) -> Option<(u32, u32)> {
+    if let Ok(mut window) = primary_window.single_mut() {
+        Some(toggle_window_fullscreen(&mut window, mode_select))
+    } else {
+        None
+    }
+}
+
+fn rescale_game_entity_transforms(
+    transforms: &mut Query<&mut Transform, With<GameEntity>>,
+    old_scale: u32,
+    new_scale: u32,
+) {
+    if old_scale == 0 || old_scale == new_scale {
+        return;
+    }
+
+    let ratio = new_scale as f32 / old_scale as f32;
+    for mut transform in transforms.iter_mut() {
+        transform.translation.x *= ratio;
+        transform.translation.y *= ratio;
+        transform.scale *= ratio;
     }
 }
 
@@ -10576,6 +10674,143 @@ mod tests {
         assert_eq!(virtual_window_size(2.0), (512, 480));
         assert_eq!(virtual_window_size(3.0), (768, 720));
         assert_eq!(virtual_window_size(4.0), (1024, 960));
+    }
+
+    #[test]
+    fn window_mode_toggle_switches_between_windowed_and_borderless_fullscreen() {
+        assert_eq!(
+            toggle_window_mode(WindowMode::Windowed),
+            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+        );
+        assert_eq!(
+            toggle_window_mode(WindowMode::BorderlessFullscreen(MonitorSelection::Primary)),
+            WindowMode::Windowed
+        );
+    }
+
+    #[test]
+    fn f_key_toggles_primary_window_fullscreen() {
+        set_window_scale(DEFAULT_WINDOW_SCALE);
+        WINDOWED_SCALE_SETTING.store(DEFAULT_WINDOW_SCALE, Ordering::Relaxed);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyF);
+
+        let mut app = App::new();
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus::default());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(EnemyDirector::inactive());
+        app.insert_resource(ScoreBoard::campaign(0));
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPowerUpDirector::inactive());
+        app.insert_resource(ModeSelect::default());
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.insert_resource(BaseReinforcement::default());
+        app.world_mut().spawn((
+            Window {
+                mode: WindowMode::Windowed,
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        app.add_systems(Update, handle_fullscreen_toggle);
+
+        app.update();
+
+        let mut windows = app.world_mut().query::<&Window>();
+        let window = windows
+            .single(app.world())
+            .expect("primary window should exist");
+        assert_eq!(
+            window.mode,
+            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+        );
+        assert_eq!(
+            app.world().resource::<ModeSelect>().window_scale,
+            MAX_WINDOW_SCALE
+        );
+        assert_eq!(window_scale(), MAX_WINDOW_SCALE as f32);
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyF);
+            keys.clear();
+            keys.press(KeyCode::KeyF);
+        }
+        app.update();
+
+        let mut windows = app.world_mut().query::<&Window>();
+        let window = windows
+            .single(app.world())
+            .expect("primary window should exist");
+        assert_eq!(window.mode, WindowMode::Windowed);
+        assert_eq!(
+            app.world().resource::<ModeSelect>().window_scale,
+            DEFAULT_WINDOW_SCALE
+        );
+        assert_eq!(window_scale(), DEFAULT_WINDOW_SCALE as f32);
+        let (width, height) = virtual_window_size(DEFAULT_WINDOW_SCALE as f32);
+        assert_eq!(window.resolution.width(), width as f32);
+        assert_eq!(window.resolution.height(), height as f32);
+    }
+
+    #[test]
+    fn fullscreen_toggle_rescales_active_game_entities_to_four_x() {
+        set_window_scale(DEFAULT_WINDOW_SCALE);
+        WINDOWED_SCALE_SETTING.store(DEFAULT_WINDOW_SCALE, Ordering::Relaxed);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyF);
+
+        let mut app = App::new();
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(EnemyDirector::inactive());
+        app.insert_resource(ScoreBoard::campaign(0));
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPowerUpDirector::inactive());
+        app.insert_resource(ModeSelect::default());
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.insert_resource(BaseReinforcement::default());
+        app.world_mut().spawn((
+            Window {
+                mode: WindowMode::Windowed,
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        app.world_mut().spawn((
+            GameEntity,
+            Transform::from_translation(Vec3::new(30.0, -15.0, 0.3))
+                .with_scale(Vec3::splat(DEFAULT_WINDOW_SCALE as f32)),
+        ));
+        app.add_systems(Update, handle_fullscreen_toggle);
+
+        app.update();
+
+        let ratio = MAX_WINDOW_SCALE as f32 / DEFAULT_WINDOW_SCALE as f32;
+        let mut transforms = app
+            .world_mut()
+            .query_filtered::<&Transform, With<GameEntity>>();
+        let transform = transforms
+            .single(app.world())
+            .expect("game entity should exist");
+        assert_eq!(transform.translation.x, 30.0 * ratio);
+        assert_eq!(transform.translation.y, -15.0 * ratio);
+        assert_eq!(transform.scale, Vec3::splat(MAX_WINDOW_SCALE as f32));
+        set_window_scale(DEFAULT_WINDOW_SCALE);
+        WINDOWED_SCALE_SETTING.store(DEFAULT_WINDOW_SCALE, Ordering::Relaxed);
     }
 
     #[test]

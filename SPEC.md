@@ -102,6 +102,34 @@ Suggested draw layers:
 
 Forest should visually cover tanks and bullets while remaining passable.
 
+### 4.4 Optional 3D View
+
+The 3D view is a rendering mode, not a separate ruleset.
+
+Core rules:
+
+- Gameplay controls, collision, bullets, AI, power-ups, score, lives, base rules, and stage progression remain the same as the 2D game.
+- The main menu exposes `VIEW 2D/3D` and `ASSIST ON/OFF`.
+- `VIEW 3D` uses a third-person chase camera behind and above the selected player tank.
+- If tall terrain would sit between the followed tank and the chase camera, the camera may raise into a tactical view to keep the tank readable.
+- During gameplay, `V` toggles between 2D and 3D view without restarting the round.
+- In two-player modes, the first 3D milestone uses one camera. `Tab` switches the followed tank between P1 and P2.
+- Split-screen 3D is deferred until the single-camera version is proven playable.
+- The first 3D milestone uses simple low-poly block geometry for terrain, tanks, barrels, bullets, bases, and power-ups.
+- Player tank Star upgrade levels should remain visible in 3D with the same upgrade color progression used by the 2D sprites.
+- Power-up kinds should remain distinguishable in 3D and on the 3D minimap.
+- P1/P2 identity should remain visible in 3D with a lightweight player marker, even when Star upgrade colors override the tank body color.
+- The currently followed player should remain visible in 3D with a distinct view-target marker, including fallback when the requested two-player target is unavailable.
+- Bullet ownership should remain distinguishable in 3D and on the 3D minimap for P1, P2, and enemy shots.
+- BaseBattle bases should remain owner-readable in 3D and on the 3D minimap with distinct P1/P2 base colors.
+- Spawn protection and helmet shields should remain visible in 3D with simple low-poly protection markers.
+- Explosions, bullet impacts, spawn shimmer, base destruction, and power-up sparkle should mirror the existing 2D effect lifecycle in 3D.
+- Enemy/base markers, carrier power-up markers, and player aim guides are allowed in 3D to compensate for visibility differences from the top-down view.
+- Power-up carrier enemies should remain distinguishable on the 3D minimap using the carried power-up color.
+- The first 3D milestone includes a compact 2D overlay for score, lives, stage or arena, followed player, assist state, phase banners, and a board minimap.
+- Campaign and co-op 3D overlays should keep the 2D-style enemy reserve markers so remaining enemy pressure is readable without opening the full side panel.
+- Future 3D improvements may add off-screen indicators, richer models, or split-screen, but should not fork gameplay simulation.
+
 ## 5. Game Modes
 
 ### 5.1 Solo Campaign

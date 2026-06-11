@@ -20,11 +20,13 @@ use std::time::Duration;
 mod assets;
 mod content;
 mod enemy;
+mod view3d;
 mod windowing;
 
 use assets::*;
 use content::*;
 use enemy::*;
+use view3d::*;
 use windowing::*;
 
 const ASSET_MANIFEST_PATH: &str = "assets/manifest.ron";
@@ -139,7 +141,7 @@ const MODE_SELECT_WIDTH: f32 = 208.0;
 const MODE_SELECT_LEFT: f32 = (VIRTUAL_WIDTH - MODE_SELECT_WIDTH) / 2.0;
 const MODE_SELECT_TITLE_Y: f32 = 35.0;
 const MODE_SELECT_CURSOR_GAP: f32 = 22.0;
-const MODE_SELECT_HINT_TOP: f32 = 181.0;
+const MODE_SELECT_HINT_TOP: f32 = 198.0;
 static PAUSED_BANNER_LINES: [&str; 4] = ["PAUSED", "ESC RESUME", "R RESTART", "M MENU"];
 static GAME_OVER_BANNER_LINES: [&str; 2] = ["GAME OVER", "PRESS R OR M"];
 static LEVEL_CLEAR_BANNER_LINES: [&str; 1] = ["LEVEL CLEAR"];
@@ -199,6 +201,7 @@ fn main() {
         )
         .add_audio_source::<RetroSound>()
         .add_systems(Startup, setup)
+        .add_systems(Startup, setup_3d_view.after(setup))
         .add_systems(
             FixedUpdate,
             spawn_versus_powerups
@@ -269,6 +272,19 @@ fn main() {
                 update_status_panel,
             )
                 .chain(),
+        )
+        .add_systems(
+            FixedUpdate,
+            (
+                handle_view_hotkeys,
+                sync_view_cameras,
+                sync_3d_static_scene,
+                sync_3d_dynamic_scene,
+                update_3d_chase_camera,
+                sync_3d_hud,
+            )
+                .chain()
+                .after(update_status_panel),
         )
         .run();
 }
@@ -723,6 +739,10 @@ impl GameMode {
         matches!(self, Self::VersusDeathmatch | Self::VersusBaseBattle)
     }
 
+    fn has_two_player_targets(self) -> bool {
+        self.is_coop_campaign() || self.is_versus()
+    }
+
     fn mode_select_option(self) -> ModeSelectOption {
         match self {
             Self::Campaign => ModeSelectOption::Campaign,
@@ -737,6 +757,8 @@ enum ModeSelectOption {
     Campaign,
     CoopCampaign,
     Battle,
+    ViewMode,
+    ViewAssist,
     AiStrategy,
     Difficulty,
     Music,
@@ -765,6 +787,9 @@ struct ModeSelect {
     selected: ModeSelectOption,
     stage: usize,
     arena: usize,
+    view_mode: TankViewMode,
+    view_assist: bool,
+    view_target: PlayerId,
     ai_strategy: ModeSelectAiStrategy,
     difficulty_profile: ModeSelectDifficultyProfile,
     audio_mode: AudioMode,
@@ -778,6 +803,9 @@ impl Default for ModeSelect {
             selected: ModeSelectOption::Campaign,
             stage: 1,
             arena: DEFAULT_VERSUS_ARENA,
+            view_mode: TankViewMode::TwoD,
+            view_assist: true,
+            view_target: PlayerId::One,
             ai_strategy: ModeSelectAiStrategy::Auto,
             difficulty_profile: ModeSelectDifficultyProfile::Auto,
             audio_mode: AudioMode::Bgm,
@@ -1773,7 +1801,7 @@ fn setup(
     mut atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut retro_sounds: ResMut<Assets<RetroSound>>,
 ) {
-    commands.spawn(Camera2d);
+    commands.spawn((Camera2d, Main2dCamera));
 
     let sprite_assets = create_sprite_assets(&asset_server, &mut images, &mut atlas_layouts);
     let sound_assets =
@@ -1784,6 +1812,8 @@ fn setup(
         mode_select.selected,
         mode_select.stage,
         mode_select.arena,
+        mode_select.view_mode,
+        mode_select.view_assist,
         mode_select.ai_strategy,
         mode_select.difficulty_profile,
         mode_select.audio_mode,
@@ -1866,6 +1896,24 @@ fn handle_shared_controls(
                         &mut menu_queries.p4(),
                         &assets.manifest.glyphs,
                         mode_select.arena,
+                    );
+                }
+                ModeSelectOption::ViewMode => {
+                    mode_select.view_mode = previous_tank_view_mode(mode_select.view_mode);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
+                    );
+                }
+                ModeSelectOption::ViewAssist => {
+                    mode_select.view_assist = toggle_view_assist(mode_select.view_assist);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
                     );
                 }
                 ModeSelectOption::AiStrategy => {
@@ -1955,6 +2003,24 @@ fn handle_shared_controls(
                         &mut menu_queries.p4(),
                         &assets.manifest.glyphs,
                         mode_select.arena,
+                    );
+                }
+                ModeSelectOption::ViewMode => {
+                    mode_select.view_mode = next_tank_view_mode(mode_select.view_mode);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
+                    );
+                }
+                ModeSelectOption::ViewAssist => {
+                    mode_select.view_assist = toggle_view_assist(mode_select.view_assist);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
                     );
                 }
                 ModeSelectOption::AiStrategy => {
@@ -2083,6 +2149,24 @@ fn handle_shared_controls(
                         &mut enemy_freeze,
                         &mut versus_freeze,
                         &mut base_reinforcement,
+                        &menu_queries.p0(),
+                    );
+                }
+                ModeSelectOption::ViewMode => {
+                    mode_select.view_mode = next_tank_view_mode(mode_select.view_mode);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
+                    );
+                }
+                ModeSelectOption::ViewAssist => {
+                    mode_select.view_assist = toggle_view_assist(mode_select.view_assist);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
                         &menu_queries.p0(),
                     );
                 }
@@ -2264,6 +2348,8 @@ fn enter_mode_select(
         mode_select.selected,
         mode_select.stage,
         mode_select.arena,
+        mode_select.view_mode,
+        mode_select.view_assist,
         mode_select.ai_strategy,
         mode_select.difficulty_profile,
         mode_select.audio_mode,
@@ -2300,6 +2386,8 @@ fn respawn_mode_select_screen(
         mode_select.selected,
         mode_select.stage,
         mode_select.arena,
+        mode_select.view_mode,
+        mode_select.view_assist,
         mode_select.ai_strategy,
         mode_select.difficulty_profile,
         mode_select.audio_mode,
@@ -2468,6 +2556,8 @@ struct ModeSelectDisplay {
     selected: ModeSelectOption,
     stage: usize,
     arena: usize,
+    view_mode: TankViewMode,
+    view_assist: bool,
     ai_strategy: ModeSelectAiStrategy,
     difficulty_profile: ModeSelectDifficultyProfile,
     audio_mode: AudioMode,
@@ -2481,6 +2571,8 @@ impl ModeSelectDisplay {
             selected: mode_select.selected,
             stage: mode_select.stage,
             arena: mode_select.arena,
+            view_mode: mode_select.view_mode,
+            view_assist: mode_select.view_assist,
             ai_strategy: mode_select.ai_strategy,
             difficulty_profile: mode_select.difficulty_profile,
             audio_mode: mode_select.audio_mode,
@@ -2496,6 +2588,8 @@ fn spawn_mode_select_screen(
     selected: ModeSelectOption,
     stage: usize,
     arena: usize,
+    view_mode: TankViewMode,
+    view_assist: bool,
     ai_strategy: ModeSelectAiStrategy,
     difficulty_profile: ModeSelectDifficultyProfile,
     audio_mode: AudioMode,
@@ -2526,6 +2620,8 @@ fn spawn_mode_select_screen(
         selected,
         stage,
         arena,
+        view_mode,
+        view_assist,
         ai_strategy,
         difficulty_profile,
         audio_mode,
@@ -2536,6 +2632,8 @@ fn spawn_mode_select_screen(
         ModeSelectOption::Campaign,
         ModeSelectOption::CoopCampaign,
         ModeSelectOption::Battle,
+        ModeSelectOption::ViewMode,
+        ModeSelectOption::ViewAssist,
         ModeSelectOption::AiStrategy,
         ModeSelectOption::Difficulty,
         ModeSelectOption::Music,
@@ -5770,7 +5868,9 @@ fn next_mode_select_option(option: ModeSelectOption) -> ModeSelectOption {
     match option {
         ModeSelectOption::Campaign => ModeSelectOption::CoopCampaign,
         ModeSelectOption::CoopCampaign => ModeSelectOption::Battle,
-        ModeSelectOption::Battle => ModeSelectOption::AiStrategy,
+        ModeSelectOption::Battle => ModeSelectOption::ViewMode,
+        ModeSelectOption::ViewMode => ModeSelectOption::ViewAssist,
+        ModeSelectOption::ViewAssist => ModeSelectOption::AiStrategy,
         ModeSelectOption::AiStrategy => ModeSelectOption::Difficulty,
         ModeSelectOption::Difficulty => ModeSelectOption::Music,
         ModeSelectOption::Music => ModeSelectOption::Sound,
@@ -5786,7 +5886,9 @@ fn previous_mode_select_option(option: ModeSelectOption) -> ModeSelectOption {
         ModeSelectOption::Campaign => ModeSelectOption::Arena,
         ModeSelectOption::CoopCampaign => ModeSelectOption::Campaign,
         ModeSelectOption::Battle => ModeSelectOption::CoopCampaign,
-        ModeSelectOption::AiStrategy => ModeSelectOption::Battle,
+        ModeSelectOption::ViewMode => ModeSelectOption::Battle,
+        ModeSelectOption::ViewAssist => ModeSelectOption::ViewMode,
+        ModeSelectOption::AiStrategy => ModeSelectOption::ViewAssist,
         ModeSelectOption::Difficulty => ModeSelectOption::AiStrategy,
         ModeSelectOption::Music => ModeSelectOption::Difficulty,
         ModeSelectOption::Sound => ModeSelectOption::Music,
@@ -5824,6 +5926,10 @@ fn mode_select_option_text(display: &ModeSelectDisplay, option: ModeSelectOption
         ModeSelectOption::Campaign => "1 PLAYER".to_string(),
         ModeSelectOption::CoopCampaign => "2 PLAYERS".to_string(),
         ModeSelectOption::Battle => "BATTLE".to_string(),
+        ModeSelectOption::ViewMode => format!("VIEW {}", tank_view_mode_label(display.view_mode)),
+        ModeSelectOption::ViewAssist => {
+            format!("ASSIST {}", view_assist_label(display.view_assist))
+        }
         ModeSelectOption::AiStrategy => {
             format!("AI {}", mode_select_ai_strategy_label(display.ai_strategy))
         }
@@ -5856,16 +5962,18 @@ fn mode_select_option_top_left(display: &ModeSelectDisplay, option: ModeSelectOp
 
 fn mode_select_option_y(option: ModeSelectOption) -> f32 {
     match option {
-        ModeSelectOption::Campaign => 54.0,
-        ModeSelectOption::CoopCampaign => 65.0,
-        ModeSelectOption::Battle => 76.0,
-        ModeSelectOption::AiStrategy => 95.0,
-        ModeSelectOption::Difficulty => 106.0,
-        ModeSelectOption::Music => 117.0,
-        ModeSelectOption::Sound => 128.0,
-        ModeSelectOption::Scale => 139.0,
-        ModeSelectOption::Stage => 153.0,
-        ModeSelectOption::Arena => 164.0,
+        ModeSelectOption::Campaign => 46.0,
+        ModeSelectOption::CoopCampaign => 57.0,
+        ModeSelectOption::Battle => 68.0,
+        ModeSelectOption::ViewMode => 87.0,
+        ModeSelectOption::ViewAssist => 98.0,
+        ModeSelectOption::AiStrategy => 109.0,
+        ModeSelectOption::Difficulty => 120.0,
+        ModeSelectOption::Music => 131.0,
+        ModeSelectOption::Sound => 142.0,
+        ModeSelectOption::Scale => 153.0,
+        ModeSelectOption::Stage => 169.0,
+        ModeSelectOption::Arena => 180.0,
     }
 }
 
@@ -7007,6 +7115,13 @@ mod tests {
     fn image_pixel(image: &Image, x: usize, y: usize) -> [u8; 4] {
         let width = image.texture_descriptor.size.width as usize;
         let pixels = image.data.as_ref().expect("image should have pixel data");
+        let index = (y * width + x) * 4;
+        pixels[index..index + 4]
+            .try_into()
+            .expect("pixel should have four channels")
+    }
+
+    fn pixels_pixel(pixels: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {
         let index = (y * width + x) * 4;
         pixels[index..index + 4]
             .try_into()
@@ -10398,6 +10513,9 @@ mod tests {
             selected: ModeSelectOption::Scale,
             stage: 1,
             arena: 1,
+            view_mode: TankViewMode::TwoD,
+            view_assist: true,
+            view_target: PlayerId::One,
             ai_strategy: ModeSelectAiStrategy::Auto,
             difficulty_profile: ModeSelectDifficultyProfile::Auto,
             audio_mode: AudioMode::Classic,
@@ -11036,7 +11154,8 @@ mod tests {
     }
 
     #[test]
-    fn mode_select_cycles_campaign_coop_battle_ai_difficulty_music_sound_scale_stage_and_arena() {
+    fn mode_select_cycles_campaign_coop_battle_view_assist_ai_difficulty_music_sound_scale_stage_and_arena()
+     {
         assert_eq!(
             next_mode_select_option(ModeSelectOption::Campaign),
             ModeSelectOption::CoopCampaign
@@ -11047,6 +11166,14 @@ mod tests {
         );
         assert_eq!(
             next_mode_select_option(ModeSelectOption::Battle),
+            ModeSelectOption::ViewMode
+        );
+        assert_eq!(
+            next_mode_select_option(ModeSelectOption::ViewMode),
+            ModeSelectOption::ViewAssist
+        );
+        assert_eq!(
+            next_mode_select_option(ModeSelectOption::ViewAssist),
             ModeSelectOption::AiStrategy
         );
         assert_eq!(
@@ -11098,8 +11225,16 @@ mod tests {
             ModeSelectOption::CoopCampaign
         );
         assert_eq!(
-            previous_mode_select_option(ModeSelectOption::AiStrategy),
+            previous_mode_select_option(ModeSelectOption::ViewMode),
             ModeSelectOption::Battle
+        );
+        assert_eq!(
+            previous_mode_select_option(ModeSelectOption::ViewAssist),
+            ModeSelectOption::ViewMode
+        );
+        assert_eq!(
+            previous_mode_select_option(ModeSelectOption::AiStrategy),
+            ModeSelectOption::ViewAssist
         );
         assert_eq!(
             previous_mode_select_option(ModeSelectOption::Difficulty),
@@ -11125,6 +11260,1289 @@ mod tests {
             GameMode::VersusBaseBattle.mode_select_option(),
             ModeSelectOption::Battle
         );
+    }
+
+    #[test]
+    fn mode_select_view_values_cycle_and_label() {
+        assert_eq!(ModeSelect::default().view_mode, TankViewMode::TwoD);
+        assert!(ModeSelect::default().view_assist);
+        assert_eq!(ModeSelect::default().view_target, PlayerId::One);
+        assert_eq!(
+            next_tank_view_mode(TankViewMode::TwoD),
+            TankViewMode::ThreeD
+        );
+        assert_eq!(
+            next_tank_view_mode(TankViewMode::ThreeD),
+            TankViewMode::TwoD
+        );
+        assert_eq!(
+            previous_tank_view_mode(TankViewMode::TwoD),
+            TankViewMode::ThreeD
+        );
+        assert_eq!(tank_view_mode_label(TankViewMode::ThreeD), "3D");
+        assert_eq!(view_assist_label(true), "ON");
+        assert_eq!(view_assist_label(false), "OFF");
+        assert_eq!(
+            active_3d_view_target(GameMode::Campaign, PlayerId::Two),
+            PlayerId::One
+        );
+        assert_eq!(
+            active_3d_view_target(GameMode::CoopCampaign, PlayerId::Two),
+            PlayerId::Two
+        );
+        assert_eq!(
+            active_3d_view_target(GameMode::VersusDeathmatch, PlayerId::Two),
+            PlayerId::Two
+        );
+        assert_eq!(
+            resolved_3d_view_target(GameMode::CoopCampaign, PlayerId::Two, [PlayerId::One]),
+            PlayerId::One
+        );
+        assert_eq!(
+            resolved_3d_view_target(GameMode::VersusDeathmatch, PlayerId::One, [PlayerId::Two]),
+            PlayerId::Two
+        );
+        assert_eq!(
+            resolved_3d_view_target(
+                GameMode::CoopCampaign,
+                PlayerId::Two,
+                std::iter::empty::<PlayerId>()
+            ),
+            PlayerId::Two
+        );
+    }
+
+    #[test]
+    fn view_3d_renders_only_during_gameplay_phases() {
+        let mode_select = ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        };
+        let mode_select_2d = ModeSelect::default();
+        assert!(!view_3d_should_render(&mode_select, &GameStatus::default()));
+        assert!(!view_3d_should_render(
+            &mode_select_2d,
+            &GameStatus {
+                phase: GamePhase::Playing,
+                ..GameStatus::default()
+            }
+        ));
+        assert!(view_3d_should_render(
+            &mode_select,
+            &GameStatus {
+                phase: GamePhase::Playing,
+                ..GameStatus::default()
+            }
+        ));
+    }
+
+    #[test]
+    fn view_hotkeys_toggle_mode_and_target() {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyV);
+
+        let mut app = App::new();
+        app.insert_resource(keys);
+        app.insert_resource(ModeSelect::default());
+        app.insert_resource(GameMode::CoopCampaign);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.add_systems(Update, handle_view_hotkeys);
+
+        app.update();
+        assert_eq!(
+            app.world().resource::<ModeSelect>().view_mode,
+            TankViewMode::ThreeD
+        );
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::KeyV);
+            keys.clear();
+            keys.press(KeyCode::Tab);
+        }
+        app.update();
+        assert_eq!(
+            app.world().resource::<ModeSelect>().view_target,
+            PlayerId::Two
+        );
+    }
+
+    #[test]
+    fn view_hotkeys_do_not_switch_target_in_single_player_campaign() {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::Tab);
+
+        let mut app = App::new();
+        app.insert_resource(keys);
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            view_target: PlayerId::One,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.add_systems(Update, handle_view_hotkeys);
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ModeSelect>().view_target,
+            PlayerId::One
+        );
+    }
+
+    #[test]
+    fn view_hotkeys_do_not_toggle_mode_select_view_without_redrawing_menu() {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyV);
+
+        let mut app = App::new();
+        app.insert_resource(keys);
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::TwoD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::ModeSelect,
+            ..GameStatus::default()
+        });
+        app.add_systems(Update, handle_view_hotkeys);
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ModeSelect>().view_mode,
+            TankViewMode::TwoD
+        );
+    }
+
+    #[test]
+    fn sync_view_cameras_activates_only_the_selected_view() {
+        let mut app = App::new();
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.world_mut().spawn((Camera::default(), Main2dCamera));
+        app.world_mut().spawn((
+            Camera {
+                is_active: false,
+                ..default()
+            },
+            Tank3dCamera,
+        ));
+        app.world_mut().spawn((
+            Camera {
+                is_active: false,
+                ..default()
+            },
+            View3dHudCamera,
+        ));
+        app.add_systems(Update, sync_view_cameras);
+
+        app.update();
+
+        let mut cameras = app.world_mut().query::<(
+            &Camera,
+            Option<&Main2dCamera>,
+            Option<&Tank3dCamera>,
+            Option<&View3dHudCamera>,
+        )>();
+        let states: Vec<(bool, bool, bool, bool)> = cameras
+            .iter(app.world())
+            .map(|(camera, is_2d, is_3d, is_hud)| {
+                (
+                    camera.is_active,
+                    is_2d.is_some(),
+                    is_3d.is_some(),
+                    is_hud.is_some(),
+                )
+            })
+            .collect();
+        assert!(states.iter().any(|(active, is_2d, _, _)| !active && *is_2d));
+        assert!(states.iter().any(|(active, _, is_3d, _)| *active && *is_3d));
+        assert!(
+            states
+                .iter()
+                .any(|(active, _, _, is_hud)| *active && *is_hud)
+        );
+
+        app.world_mut().resource_mut::<GameStatus>().phase = GamePhase::ModeSelect;
+        app.update();
+
+        let states: Vec<(bool, bool, bool, bool)> = cameras
+            .iter(app.world())
+            .map(|(camera, is_2d, is_3d, is_hud)| {
+                (
+                    camera.is_active,
+                    is_2d.is_some(),
+                    is_3d.is_some(),
+                    is_hud.is_some(),
+                )
+            })
+            .collect();
+        assert!(states.iter().any(|(active, is_2d, _, _)| *active && *is_2d));
+        assert!(states.iter().any(|(active, _, is_3d, _)| !active && *is_3d));
+        assert!(
+            states
+                .iter()
+                .any(|(active, _, _, is_hud)| !active && *is_hud)
+        );
+    }
+
+    #[test]
+    fn view_3d_status_lines_track_campaign_and_versus_state() {
+        let mut campaign_score = ScoreBoard::campaign(20);
+        campaign_score.score = 123;
+        campaign_score.lives = 2;
+        campaign_score.enemies_destroyed = 3;
+        let game_status = GameStatus {
+            phase: GamePhase::Playing,
+            stage: 7,
+            ..GameStatus::default()
+        };
+        let mode_select = ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            view_assist: false,
+            view_target: PlayerId::Two,
+            ..ModeSelect::default()
+        };
+        let campaign_view_target =
+            active_3d_view_target(GameMode::Campaign, mode_select.view_target);
+
+        assert_eq!(
+            view_3d_status_lines(
+                GameMode::Campaign,
+                &game_status,
+                &campaign_score,
+                &mode_select,
+                campaign_view_target
+            ),
+            vec![
+                "P1 SCORE 000123".to_string(),
+                "LIFE 2".to_string(),
+                "STAGE 07".to_string(),
+                "ENEMY 17".to_string(),
+                "VIEW P1".to_string(),
+                "ASSIST OFF".to_string(),
+            ]
+        );
+        assert_eq!(campaign_view_target, PlayerId::One);
+
+        let mut versus_score = ScoreBoard::versus(3, 5, 2.0);
+        versus_score.p1_score = 4;
+        versus_score.p2_score = 2;
+        versus_score.p1_lives = 1;
+        let versus_status = GameStatus {
+            phase: GamePhase::Playing,
+            arena: 8,
+            ..GameStatus::default()
+        };
+
+        assert_eq!(
+            view_3d_status_lines(
+                GameMode::VersusDeathmatch,
+                &versus_status,
+                &versus_score,
+                &ModeSelect::default(),
+                active_3d_view_target(GameMode::VersusDeathmatch, PlayerId::One)
+            ),
+            vec![
+                "P1 04 LIFE 1".to_string(),
+                "P2 02 LIFE 3".to_string(),
+                "ARENA 08".to_string(),
+                "TARGET 05".to_string(),
+                "VIEW P1".to_string(),
+                "ASSIST ON".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn view_3d_minimap_image_uses_board_sized_pixel_grid() {
+        let image = create_3d_minimap_image();
+
+        assert_eq!(
+            image.texture_descriptor.size.width,
+            VIEW_3D_MINIMAP_SIZE as u32
+        );
+        assert_eq!(
+            image.texture_descriptor.size.height,
+            VIEW_3D_MINIMAP_SIZE as u32
+        );
+        assert_eq!(
+            image
+                .data
+                .as_ref()
+                .expect("minimap should keep pixels")
+                .len(),
+            VIEW_3D_MINIMAP_SIZE * VIEW_3D_MINIMAP_SIZE * 4
+        );
+        assert_eq!(image_pixel(&image, 0, 0), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn view_3d_minimap_pixels_encode_tiles_units_and_target_player() {
+        let mut grid = TileGrid::empty();
+        grid.set(1, 2, TileKind::Brick);
+        grid.set(3, 4, TileKind::Steel);
+        grid.set(5, 6, TileKind::Water);
+
+        let player_tank = Tank {
+            top_left: Vec2::new(0.0, 0.0),
+            facing: Direction::Up,
+            speed: PLAYER_SPEED,
+        };
+        let player = Player { id: PlayerId::One };
+        let enemy_tank = Tank {
+            top_left: Vec2::new(64.0, 16.0),
+            facing: Direction::Down,
+            speed: PLAYER_SPEED,
+        };
+        let enemy = EnemyTank {
+            kind: EnemyKind::Basic,
+            carried_powerup: None,
+        };
+        let carrier_tank = Tank {
+            top_left: Vec2::new(80.0, 16.0),
+            facing: Direction::Down,
+            speed: PLAYER_SPEED,
+        };
+        let carrier_enemy = EnemyTank {
+            kind: EnemyKind::Basic,
+            carried_powerup: Some(PowerUpKind::Grenade),
+        };
+        let bullet = Bullet {
+            previous_top_left: Vec2::new(100.0, 4.0),
+            top_left: Vec2::new(100.0, 4.0),
+            facing: Direction::Right,
+            owner: Team::Player1,
+            speed: BULLET_SPEED,
+            breaks_steel: false,
+            resolved: false,
+        };
+        let base = BaseSprite {
+            owner: None,
+            top_left: Vec2::new(80.0, 80.0),
+        };
+        let player_two_base = BaseSprite {
+            owner: Some(PlayerId::Two),
+            top_left: Vec2::new(96.0, 80.0),
+        };
+        let powerup = PowerUp {
+            kind: PowerUpKind::Helmet,
+        };
+        let powerup_transform = Transform::from_translation(board_object_center(
+            112.0,
+            80.0,
+            Vec2::splat(TANK_SIZE),
+            0.0,
+        ));
+
+        let pixels = render_3d_minimap_pixels(
+            &grid,
+            [
+                (&player_tank, Some(&player), None::<&EnemyTank>),
+                (&enemy_tank, None::<&Player>, Some(&enemy)),
+                (&carrier_tank, None::<&Player>, Some(&carrier_enemy)),
+            ],
+            [&bullet],
+            [&base, &player_two_base],
+            [(&powerup, &powerup_transform)],
+            PlayerId::One,
+        );
+        let cell = VIEW_3D_MINIMAP_CELL_PIXELS;
+
+        assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 1 * cell + 1, 2 * cell + 1),
+            [152, 64, 36, 255]
+        );
+        assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 3 * cell + 1, 4 * cell + 1),
+            [144, 152, 160, 255]
+        );
+        assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 5 * cell + 1, 6 * cell + 1),
+            [28, 96, 184, 245]
+        );
+        assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 1 * cell, cell),
+            [255, 255, 255, 255]
+        );
+        assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 1 * cell + 1, cell + 1),
+            [184, 248, 184, 255]
+        );
+        assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 9 * cell + 1, 3 * cell + 1),
+            [248, 88, 80, 255]
+        );
+        assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 11 * cell + 1, 3 * cell + 1),
+            [248, 88, 72, 255]
+        );
+        assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 12 * cell + 1, 0),
+            [184, 248, 184, 255]
+        );
+        assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 11 * cell + 1, 11 * cell + 1),
+            [248, 216, 96, 255]
+        );
+        assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 13 * cell + 1, 11 * cell + 1),
+            [112, 184, 255, 255]
+        );
+        assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 15 * cell + 1, 11 * cell + 1),
+            [112, 216, 248, 255]
+        );
+    }
+
+    #[test]
+    fn view_3d_camera_path_detects_tall_tile_obstructions() {
+        let mut grid = TileGrid::empty();
+        let from = Vec2::new(104.0, 104.0);
+        let to = Vec2::new(104.0, 138.0);
+
+        assert!(!camera_path_is_obstructed(&grid, from, to));
+
+        grid.set(13, 15, TileKind::Brick);
+        assert!(camera_path_is_obstructed(&grid, from, to));
+
+        grid.set(13, 15, TileKind::Water);
+        assert!(!camera_path_is_obstructed(&grid, from, to));
+
+        grid.set(13, 15, TileKind::Forest);
+        assert!(camera_path_is_obstructed(&grid, from, to));
+    }
+
+    #[test]
+    fn view_3d_chase_camera_raises_when_path_is_obstructed() {
+        let tank = Tank {
+            top_left: Vec2::new(96.0, 96.0),
+            facing: Direction::Up,
+            speed: PLAYER_SPEED,
+        };
+        let mut grid = TileGrid::empty();
+
+        let clear = chase_camera_transform(&tank, &grid);
+        assert!((clear.translation.y - 25.0).abs() < 0.01);
+
+        grid.set(13, 15, TileKind::Steel);
+        let obstructed = chase_camera_transform(&tank, &grid);
+        assert!(obstructed.translation.y > clear.translation.y + 10.0);
+        assert!(obstructed.translation.z < clear.translation.z);
+    }
+
+    #[test]
+    fn update_3d_chase_camera_uses_campaign_active_target() {
+        let p1_tank = Tank {
+            top_left: Vec2::new(32.0, 64.0),
+            facing: Direction::Right,
+            speed: PLAYER_SPEED,
+        };
+        let p2_tank = Tank {
+            top_left: Vec2::new(120.0, 32.0),
+            facing: Direction::Left,
+            speed: PLAYER_SPEED,
+        };
+        let expected = chase_camera_transform(&p1_tank, &TileGrid::empty());
+        let mut app = App::new();
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            view_target: PlayerId::Two,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.world_mut()
+            .spawn((p1_tank, Player { id: PlayerId::One }));
+        app.world_mut()
+            .spawn((p2_tank, Player { id: PlayerId::Two }));
+        app.world_mut().spawn((Transform::default(), Tank3dCamera));
+        app.add_systems(Update, update_3d_chase_camera);
+
+        app.update();
+
+        let mut cameras = app.world_mut().query::<&Transform>();
+        let camera = cameras
+            .iter(app.world())
+            .find(|transform| transform.translation != Vec3::ZERO)
+            .expect("3D camera should move to the active target");
+        assert!((camera.translation - expected.translation).length() < 0.01);
+    }
+
+    #[test]
+    fn update_3d_chase_camera_falls_back_to_available_two_player_target() {
+        let p1_tank = Tank {
+            top_left: Vec2::new(32.0, 64.0),
+            facing: Direction::Right,
+            speed: PLAYER_SPEED,
+        };
+        let expected = chase_camera_transform(&p1_tank, &TileGrid::empty());
+        let mut app = App::new();
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            view_target: PlayerId::Two,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameMode::CoopCampaign);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.world_mut()
+            .spawn((p1_tank, Player { id: PlayerId::One }));
+        app.world_mut().spawn((Transform::default(), Tank3dCamera));
+        app.add_systems(Update, update_3d_chase_camera);
+
+        app.update();
+
+        let mut cameras = app.world_mut().query::<&Transform>();
+        let camera = cameras
+            .iter(app.world())
+            .find(|transform| transform.translation != Vec3::ZERO)
+            .expect("3D camera should follow the available player");
+        assert!((camera.translation - expected.translation).length() < 0.01);
+    }
+
+    #[test]
+    fn view_3d_aim_guide_length_stops_at_bullet_blocking_tiles() {
+        let tank = Tank {
+            top_left: Vec2::new(32.0, 32.0),
+            facing: Direction::Right,
+            speed: PLAYER_SPEED,
+        };
+        let mut grid = TileGrid::empty();
+
+        let open_length = aim_guide_length(&grid, &tank);
+        assert_eq!(open_length, TILE_SIZE * 4.0);
+
+        grid.set(8, 5, TileKind::Brick);
+        let blocked_by_brick = aim_guide_length(&grid, &tank);
+        assert!(blocked_by_brick < open_length);
+        assert!(blocked_by_brick > TILE_SIZE);
+
+        grid.set(8, 5, TileKind::Forest);
+        assert_eq!(aim_guide_length(&grid, &tank), open_length);
+
+        grid.set(8, 5, TileKind::Base);
+        assert_eq!(aim_guide_length(&grid, &tank), blocked_by_brick);
+    }
+
+    #[test]
+    fn view_3d_protection_kind_prioritizes_spawn_over_shield() {
+        assert_eq!(tank_3d_protection_kind(false, false), None);
+        assert_eq!(
+            tank_3d_protection_kind(true, false),
+            Some(Tank3dProtectionKind::Shield)
+        );
+        assert_eq!(
+            tank_3d_protection_kind(false, true),
+            Some(Tank3dProtectionKind::Spawn)
+        );
+        assert_eq!(
+            tank_3d_protection_kind(true, true),
+            Some(Tank3dProtectionKind::Spawn)
+        );
+    }
+
+    #[test]
+    fn view_3d_effect_kind_reuses_sprite_animation_ranges() {
+        fn animation_for(frames: SpriteFrameRange) -> SpriteAnimation {
+            SpriteAnimation {
+                first: frames.first,
+                last: frames.last,
+                timer: Timer::from_seconds(0.1, TimerMode::Repeating),
+                despawn_on_finish: true,
+            }
+        }
+
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+
+        assert_eq!(
+            view_3d_effect_kind(&animation_for(manifest.explosion_frames()), &manifest),
+            Some(View3dEffectKind::Explosion)
+        );
+        assert_eq!(
+            view_3d_effect_kind(
+                &animation_for(manifest.base_destruction_frames()),
+                &manifest
+            ),
+            Some(View3dEffectKind::BaseDestruction)
+        );
+        assert_eq!(
+            view_3d_effect_kind(&animation_for(manifest.bullet_impact_frames()), &manifest),
+            Some(View3dEffectKind::BulletImpact)
+        );
+        assert_eq!(
+            view_3d_effect_kind(&animation_for(manifest.spawn_shimmer_frames()), &manifest),
+            Some(View3dEffectKind::SpawnShimmer)
+        );
+        assert_eq!(
+            view_3d_effect_kind(&animation_for(manifest.powerup_sparkle_frames()), &manifest),
+            Some(View3dEffectKind::PowerUpSparkle)
+        );
+        assert_eq!(
+            view_3d_effect_kind(
+                &animation_for(SpriteFrameRange {
+                    first: 90,
+                    last: 91
+                }),
+                &manifest
+            ),
+            None
+        );
+
+        assert_eq!(
+            view_3d_effect_size(View3dEffectKind::BulletImpact),
+            BULLET_SIZE
+        );
+        assert_eq!(view_3d_effect_size(View3dEffectKind::Explosion), TANK_SIZE);
+    }
+
+    #[test]
+    fn view_3d_powerup_material_kind_preserves_powerup_identity() {
+        assert_eq!(
+            powerup_3d_material_kind(PowerUpKind::Star),
+            PowerUp3dMaterialKind::Star
+        );
+        assert_eq!(
+            powerup_3d_material_kind(PowerUpKind::Helmet),
+            PowerUp3dMaterialKind::Helmet
+        );
+        assert_eq!(
+            powerup_3d_material_kind(PowerUpKind::Clock),
+            PowerUp3dMaterialKind::Clock
+        );
+        assert_eq!(
+            powerup_3d_material_kind(PowerUpKind::Grenade),
+            PowerUp3dMaterialKind::Grenade
+        );
+        assert_eq!(
+            powerup_3d_material_kind(PowerUpKind::Shovel),
+            PowerUp3dMaterialKind::Shovel
+        );
+        assert_eq!(
+            powerup_3d_material_kind(PowerUpKind::Tank),
+            PowerUp3dMaterialKind::Tank
+        );
+    }
+
+    #[test]
+    fn view_3d_base_material_kind_preserves_base_owner_identity() {
+        assert_eq!(base_3d_material_kind(None), Base3dMaterialKind::Neutral);
+        assert_eq!(
+            base_3d_material_kind(Some(PlayerId::One)),
+            Base3dMaterialKind::PlayerOne
+        );
+        assert_eq!(
+            base_3d_material_kind(Some(PlayerId::Two)),
+            Base3dMaterialKind::PlayerTwo
+        );
+    }
+
+    #[test]
+    fn view_3d_minimap_base_color_preserves_base_owner_identity() {
+        assert_eq!(minimap_base_color(None), [248, 216, 96, 255]);
+        assert_eq!(
+            minimap_base_color(Some(PlayerId::One)),
+            [144, 248, 152, 255]
+        );
+        assert_eq!(
+            minimap_base_color(Some(PlayerId::Two)),
+            [112, 184, 255, 255]
+        );
+    }
+
+    #[test]
+    fn view_3d_minimap_powerup_color_preserves_powerup_identity() {
+        assert_eq!(
+            minimap_powerup_color(PowerUpKind::Star),
+            [248, 216, 72, 255]
+        );
+        assert_eq!(
+            minimap_powerup_color(PowerUpKind::Helmet),
+            [112, 216, 248, 255]
+        );
+        assert_eq!(
+            minimap_powerup_color(PowerUpKind::Clock),
+            [176, 176, 248, 255]
+        );
+        assert_eq!(
+            minimap_powerup_color(PowerUpKind::Grenade),
+            [248, 88, 72, 255]
+        );
+        assert_eq!(
+            minimap_powerup_color(PowerUpKind::Shovel),
+            [184, 232, 160, 255]
+        );
+        assert_eq!(
+            minimap_powerup_color(PowerUpKind::Tank),
+            [184, 248, 184, 255]
+        );
+    }
+
+    #[test]
+    fn view_3d_minimap_enemy_color_marks_powerup_carriers() {
+        let normal_enemy = EnemyTank {
+            kind: EnemyKind::Basic,
+            carried_powerup: None,
+        };
+        let carrier_enemy = EnemyTank {
+            kind: EnemyKind::Basic,
+            carried_powerup: Some(PowerUpKind::Grenade),
+        };
+
+        assert_eq!(minimap_enemy_color(&normal_enemy), [248, 88, 80, 255]);
+        assert_eq!(minimap_enemy_color(&carrier_enemy), [248, 88, 72, 255]);
+    }
+
+    #[test]
+    fn view_3d_bullet_material_and_minimap_color_preserve_owner_identity() {
+        assert_eq!(
+            bullet_3d_material_kind(Team::Player1),
+            Bullet3dMaterialKind::PlayerOne
+        );
+        assert_eq!(
+            bullet_3d_material_kind(Team::Player2),
+            Bullet3dMaterialKind::PlayerTwo
+        );
+        assert_eq!(
+            bullet_3d_material_kind(Team::Enemy),
+            Bullet3dMaterialKind::Enemy
+        );
+
+        assert_eq!(minimap_bullet_color(Team::Player1), [184, 248, 184, 255]);
+        assert_eq!(minimap_bullet_color(Team::Player2), [136, 216, 255, 255]);
+        assert_eq!(minimap_bullet_color(Team::Enemy), [248, 88, 80, 255]);
+    }
+
+    #[test]
+    fn view_3d_tank_material_kind_preserves_freeze_and_damage_state() {
+        assert_eq!(
+            tank_3d_material_kind(Some(PlayerId::One), None, None, 1, false, false),
+            Tank3dMaterialKind::PlayerOne
+        );
+        assert_eq!(
+            tank_3d_material_kind(Some(PlayerId::Two), Some(0), None, 1, false, false),
+            Tank3dMaterialKind::PlayerUpgrade0
+        );
+        assert_eq!(
+            tank_3d_material_kind(Some(PlayerId::One), Some(1), None, 1, false, false),
+            Tank3dMaterialKind::PlayerUpgrade1
+        );
+        assert_eq!(
+            tank_3d_material_kind(Some(PlayerId::Two), Some(2), None, 1, false, false),
+            Tank3dMaterialKind::PlayerUpgrade2
+        );
+        assert_eq!(
+            tank_3d_material_kind(Some(PlayerId::One), Some(99), None, 1, false, false),
+            Tank3dMaterialKind::PlayerUpgrade3
+        );
+        assert_eq!(
+            tank_3d_material_kind(Some(PlayerId::Two), Some(3), None, 1, false, true),
+            Tank3dMaterialKind::Frozen
+        );
+        assert_eq!(
+            tank_3d_material_kind(None, None, Some(EnemyKind::Fast), 1, false, false),
+            Tank3dMaterialKind::EnemyFast
+        );
+        assert_eq!(
+            tank_3d_material_kind(None, None, Some(EnemyKind::Armor), 1, false, false),
+            Tank3dMaterialKind::EnemyPower
+        );
+        assert_eq!(
+            tank_3d_material_kind(None, None, Some(EnemyKind::Armor), 3, false, false),
+            Tank3dMaterialKind::EnemyArmor
+        );
+        assert_eq!(
+            tank_3d_material_kind(None, None, Some(EnemyKind::Basic), 1, true, false),
+            Tank3dMaterialKind::Frozen
+        );
+    }
+
+    #[test]
+    fn sync_3d_dynamic_scene_spawns_sprite_animation_effects() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.world_mut().spawn((
+            SpriteAnimation {
+                first: manifest.explosion_frames().first,
+                last: manifest.explosion_frames().last,
+                timer: Timer::from_seconds(0.1, TimerMode::Repeating),
+                despawn_on_finish: true,
+            },
+            Transform::from_translation(board_object_center(
+                32.0,
+                32.0,
+                Vec2::splat(TANK_SIZE),
+                8.1,
+            )),
+        ));
+        app.add_systems(Startup, setup_3d_view);
+        app.add_systems(Update, sync_3d_dynamic_scene);
+
+        app.update();
+
+        let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
+        assert!(
+            names
+                .iter(app.world())
+                .any(|(name, _)| name.as_str().starts_with("3D Effect Explosion"))
+        );
+    }
+
+    #[test]
+    fn sync_3d_dynamic_scene_marks_bullet_owner() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.world_mut().spawn(Bullet {
+            previous_top_left: Vec2::new(32.0, 32.0),
+            top_left: Vec2::new(32.0, 32.0),
+            facing: Direction::Right,
+            owner: Team::Player2,
+            speed: BULLET_SPEED,
+            breaks_steel: false,
+            resolved: false,
+        });
+        app.add_systems(Startup, setup_3d_view);
+        app.add_systems(Update, sync_3d_dynamic_scene);
+
+        app.update();
+
+        let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
+        assert!(
+            names
+                .iter(app.world())
+                .any(|(name, _)| name.as_str().starts_with("3D Bullet PlayerTwo"))
+        );
+    }
+
+    #[test]
+    fn sync_3d_dynamic_scene_marks_frozen_enemies() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        let mut enemy_freeze = EnemyFreeze::default();
+        enemy_freeze.start();
+        app.insert_resource(enemy_freeze);
+        app.world_mut().spawn((
+            Tank {
+                top_left: Vec2::new(32.0, 32.0),
+                facing: Direction::Down,
+                speed: enemy_speed(EnemyKind::Basic),
+            },
+            EnemyTank {
+                kind: EnemyKind::Basic,
+                carried_powerup: None,
+            },
+            Health { current: 1 },
+        ));
+        app.add_systems(Startup, setup_3d_view);
+        app.add_systems(Update, sync_3d_dynamic_scene);
+
+        app.update();
+
+        let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
+        assert!(
+            names
+                .iter(app.world())
+                .any(|(name, _)| name.as_str().starts_with("3D Tank Frozen"))
+        );
+    }
+
+    #[test]
+    fn sync_3d_dynamic_scene_marks_player_upgrade_level() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.world_mut().spawn((
+            Tank {
+                top_left: Vec2::new(32.0, 32.0),
+                facing: Direction::Down,
+                speed: PLAYER_SPEED,
+            },
+            Player { id: PlayerId::One },
+            PlayerUpgrade { level: 2 },
+        ));
+        app.add_systems(Startup, setup_3d_view);
+        app.add_systems(Update, sync_3d_dynamic_scene);
+
+        app.update();
+
+        let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
+        assert!(
+            names
+                .iter(app.world())
+                .any(|(name, _)| name.as_str().starts_with("3D Tank PlayerUpgrade2"))
+        );
+    }
+
+    #[test]
+    fn sync_3d_dynamic_scene_spawns_player_identity_marker_without_assist() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            view_assist: false,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.world_mut().spawn((
+            Tank {
+                top_left: Vec2::new(32.0, 32.0),
+                facing: Direction::Down,
+                speed: PLAYER_SPEED,
+            },
+            Player { id: PlayerId::Two },
+            PlayerUpgrade { level: 3 },
+        ));
+        app.add_systems(Startup, setup_3d_view);
+        app.add_systems(Update, sync_3d_dynamic_scene);
+
+        app.update();
+
+        let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
+        let names = names
+            .iter(app.world())
+            .map(|(name, _)| name.as_str().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            names
+                .iter()
+                .any(|name| name.starts_with("3D Tank PlayerUpgrade3"))
+        );
+        assert!(names.iter().any(|name| name == "3D Player Marker Two"));
+        assert!(!names.iter().any(|name| name == "3D Aim Guide"));
+    }
+
+    #[test]
+    fn sync_3d_dynamic_scene_marks_resolved_view_target_player() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(GameMode::CoopCampaign);
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            view_target: PlayerId::Two,
+            view_assist: false,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.world_mut().spawn((
+            Tank {
+                top_left: Vec2::new(32.0, 32.0),
+                facing: Direction::Down,
+                speed: PLAYER_SPEED,
+            },
+            Player { id: PlayerId::One },
+        ));
+        app.add_systems(Startup, setup_3d_view);
+        app.add_systems(Update, sync_3d_dynamic_scene);
+
+        app.update();
+
+        let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
+        let names = names
+            .iter(app.world())
+            .map(|(name, _)| name.as_str().to_string())
+            .collect::<Vec<_>>();
+        assert!(names.iter().any(|name| name == "3D View Target One"));
+        assert!(!names.iter().any(|name| name == "3D View Target Two"));
+    }
+
+    #[test]
+    fn sync_3d_dynamic_scene_spawns_player_aim_guide_when_assist_enabled() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            view_assist: true,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.world_mut().spawn((
+            Tank {
+                top_left: Vec2::new(32.0, 32.0),
+                facing: Direction::Right,
+                speed: PLAYER_SPEED,
+            },
+            Player { id: PlayerId::One },
+        ));
+        app.add_systems(Startup, setup_3d_view);
+        app.add_systems(Update, sync_3d_dynamic_scene);
+
+        app.update();
+
+        let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
+        assert!(
+            names
+                .iter(app.world())
+                .any(|(name, _)| name.as_str() == "3D Aim Guide")
+        );
+    }
+
+    #[test]
+    fn sync_3d_dynamic_scene_spawns_powerups_with_kind_names() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        spawn_test_powerup(app.world_mut(), PowerUpKind::Helmet, Vec2::new(32.0, 32.0));
+        app.add_systems(Startup, setup_3d_view);
+        app.add_systems(Update, sync_3d_dynamic_scene);
+
+        app.update();
+
+        let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
+        assert!(
+            names
+                .iter(app.world())
+                .any(|(name, _)| name.as_str().starts_with("3D PowerUp Helmet"))
+        );
+    }
+
+    #[test]
+    fn sync_3d_dynamic_scene_spawns_enemy_powerup_carrier_marker() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            view_assist: true,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.world_mut().spawn((
+            Tank {
+                top_left: Vec2::new(32.0, 32.0),
+                facing: Direction::Down,
+                speed: enemy_speed(EnemyKind::Basic),
+            },
+            EnemyTank {
+                kind: EnemyKind::Basic,
+                carried_powerup: Some(PowerUpKind::Helmet),
+            },
+            Health { current: 1 },
+        ));
+        app.add_systems(Startup, setup_3d_view);
+        app.add_systems(Update, sync_3d_dynamic_scene);
+
+        app.update();
+
+        let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
+        assert!(
+            names
+                .iter(app.world())
+                .any(|(name, _)| name.as_str() == "3D Carrier PowerUp Helmet")
+        );
+    }
+
+    #[test]
+    fn sync_3d_dynamic_scene_marks_owned_bases() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.world_mut().spawn(BaseSprite {
+            owner: Some(PlayerId::Two),
+            top_left: Vec2::new(96.0, 192.0),
+        });
+        app.add_systems(Startup, setup_3d_view);
+        app.add_systems(Update, sync_3d_dynamic_scene);
+
+        app.update();
+
+        let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
+        assert!(
+            names
+                .iter(app.world())
+                .any(|(name, _)| name.as_str().starts_with("3D Base PlayerTwo"))
+        );
+    }
+
+    #[test]
+    fn sync_3d_hud_spawns_and_clears_overlay_entities() {
+        let mut app = App::new();
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ScoreBoard::campaign(20));
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.add_systems(Update, sync_3d_hud);
+
+        app.update();
+        let mut hud_entities = app.world_mut().query::<&View3dHud>();
+        assert!(hud_entities.iter(app.world()).count() > 0);
+
+        app.world_mut().resource_mut::<GameStatus>().phase = GamePhase::ModeSelect;
+        app.update();
+        assert_eq!(hud_entities.iter(app.world()).count(), 0);
+    }
+
+    #[test]
+    fn view_3d_enemy_reserve_marker_count_only_tracks_campaign_remaining_enemies() {
+        let mut score_board = ScoreBoard::campaign(20);
+        score_board.enemies_destroyed = 3;
+        assert_eq!(
+            view_3d_enemy_reserve_marker_count(GameMode::Campaign, &score_board),
+            17
+        );
+
+        let mut oversized = ScoreBoard::coop_campaign(25);
+        oversized.enemies_destroyed = 1;
+        assert_eq!(
+            view_3d_enemy_reserve_marker_count(GameMode::CoopCampaign, &oversized),
+            ENEMY_MARKER_COUNT
+        );
+
+        let versus = ScoreBoard::versus(3, 5, 2.0);
+        assert_eq!(
+            view_3d_enemy_reserve_marker_count(GameMode::VersusDeathmatch, &versus),
+            0
+        );
+        assert_eq!(
+            view_3d_enemy_reserve_marker_count(GameMode::VersusBaseBattle, &versus),
+            0
+        );
+    }
+
+    #[test]
+    fn sync_3d_hud_spawns_enemy_reserve_markers_for_remaining_campaign_enemies() {
+        let mut app = App::new();
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        let mut score_board = ScoreBoard::campaign(20);
+        score_board.enemies_destroyed = 4;
+        app.insert_resource(score_board);
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.add_systems(Update, sync_3d_hud);
+
+        app.update();
+
+        let mut names = app.world_mut().query::<(&Name, &View3dHud)>();
+        let reserve_markers = names
+            .iter(app.world())
+            .filter(|(name, _)| name.as_str().starts_with("3D Enemy Reserve"))
+            .count();
+        assert_eq!(reserve_markers, 16);
     }
 
     #[test]
@@ -11265,6 +12683,53 @@ mod tests {
     }
 
     #[test]
+    fn main_menu_view_settings_cycle_from_ui() {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::ArrowRight);
+
+        let mut app = App::new();
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus::default());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(EnemyDirector::inactive());
+        app.insert_resource(ScoreBoard::campaign(0));
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPowerUpDirector::inactive());
+        app.insert_resource(ModeSelect {
+            selected: ModeSelectOption::ViewMode,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.insert_resource(BaseReinforcement::default());
+        app.add_systems(Update, handle_shared_controls);
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<ModeSelect>().view_mode,
+            TankViewMode::ThreeD
+        );
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::ArrowRight);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowRight);
+        app.world_mut().resource_mut::<ModeSelect>().selected = ModeSelectOption::ViewAssist;
+        app.update();
+
+        assert!(!app.world().resource::<ModeSelect>().view_assist);
+    }
+
+    #[test]
     fn mode_select_arena_selection_wraps_authored_arenas() {
         assert_eq!(ModeSelect::default().arena, DEFAULT_VERSUS_ARENA);
         assert_eq!(next_arena(1), 2);
@@ -11354,6 +12819,8 @@ mod tests {
         let campaign = cursor(ModeSelectOption::Campaign);
         let coop = cursor(ModeSelectOption::CoopCampaign);
         let battle = cursor(ModeSelectOption::Battle);
+        let view = cursor(ModeSelectOption::ViewMode);
+        let assist = cursor(ModeSelectOption::ViewAssist);
         let ai = cursor(ModeSelectOption::AiStrategy);
         let difficulty = cursor(ModeSelectOption::Difficulty);
         let music = cursor(ModeSelectOption::Music);
@@ -11363,7 +12830,9 @@ mod tests {
         let arena = cursor(ModeSelectOption::Arena);
         assert!(campaign.y > coop.y);
         assert!(coop.y > battle.y);
-        assert!(battle.y > ai.y);
+        assert!(battle.y > view.y);
+        assert!(view.y > assist.y);
+        assert!(assist.y > ai.y);
         assert!(ai.y > difficulty.y);
         assert!(difficulty.y > music.y);
         assert!(music.y > sound.y);
@@ -11386,6 +12855,8 @@ mod tests {
             ModeSelectOption::Campaign,
             ModeSelectOption::CoopCampaign,
             ModeSelectOption::Battle,
+            ModeSelectOption::ViewMode,
+            ModeSelectOption::ViewAssist,
             ModeSelectOption::AiStrategy,
             ModeSelectOption::Difficulty,
             ModeSelectOption::Music,
@@ -11410,14 +12881,17 @@ mod tests {
             - mode_select_option_y(ModeSelectOption::Campaign);
         let coop_to_battle = mode_select_option_y(ModeSelectOption::Battle)
             - mode_select_option_y(ModeSelectOption::CoopCampaign);
-        let battle_to_ai = mode_select_option_y(ModeSelectOption::AiStrategy)
+        let battle_to_view = mode_select_option_y(ModeSelectOption::ViewMode)
             - mode_select_option_y(ModeSelectOption::Battle);
+        let view_to_assist = mode_select_option_y(ModeSelectOption::ViewAssist)
+            - mode_select_option_y(ModeSelectOption::ViewMode);
         let ai_to_difficulty = mode_select_option_y(ModeSelectOption::Difficulty)
             - mode_select_option_y(ModeSelectOption::AiStrategy);
 
         assert_eq!(campaign_to_coop, coop_to_battle);
+        assert_eq!(view_to_assist, campaign_to_coop);
         assert_eq!(ai_to_difficulty, campaign_to_coop);
-        assert!(battle_to_ai > campaign_to_coop);
+        assert!(battle_to_view > campaign_to_coop);
     }
 
     #[test]
@@ -11432,6 +12906,10 @@ mod tests {
             "1 PLAYER",
             "2 PLAYERS",
             "BATTLE",
+            "VIEW",
+            "2D",
+            "3D",
+            "ASSIST",
             "STAGE",
             "STAGE 50",
             "ARENA",

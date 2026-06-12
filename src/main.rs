@@ -133,6 +133,7 @@ const ENEMY_MARKER_TOP: f32 = 159.0;
 const ENEMY_MARKER_CELL_X: f32 = 9.0;
 const ENEMY_MARKER_CELL_Y: f32 = 9.0;
 const SNAP_DISTANCE: f32 = 2.0;
+const LANE_ASSIST_MAX_DISTANCE: f32 = TILE_SIZE / 2.0;
 const REQUIRED_GLYPHS: &str = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const GENERATED_GLYPH_WIDTH: usize = 5;
 const GENERATED_GLYPH_HEIGHT: usize = 7;
@@ -3661,20 +3662,19 @@ fn move_player_tank(
         tank.facing = motion.facing;
 
         let mut moved = false;
-        if let Some(direction) = motion.movement {
-            let mut next = tank.top_left;
-            snap_to_lane(&mut next, direction);
-            next += direction.movement()
-                * tank_move_speed(tank.speed, &grid, tank.top_left)
-                * time.delta_secs();
-            next = round_vec2(next);
-
-            if grid.can_tank_occupy(next) && tank_position_free(next, tank.top_left, &occupied) {
-                tank.top_left = next;
-                transform.translation =
-                    board_object_center(next.x, next.y, Vec2::splat(TANK_SIZE), 6.0);
-                moved = true;
-            }
+        if let Some(direction) = motion.movement
+            && let Some(next) = tank_move_candidate(
+                tank.top_left,
+                direction,
+                tank_move_speed(tank.speed, &grid, tank.top_left) * time.delta_secs(),
+                &grid,
+                &occupied,
+            )
+        {
+            tank.top_left = next;
+            transform.translation =
+                board_object_center(next.x, next.y, Vec2::splat(TANK_SIZE), 6.0);
+            moved = true;
         }
         update_tank_sprite(
             &mut sprite,
@@ -3838,17 +3838,14 @@ fn move_enemy_tanks(
             );
         }
 
-        let mut next = tank.top_left;
-        snap_to_lane(&mut next, tank.facing);
-        next += tank.facing.movement()
-            * tank_move_speed(tank.speed, &grid, tank.top_left)
-            * time.delta_secs();
-        next = round_vec2(next);
-
         let mut moved = false;
-        if grid.can_tank_occupy(next)
-            && tank_position_free(next, tank.top_left, &occupied_positions)
-        {
+        if let Some(next) = tank_move_candidate(
+            tank.top_left,
+            tank.facing,
+            tank_move_speed(tank.speed, &grid, tank.top_left) * time.delta_secs(),
+            &grid,
+            &occupied_positions,
+        ) {
             tank.top_left = next;
             transform.translation =
                 board_object_center(next.x, next.y, Vec2::splat(TANK_SIZE), 6.0);
@@ -6377,6 +6374,82 @@ fn snap_to_lane(top_left: &mut Vec2, direction: Direction) {
             }
         }
     }
+}
+
+fn tank_move_candidate(
+    current: Vec2,
+    direction: Direction,
+    movement_distance: f32,
+    grid: &TileGrid,
+    occupied: &[Vec2],
+) -> Option<Vec2> {
+    if movement_distance <= 0.0 {
+        return None;
+    }
+
+    let mut forward = current;
+    snap_to_lane(&mut forward, direction);
+    forward += direction.movement() * movement_distance;
+    forward = round_vec2(forward);
+    if tank_position_is_available(forward, current, grid, occupied) {
+        return Some(forward);
+    }
+
+    tank_lane_assist_candidate(current, direction, movement_distance, grid, occupied)
+}
+
+fn tank_lane_assist_candidate(
+    current: Vec2,
+    direction: Direction,
+    movement_distance: f32,
+    grid: &TileGrid,
+    occupied: &[Vec2],
+) -> Option<Vec2> {
+    let axis_delta = lane_axis_delta(current, direction)?;
+    if axis_delta.abs() > LANE_ASSIST_MAX_DISTANCE {
+        return None;
+    }
+
+    let target_lane = lane_assist_target(current, direction, axis_delta);
+    let mut target_forward = target_lane;
+    snap_to_lane(&mut target_forward, direction);
+    target_forward += direction.movement() * movement_distance.min(TILE_SIZE);
+    target_forward = round_vec2(target_forward);
+    if !tank_position_is_available(target_lane, current, grid, occupied)
+        || !tank_position_is_available(target_forward, current, grid, occupied)
+    {
+        return None;
+    }
+
+    let assist_step = axis_delta.clamp(-movement_distance, movement_distance);
+    let candidate = round_vec2(lane_assist_target(current, direction, assist_step));
+    tank_position_is_available(candidate, current, grid, occupied).then_some(candidate)
+}
+
+fn lane_axis_delta(top_left: Vec2, direction: Direction) -> Option<f32> {
+    let value = match direction {
+        Direction::Up | Direction::Down => top_left.x,
+        Direction::Left | Direction::Right => top_left.y,
+    };
+    let snapped = (value / TILE_SIZE).round() * TILE_SIZE;
+    let delta = snapped - value;
+    (delta.abs() > f32::EPSILON).then_some(delta)
+}
+
+fn lane_assist_target(top_left: Vec2, direction: Direction, axis_delta: f32) -> Vec2 {
+    match direction {
+        Direction::Up | Direction::Down => Vec2::new(top_left.x + axis_delta, top_left.y),
+        Direction::Left | Direction::Right => Vec2::new(top_left.x, top_left.y + axis_delta),
+    }
+}
+
+fn tank_position_is_available(
+    candidate: Vec2,
+    current: Vec2,
+    grid: &TileGrid,
+    occupied: &[Vec2],
+) -> bool {
+    grid.can_tank_occupy(candidate) && tank_position_free(candidate, current, occupied)
 }
 
 fn spawn_bullet_position(tank_top_left: Vec2, direction: Direction) -> Vec2 {
@@ -12551,6 +12624,31 @@ mod tests {
     }
 
     #[test]
+    fn directed_bullet_impact_effect_records_3d_direction() {
+        fn spawn_directed_impact_for_test(mut commands: Commands, assets: Res<SpriteAssets>) {
+            spawn_directed_bullet_impact_effect(
+                &mut commands,
+                &assets,
+                Vec2::new(16.0, 16.0),
+                Direction::Left,
+            );
+        }
+
+        let mut app = App::new();
+        app.insert_resource(test_sprite_assets());
+        app.add_systems(Update, spawn_directed_impact_for_test);
+
+        app.update();
+
+        let mut impacts = app.world_mut().query::<&BulletImpactDirection>();
+        let directions = impacts
+            .iter(app.world())
+            .map(|impact| impact.direction)
+            .collect::<Vec<_>>();
+        assert_eq!(directions, vec![Direction::Left]);
+    }
+
+    #[test]
     fn view_3d_powerup_material_kind_preserves_powerup_identity() {
         assert_eq!(
             powerup_3d_material_kind(PowerUpKind::Star),
@@ -12846,6 +12944,36 @@ mod tests {
     }
 
     #[test]
+    fn bullet_trail_3d_transform_uses_swept_segment_when_available() {
+        let bullet = Bullet {
+            previous_top_left: Vec2::new(64.0, 64.0),
+            top_left: Vec2::new(68.0, 64.0),
+            facing: Direction::Right,
+            owner: Team::Player1,
+            speed: BULLET_SPEED,
+            breaks_steel: false,
+            resolved: false,
+        };
+
+        let trail_transform = bullet_trail_3d_transform(&bullet);
+        let expected_center = Vec2::new(68.0, 66.0);
+        let expected_translation = Vec3::new(
+            expected_center.x - board_size() / 2.0,
+            trail_transform.translation.y,
+            expected_center.y - board_size() / 2.0,
+        );
+
+        assert!(
+            trail_transform.translation.distance(expected_translation) < 0.001,
+            "trail should center on the swept bullet segment"
+        );
+        assert!(
+            (trail_transform.scale.y - 2.0).abs() < 0.001,
+            "trail length should match the 4px swept segment"
+        );
+    }
+
+    #[test]
     fn water_tile_exposed_edges_skip_internal_water_borders() {
         let mut grid = TileGrid::empty();
         grid.set(4, 4, TileKind::Water);
@@ -12941,6 +13069,63 @@ mod tests {
                 "3D explosion should include {expected_part}; got {effect_names:?}"
             );
         }
+    }
+
+    #[test]
+    fn sync_3d_dynamic_scene_orients_directed_bullet_impact_effects() {
+        let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.world_mut().spawn((
+            SpriteAnimation {
+                first: manifest.bullet_impact_frames().first,
+                last: manifest.bullet_impact_frames().last,
+                timer: Timer::from_seconds(0.1, TimerMode::Repeating),
+                despawn_on_finish: true,
+            },
+            Transform::from_translation(board_object_center(
+                48.0,
+                48.0,
+                Vec2::splat(BULLET_SIZE),
+                8.1,
+            )),
+            BulletImpactDirection {
+                direction: Direction::Right,
+            },
+        ));
+        app.add_systems(Startup, setup_3d_view);
+        app.add_systems(Update, sync_3d_dynamic_scene);
+
+        app.update();
+
+        let mut names = app
+            .world_mut()
+            .query::<(&Name, &Transform, &View3dDynamic)>();
+        let surface_mark = names
+            .iter(app.world())
+            .find_map(|(name, transform, _)| {
+                name.as_str()
+                    .starts_with("3D Effect BulletImpact SurfaceMark")
+                    .then_some(*transform)
+            })
+            .expect("directed impact should spawn a 3D surface mark");
+
+        assert!(
+            surface_mark.scale.x < surface_mark.scale.z,
+            "right-facing impact should make a thin X surface mark"
+        );
     }
 
     #[test]
@@ -15171,6 +15356,39 @@ mod tests {
             )
         );
         assert_eq!(tank.top_left.y.rem_euclid(TILE_SIZE), 0.0);
+    }
+
+    #[test]
+    fn tank_move_candidate_lane_assists_into_narrow_vertical_gap() {
+        let mut grid = TileGrid::empty();
+        for y in 4..=5 {
+            for x in [0, 1, 4, 5] {
+                grid.set(x, y, TileKind::Brick);
+            }
+        }
+        let current = Vec2::new(19.0, 6.0 * TILE_SIZE);
+
+        let next = tank_move_candidate(current, Direction::Up, TILE_SIZE, &grid, &[current])
+            .expect("lane assist should align the tank with the open two-tile gap");
+
+        assert_eq!(next, Vec2::new(16.0, 6.0 * TILE_SIZE));
+        assert_eq!(next.x.rem_euclid(TILE_SIZE), 0.0);
+    }
+
+    #[test]
+    fn tank_move_candidate_does_not_lane_assist_into_closed_gap() {
+        let mut grid = TileGrid::empty();
+        for y in 4..=5 {
+            for x in [0, 1, 2, 4, 5] {
+                grid.set(x, y, TileKind::Brick);
+            }
+        }
+        let current = Vec2::new(19.0, 6.0 * TILE_SIZE);
+
+        assert_eq!(
+            tank_move_candidate(current, Direction::Up, TILE_SIZE, &grid, &[current]),
+            None
+        );
     }
 
     #[test]

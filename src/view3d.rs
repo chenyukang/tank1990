@@ -2964,28 +2964,65 @@ fn spawn_3d_bullet(
 
 pub(super) fn bullet_3d_transform(bullet: &Bullet) -> Transform {
     let mut transform = Transform::from_translation(board_3d_point(
-        bullet.top_left + Vec2::splat(BULLET_SIZE / 2.0),
+        bullet_center_2d(bullet.top_left),
         VIEW_3D_BULLET_Y,
     ));
     transform.rotation = rotation_from_y_to_direction(bullet.facing);
+    transform.scale = Vec3::new(0.72, 0.72, 0.72);
     transform
 }
 
 pub(super) fn bullet_trail_3d_transform(bullet: &Bullet) -> Transform {
-    let center = bullet.top_left + Vec2::splat(BULLET_SIZE / 2.0)
-        - bullet.facing.movement() * VIEW_3D_BULLET_TRAIL_BACK_OFFSET;
+    let direction = bullet_3d_trail_direction(bullet);
+    let length = bullet_3d_trail_length(bullet);
+    let center = bullet_3d_trail_center(bullet, direction, length);
     let mut transform = Transform::from_translation(board_3d_point(center, VIEW_3D_BULLET_TRAIL_Y));
-    transform.rotation = rotation_from_y_to_direction(bullet.facing);
-    transform.scale = Vec3::new(0.65, VIEW_3D_BULLET_TRAIL_LENGTH / 2.0, 0.65);
+    transform.rotation = rotation_from_y_to_horizontal_vector(direction);
+    transform.scale = Vec3::new(0.42, length / 2.0, 0.42);
     transform
 }
 
 fn bullet_glow_3d_transform(bullet: &Bullet) -> Transform {
-    let center = bullet.top_left
-        + Vec2::splat(BULLET_SIZE / 2.0)
-        + bullet.facing.movement() * (BULLET_SIZE * 0.38);
+    let center =
+        bullet_center_2d(bullet.top_left) + bullet.facing.movement() * (BULLET_SIZE * 0.48);
     Transform::from_translation(board_3d_point(center, VIEW_3D_BULLET_Y))
-        .with_scale(Vec3::new(1.25, 1.25, 1.25))
+        .with_scale(Vec3::new(0.62, 0.62, 0.62))
+}
+
+fn bullet_center_2d(top_left: Vec2) -> Vec2 {
+    top_left + Vec2::splat(BULLET_SIZE / 2.0)
+}
+
+fn bullet_3d_trail_delta(bullet: &Bullet) -> Vec2 {
+    bullet_center_2d(bullet.top_left) - bullet_center_2d(bullet.previous_top_left)
+}
+
+fn bullet_3d_trail_direction(bullet: &Bullet) -> Vec2 {
+    let delta = bullet_3d_trail_delta(bullet);
+    if delta.length_squared() > 0.01 {
+        delta.normalize_or_zero()
+    } else {
+        bullet.facing.movement()
+    }
+}
+
+fn bullet_3d_trail_length(bullet: &Bullet) -> f32 {
+    bullet_3d_trail_delta(bullet)
+        .length()
+        .clamp(VIEW_3D_BULLET_TRAIL_MIN_LENGTH, VIEW_3D_BULLET_TRAIL_LENGTH)
+}
+
+fn bullet_3d_trail_center(bullet: &Bullet, direction: Vec2, length: f32) -> Vec2 {
+    let start = bullet_center_2d(bullet.previous_top_left);
+    let end = bullet_center_2d(bullet.top_left);
+    let travel = start.distance(end);
+    if travel > length + 0.01 {
+        end - direction * (length / 2.0)
+    } else if travel > 0.01 {
+        start.lerp(end, 0.5)
+    } else {
+        end - direction * (length / 2.0)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3412,7 +3449,12 @@ fn spawn_3d_bullet_impact_effect(
     assets: &View3dAssets,
     source: Entity,
     top_left: Vec2,
+    direction: Option<Direction>,
 ) {
+    if let Some(direction) = direction {
+        spawn_3d_bullet_impact_surface_mark(commands, assets, source, top_left, direction);
+    }
+
     spawn_3d_effect_part(
         commands,
         assets.effect_sphere_mesh.clone(),
@@ -3421,32 +3463,27 @@ fn spawn_3d_bullet_impact_effect(
             View3dEffectKind::BulletImpact,
             top_left,
             Vec2::ZERO,
-            2.6,
-            Vec3::new(3.2, 1.5, 3.2),
+            2.35,
+            Vec3::new(2.4, 1.0, 2.4),
         ),
         View3dEffectKind::BulletImpact,
         "Flash",
         source,
     );
 
-    for (index, direction) in [
-        Vec2::new(1.0, 0.0),
-        Vec2::new(-1.0, 0.0),
-        Vec2::new(0.0, 1.0),
-        Vec2::new(0.0, -1.0),
-    ]
-    .into_iter()
-    .enumerate()
+    for (index, spark_direction) in bullet_impact_spark_directions(direction)
+        .into_iter()
+        .enumerate()
     {
         spawn_3d_effect_spark(
             commands,
             assets,
             View3dEffectKind::BulletImpact,
             top_left,
-            direction * 1.9,
-            direction,
-            2.4,
-            0.22,
+            spark_direction * 1.75,
+            spark_direction,
+            if index == 0 { 3.1 } else { 2.2 },
+            0.18,
             effect_indexed_part_name("Spark", index),
             source,
         );
@@ -3459,14 +3496,67 @@ fn spawn_3d_bullet_impact_effect(
         effect_part_transform(
             View3dEffectKind::BulletImpact,
             top_left,
-            Vec2::new(0.4, 0.2),
-            3.4,
-            Vec3::new(2.0, 1.3, 2.0),
+            direction
+                .map(|direction| -direction.movement() * 0.8)
+                .unwrap_or(Vec2::new(0.4, 0.2)),
+            3.0,
+            Vec3::new(1.6, 1.0, 1.6),
         ),
         View3dEffectKind::BulletImpact,
         "Smoke",
         source,
     );
+}
+
+fn spawn_3d_bullet_impact_surface_mark(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    source: Entity,
+    top_left: Vec2,
+    direction: Direction,
+) {
+    let center = top_left
+        + Vec2::splat(view_3d_effect_size(View3dEffectKind::BulletImpact) / 2.0)
+        + direction.movement() * (BULLET_SIZE * 0.42);
+    spawn_3d_effect_part(
+        commands,
+        assets.effect_mesh.clone(),
+        assets.tank_detail_material.clone(),
+        Transform::from_translation(board_3d_point(center, 2.0))
+            .with_scale(bullet_impact_surface_mark_scale(direction)),
+        View3dEffectKind::BulletImpact,
+        "SurfaceMark",
+        source,
+    );
+}
+
+fn bullet_impact_surface_mark_scale(direction: Direction) -> Vec3 {
+    match direction {
+        Direction::Left | Direction::Right => Vec3::new(0.16, 2.2, 2.4),
+        Direction::Up | Direction::Down => Vec3::new(2.4, 2.2, 0.16),
+    }
+}
+
+fn bullet_impact_spark_directions(direction: Option<Direction>) -> Vec<Vec2> {
+    let Some(direction) = direction else {
+        return vec![
+            Vec2::new(1.0, 0.0),
+            Vec2::new(-1.0, 0.0),
+            Vec2::new(0.0, 1.0),
+            Vec2::new(0.0, -1.0),
+        ];
+    };
+    let incoming = -direction.movement();
+    let side = Vec2::new(-incoming.y, incoming.x);
+    [
+        incoming,
+        (incoming + side * 0.72).normalize_or_zero(),
+        (incoming - side * 0.72).normalize_or_zero(),
+        side,
+        -side,
+    ]
+    .into_iter()
+    .collect()
 }
 
 fn spawn_3d_spawn_shimmer_effect(

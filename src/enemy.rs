@@ -242,7 +242,7 @@ pub(super) fn path_direction_to_targets(
     targets: &[GridPoint],
 ) -> Option<Direction> {
     let start = tank_grid_position(top_left)?;
-    if targets.iter().any(|target| *target == start) {
+    if targets.contains(&start) {
         return None;
     }
     let target_set: HashSet<(usize, usize)> =
@@ -439,6 +439,7 @@ pub(super) fn enemy_random_fire_rate_for_profile(
         EnemyKind::Basic | EnemyKind::Armor => 4,
     };
     match difficulty_profile {
+        EnemyDifficultyProfile::Easy => normal + 2,
         EnemyDifficultyProfile::Normal => normal,
         EnemyDifficultyProfile::Hard => normal.saturating_sub(1).max(1),
     }
@@ -470,13 +471,14 @@ pub(super) fn enemy_roam_rate_for_profile(
     kind: EnemyKind,
     difficulty_profile: EnemyDifficultyProfile,
 ) -> u32 {
-    let normal = match kind {
+    let normal: u32 = match kind {
         EnemyKind::Fast => 2,
         EnemyKind::Power => 3,
         EnemyKind::Basic => 4,
         EnemyKind::Armor => 6,
     };
     match difficulty_profile {
+        EnemyDifficultyProfile::Easy => normal.saturating_sub(1).max(2_u32),
         EnemyDifficultyProfile::Normal => normal,
         EnemyDifficultyProfile::Hard => normal + 2,
     }
@@ -544,6 +546,12 @@ pub(super) fn enemy_spawn_interval_for_profile(
 
 pub(super) fn enemy_ai_tuning(profile: EnemyDifficultyProfile) -> EnemyAiTuning {
     match profile {
+        EnemyDifficultyProfile::Easy => EnemyAiTuning {
+            speed_multiplier: 0.78,
+            turn_interval_multiplier: 1.25,
+            fire_interval_multiplier: 1.4,
+            spawn_interval_multiplier: 1.3,
+        },
         EnemyDifficultyProfile::Normal => EnemyAiTuning {
             speed_multiplier: 1.0,
             turn_interval_multiplier: 1.0,

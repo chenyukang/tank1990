@@ -112,10 +112,11 @@ Core rules:
 - The main menu exposes `VIEW 2D/3D` and `ASSIST ON/OFF`.
 - `VIEW 3D` uses a third-person chase camera behind and above the selected player tank.
 - If tall terrain would sit between the followed tank and the chase camera, the camera may raise into a tactical view to keep the tank readable.
-- During gameplay, `V` toggles between 2D and 3D view without restarting the round.
+- During gameplay, `V` or `3` toggles between 2D and 3D view without restarting the round.
+- In 3D view, movement uses tank-style controls: `W/S` throttle forward/backward relative to the current facing, while `A/D` tap-turn left/right once per key press.
 - In two-player modes, the first 3D milestone uses one camera. `Tab` switches the followed tank between P1 and P2.
 - Split-screen 3D is deferred until the single-camera version is proven playable.
-- The first 3D milestone uses simple low-poly block geometry for terrain, tanks, barrels, bullets, bases, and power-ups.
+- The first 3D milestone uses simple low-poly block geometry for terrain, tanks, tracks, turrets, barrels, bullets, bases, and power-ups, with a subtle ground grid to preserve tile readability.
 - Player tank Star upgrade levels should remain visible in 3D with the same upgrade color progression used by the 2D sprites.
 - Power-up kinds should remain distinguishable in 3D and on the 3D minimap.
 - P1/P2 identity should remain visible in 3D with a lightweight player marker, even when Star upgrade colors override the tank body color.
@@ -813,7 +814,7 @@ Later AI improvements:
 Current implementation note:
 
 - Enemy types already differ in speed, health, score, bullet speed, fire cadence, movement turn cadence, and roam tendency. `Fast` enemies turn and roam more often, `Power` enemies fire and re-aim more aggressively, and `Armor` enemies move more deliberately while pressing objectives.
-- Campaign levels may set `enemy_ai_strategy: Classic` or `enemy_ai_strategy: PathToObjective`, plus `difficulty_profile: Normal` or `difficulty_profile: Hard`. The mode select screen also exposes `AI` and `DIFF` rows; `AUTO` uses the level file values, while explicit menu choices override them for the current run. The default remains classic old-school behavior; `Hard` tightens spawn, turn, fire, and speed timing, while `PathToObjective` adds grid-based routing toward players or the base when not already lined up to shoot.
+- Campaign levels may set `enemy_ai_strategy: Classic` or `enemy_ai_strategy: PathToObjective`, plus `difficulty_profile: Easy`, `difficulty_profile: Normal`, or `difficulty_profile: Hard`. The mode select screen also exposes `AI` and `DIFF` rows; `AUTO` uses the level file values, while explicit menu choices override them for the current run. The menu defaults to `DIFF EASY` for a more approachable first run. `Easy` slows enemy movement, spawning, turning, and firing; `Hard` tightens spawn, turn, fire, and speed timing, while `PathToObjective` adds grid-based routing toward players or the base when not already lined up to shoot.
 
 ## 14. Power-Ups
 

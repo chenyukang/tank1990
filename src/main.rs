@@ -203,17 +203,22 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(Startup, setup_3d_view.after(setup))
         .add_systems(
+            Update,
+            (
+                handle_fullscreen_toggle,
+                handle_shared_controls,
+                update_player_control,
+                handle_view_hotkeys,
+            )
+                .chain(),
+        )
+        .add_systems(
             FixedUpdate,
             spawn_versus_powerups
                 .after(cancel_colliding_bullets)
                 .before(pickup_powerups),
         )
-        .add_systems(
-            FixedUpdate,
-            advance_after_stage_intro
-                .after(update_player_control)
-                .before(spawn_enemies),
-        )
+        .add_systems(FixedUpdate, advance_after_stage_intro.before(spawn_enemies))
         .add_systems(
             FixedUpdate,
             update_versus_frozen_player_visuals
@@ -245,13 +250,7 @@ fn main() {
         .add_systems(FixedUpdate, tick_destroyed_tanks.after(animate_sprites))
         .add_systems(
             FixedUpdate,
-            handle_fullscreen_toggle.before(handle_shared_controls),
-        )
-        .add_systems(
-            FixedUpdate,
             (
-                handle_shared_controls,
-                update_player_control,
                 spawn_enemies,
                 move_player_tank,
                 move_enemy_tanks,
@@ -276,7 +275,6 @@ fn main() {
         .add_systems(
             FixedUpdate,
             (
-                handle_view_hotkeys,
                 sync_view_cameras,
                 sync_3d_static_scene,
                 sync_3d_dynamic_scene,
@@ -777,6 +775,7 @@ enum ModeSelectAiStrategy {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ModeSelectDifficultyProfile {
+    Easy,
     Auto,
     Normal,
     Hard,
@@ -807,7 +806,7 @@ impl Default for ModeSelect {
             view_assist: true,
             view_target: PlayerId::One,
             ai_strategy: ModeSelectAiStrategy::Auto,
-            difficulty_profile: ModeSelectDifficultyProfile::Auto,
+            difficulty_profile: ModeSelectDifficultyProfile::Easy,
             audio_mode: AudioMode::Bgm,
             sound_enabled: true,
             window_scale: DEFAULT_WINDOW_SCALE,
@@ -1387,6 +1386,33 @@ impl Direction {
             Self::Right => Vec2::new(1.0, 0.0),
         }
     }
+
+    fn opposite(self) -> Self {
+        match self {
+            Self::Up => Self::Down,
+            Self::Down => Self::Up,
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
+
+    fn turn_left(self) -> Self {
+        match self {
+            Self::Up => Self::Left,
+            Self::Down => Self::Right,
+            Self::Left => Self::Down,
+            Self::Right => Self::Up,
+        }
+    }
+
+    fn turn_right(self) -> Self {
+        match self {
+            Self::Up => Self::Right,
+            Self::Down => Self::Left,
+            Self::Left => Self::Up,
+            Self::Right => Self::Down,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -1469,6 +1495,7 @@ enum EnemyAiStrategy {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 enum EnemyDifficultyProfile {
+    Easy,
     #[default]
     Normal,
     Hard,
@@ -3532,6 +3559,7 @@ fn update_player_control(keys: Res<ButtonInput<KeyCode>>, mut control: ResMut<Pl
         p2_last_direction,
         p1_direction_priority,
         p2_direction_priority,
+        ..
     } = control.as_mut();
 
     update_direction_priority(
@@ -3548,13 +3576,20 @@ fn update_player_control(keys: Res<ButtonInput<KeyCode>>, mut control: ResMut<Pl
     );
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PlayerTankMotion {
+    facing: Direction,
+    movement: Option<Direction>,
+}
+
 fn move_player_tank(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
-    control: Res<PlayerControl>,
+    mut control: ResMut<PlayerControl>,
     assets: Res<SpriteAssets>,
     grid: Res<TileGrid>,
     game_status: Res<GameStatus>,
+    mode_select: Option<Res<ModeSelect>>,
     versus_freeze: Res<VersusPlayerFreeze>,
     mut tank_queries: ParamSet<(
         Query<&Tank>,
@@ -3575,6 +3610,9 @@ fn move_player_tank(
     }
 
     let occupied: Vec<Vec2> = tank_queries.p0().iter().map(|tank| tank.top_left).collect();
+    let use_3d_controls = mode_select
+        .as_deref()
+        .is_some_and(|mode_select| view_3d_should_render(mode_select, &game_status));
 
     for (mut tank, mut sprite, mut transform, mut tank_sprite, player) in &mut tank_queries.p1() {
         if versus_freeze.is_player_frozen(player.id) {
@@ -3589,9 +3627,13 @@ fn move_player_tank(
             continue;
         }
 
-        let Some(direction) =
-            held_direction(&keys, player_last_direction(&control, player.id), player.id)
-        else {
+        let Some(motion) = player_tank_motion(
+            &keys,
+            control.as_mut(),
+            player.id,
+            tank.facing,
+            use_3d_controls,
+        ) else {
             update_tank_sprite(
                 &mut sprite,
                 &mut tank_sprite,
@@ -3603,21 +3645,23 @@ fn move_player_tank(
             continue;
         };
 
-        tank.facing = direction;
-
-        let mut next = tank.top_left;
-        snap_to_lane(&mut next, direction);
-        next += direction.movement()
-            * tank_move_speed(tank.speed, &grid, tank.top_left)
-            * time.delta_secs();
-        next = round_vec2(next);
+        tank.facing = motion.facing;
 
         let mut moved = false;
-        if grid.can_tank_occupy(next) && tank_position_free(next, tank.top_left, &occupied) {
-            tank.top_left = next;
-            transform.translation =
-                board_object_center(next.x, next.y, Vec2::splat(TANK_SIZE), 6.0);
-            moved = true;
+        if let Some(direction) = motion.movement {
+            let mut next = tank.top_left;
+            snap_to_lane(&mut next, direction);
+            next += direction.movement()
+                * tank_move_speed(tank.speed, &grid, tank.top_left)
+                * time.delta_secs();
+            next = round_vec2(next);
+
+            if grid.can_tank_occupy(next) && tank_position_free(next, tank.top_left, &occupied) {
+                tank.top_left = next;
+                transform.translation =
+                    board_object_center(next.x, next.y, Vec2::splat(TANK_SIZE), 6.0);
+                moved = true;
+            }
         }
         update_tank_sprite(
             &mut sprite,
@@ -5806,6 +5850,7 @@ fn selected_enemy_difficulty_profile(
     level: &LevelDefinition,
 ) -> EnemyDifficultyProfile {
     match mode_select.difficulty_profile {
+        ModeSelectDifficultyProfile::Easy => EnemyDifficultyProfile::Easy,
         ModeSelectDifficultyProfile::Auto => level.difficulty_profile,
         ModeSelectDifficultyProfile::Normal => EnemyDifficultyProfile::Normal,
         ModeSelectDifficultyProfile::Hard => EnemyDifficultyProfile::Hard,
@@ -5832,7 +5877,8 @@ fn next_mode_select_difficulty_profile(
     profile: ModeSelectDifficultyProfile,
 ) -> ModeSelectDifficultyProfile {
     match profile {
-        ModeSelectDifficultyProfile::Auto => ModeSelectDifficultyProfile::Normal,
+        ModeSelectDifficultyProfile::Easy => ModeSelectDifficultyProfile::Normal,
+        ModeSelectDifficultyProfile::Auto => ModeSelectDifficultyProfile::Easy,
         ModeSelectDifficultyProfile::Normal => ModeSelectDifficultyProfile::Hard,
         ModeSelectDifficultyProfile::Hard => ModeSelectDifficultyProfile::Auto,
     }
@@ -5842,8 +5888,9 @@ fn previous_mode_select_difficulty_profile(
     profile: ModeSelectDifficultyProfile,
 ) -> ModeSelectDifficultyProfile {
     match profile {
+        ModeSelectDifficultyProfile::Easy => ModeSelectDifficultyProfile::Auto,
         ModeSelectDifficultyProfile::Auto => ModeSelectDifficultyProfile::Hard,
-        ModeSelectDifficultyProfile::Normal => ModeSelectDifficultyProfile::Auto,
+        ModeSelectDifficultyProfile::Normal => ModeSelectDifficultyProfile::Easy,
         ModeSelectDifficultyProfile::Hard => ModeSelectDifficultyProfile::Normal,
     }
 }
@@ -5858,6 +5905,7 @@ fn mode_select_ai_strategy_label(strategy: ModeSelectAiStrategy) -> &'static str
 
 fn mode_select_difficulty_profile_label(profile: ModeSelectDifficultyProfile) -> &'static str {
     match profile {
+        ModeSelectDifficultyProfile::Easy => "EASY",
         ModeSelectDifficultyProfile::Auto => "AUTO",
         ModeSelectDifficultyProfile::Normal => "NORMAL",
         ModeSelectDifficultyProfile::Hard => "HARD",
@@ -6058,6 +6106,97 @@ fn player_last_direction(control: &PlayerControl, player: PlayerId) -> Direction
     match player {
         PlayerId::One => control.p1_last_direction,
         PlayerId::Two => control.p2_last_direction,
+    }
+}
+
+fn player_tank_motion(
+    keys: &ButtonInput<KeyCode>,
+    control: &mut PlayerControl,
+    player: PlayerId,
+    current_facing: Direction,
+    use_3d_controls: bool,
+) -> Option<PlayerTankMotion> {
+    if use_3d_controls {
+        return player_3d_tank_motion(keys, control, player, current_facing);
+    }
+
+    held_direction(keys, player_last_direction(control, player), player).map(|direction| {
+        PlayerTankMotion {
+            facing: direction,
+            movement: Some(direction),
+        }
+    })
+}
+
+fn player_3d_tank_motion(
+    keys: &ButtonInput<KeyCode>,
+    control: &mut PlayerControl,
+    player: PlayerId,
+    current_facing: Direction,
+) -> Option<PlayerTankMotion> {
+    let last_direction = player_last_direction(control, player);
+    let turn = just_pressed_3d_turn_input(keys, last_direction, player);
+    let facing = turn
+        .map(|turn| apply_3d_turn(current_facing, turn))
+        .unwrap_or(current_facing);
+
+    let movement = held_3d_throttle_direction(keys, last_direction, player, facing);
+    if turn.is_none() && movement.is_none() {
+        return None;
+    }
+
+    Some(PlayerTankMotion { facing, movement })
+}
+
+fn apply_3d_turn(facing: Direction, turn: Direction) -> Direction {
+    match turn {
+        Direction::Left => facing.turn_left(),
+        Direction::Right => facing.turn_right(),
+        Direction::Up | Direction::Down => facing,
+    }
+}
+
+fn just_pressed_3d_turn_input(
+    keys: &ButtonInput<KeyCode>,
+    last_direction: Direction,
+    player: PlayerId,
+) -> Option<Direction> {
+    let left = direction_just_pressed(keys, Direction::Left, player);
+    let right = direction_just_pressed(keys, Direction::Right, player);
+    match (left, right) {
+        (true, false) => Some(Direction::Left),
+        (false, true) => Some(Direction::Right),
+        (true, true) if matches!(last_direction, Direction::Left | Direction::Right) => {
+            Some(last_direction)
+        }
+        _ => None,
+    }
+}
+
+fn direction_just_pressed(
+    keys: &ButtonInput<KeyCode>,
+    direction: Direction,
+    player: PlayerId,
+) -> bool {
+    direction_key_pairs(player)
+        .into_iter()
+        .any(|(key, candidate)| candidate == direction && keys.just_pressed(key))
+}
+
+fn held_3d_throttle_direction(
+    keys: &ButtonInput<KeyCode>,
+    last_direction: Direction,
+    player: PlayerId,
+    facing: Direction,
+) -> Option<Direction> {
+    let forward = direction_is_held(keys, Direction::Up, player);
+    let backward = direction_is_held(keys, Direction::Down, player);
+    match (forward, backward) {
+        (true, false) => Some(facing),
+        (false, true) => Some(facing.opposite()),
+        (true, true) if last_direction == Direction::Up => Some(facing),
+        (true, true) if last_direction == Direction::Down => Some(facing.opposite()),
+        _ => None,
     }
 }
 
@@ -11368,6 +11507,18 @@ mod tests {
             app.world().resource::<ModeSelect>().view_target,
             PlayerId::Two
         );
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::Tab);
+            keys.clear();
+            keys.press(KeyCode::Digit3);
+        }
+        app.update();
+        assert_eq!(
+            app.world().resource::<ModeSelect>().view_mode,
+            TankViewMode::TwoD
+        );
     }
 
     #[test]
@@ -11593,6 +11744,23 @@ mod tests {
     }
 
     #[test]
+    fn view_3d_minimap_center_anchors_to_window_top_right() {
+        let windowed_center =
+            view_3d_minimap_center(Vec2::new(VIRTUAL_WIDTH * 3.0, VIRTUAL_HEIGHT * 3.0), 3.0);
+        assert_eq!(windowed_center, Vec2::new(249.0, 225.0));
+
+        let fullscreen_size = Vec2::new(2048.0, 1280.0);
+        let fullscreen_center = view_3d_minimap_center(fullscreen_size, 4.0);
+        let panel_half = ((VIEW_3D_MINIMAP_SIZE as f32 + 6.0) * 4.0) / 2.0;
+
+        assert_eq!(
+            fullscreen_center + Vec2::splat(panel_half),
+            fullscreen_size / 2.0 - Vec2::splat(12.0)
+        );
+        assert!(fullscreen_center.x > windowed_center.x);
+    }
+
+    #[test]
     fn view_3d_minimap_pixels_encode_tiles_units_and_target_player() {
         let mut grid = TileGrid::empty();
         grid.set(1, 2, TileKind::Brick);
@@ -11665,7 +11833,7 @@ mod tests {
         let cell = VIEW_3D_MINIMAP_CELL_PIXELS;
 
         assert_eq!(
-            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 1 * cell + 1, 2 * cell + 1),
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, cell + 1, 2 * cell + 1),
             [152, 64, 36, 255]
         );
         assert_eq!(
@@ -11677,11 +11845,11 @@ mod tests {
             [28, 96, 184, 245]
         );
         assert_eq!(
-            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 1 * cell, cell),
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, cell, cell),
             [255, 255, 255, 255]
         );
         assert_eq!(
-            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 1 * cell + 1, cell + 1),
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, cell + 1, cell + 1),
             [184, 248, 184, 255]
         );
         assert_eq!(
@@ -11738,12 +11906,116 @@ mod tests {
         let mut grid = TileGrid::empty();
 
         let clear = chase_camera_transform(&tank, &grid);
-        assert!((clear.translation.y - 25.0).abs() < 0.01);
+        assert!((clear.translation.y - 23.7).abs() < 0.01);
 
         grid.set(13, 15, TileKind::Steel);
         let obstructed = chase_camera_transform(&tank, &grid);
         assert!(obstructed.translation.y > clear.translation.y + 10.0);
         assert!(obstructed.translation.z < clear.translation.z);
+    }
+
+    #[test]
+    fn view_3d_camera_state_smooths_direction_reversals() {
+        let mut state = View3dCameraState::default();
+        let initial = state.smoothed_forward(PlayerId::One, Direction::Left.movement(), 1.0 / 60.0);
+        assert!((initial - Direction::Left.movement()).length() < 0.001);
+
+        let reversed =
+            state.smoothed_forward(PlayerId::One, Direction::Right.movement(), 1.0 / 60.0);
+
+        assert!((reversed - Direction::Right.movement()).length() > 0.5);
+        assert!(reversed.dot(Direction::Left.movement()) > 0.9);
+    }
+
+    #[test]
+    fn view_3d_camera_height_mode_waits_for_turn_to_settle_before_raising() {
+        let calls = std::cell::Cell::new(0);
+        let mut state = View3dCameraState::default();
+        let initial = state.smoothed_forward(PlayerId::One, Direction::Left.movement(), 1.0 / 60.0);
+        assert_eq!(
+            state.stable_height_mode(initial, Direction::Left.movement(), || {
+                calls.set(calls.get() + 1);
+                View3dCameraHeightMode::Chase
+            },),
+            View3dCameraHeightMode::Chase
+        );
+        assert_eq!(calls.get(), 1);
+
+        let turning =
+            state.smoothed_forward(PlayerId::One, Direction::Right.movement(), 1.0 / 60.0);
+        assert_eq!(
+            state.stable_height_mode(turning, Direction::Right.movement(), || {
+                calls.set(calls.get() + 1);
+                View3dCameraHeightMode::Tactical
+            },),
+            View3dCameraHeightMode::Chase
+        );
+        assert_eq!(calls.get(), 1);
+
+        let mut settled = turning;
+        for _ in 0..12 {
+            settled =
+                state.smoothed_forward(PlayerId::One, Direction::Right.movement(), 1.0 / 60.0);
+        }
+        assert_eq!(
+            state.stable_height_mode(settled, Direction::Right.movement(), || {
+                calls.set(calls.get() + 1);
+                View3dCameraHeightMode::Tactical
+            },),
+            View3dCameraHeightMode::Tactical
+        );
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn view_3d_camera_height_mode_stays_tactical_while_turning_down() {
+        let calls = std::cell::Cell::new(0);
+        let mut state = View3dCameraState::default();
+        let initial = state.smoothed_forward(PlayerId::One, Direction::Left.movement(), 1.0 / 60.0);
+        assert_eq!(
+            state.stable_height_mode(initial, Direction::Left.movement(), || {
+                calls.set(calls.get() + 1);
+                View3dCameraHeightMode::Tactical
+            },),
+            View3dCameraHeightMode::Tactical
+        );
+        assert_eq!(calls.get(), 1);
+
+        let turning =
+            state.smoothed_forward(PlayerId::One, Direction::Right.movement(), 1.0 / 60.0);
+        assert_eq!(
+            state.stable_height_mode(turning, Direction::Right.movement(), || {
+                calls.set(calls.get() + 1);
+                View3dCameraHeightMode::Chase
+            },),
+            View3dCameraHeightMode::Tactical
+        );
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn view_3d_camera_state_resets_when_followed_player_changes() {
+        let mut state = View3dCameraState::default();
+        state.smoothed_forward(PlayerId::One, Direction::Left.movement(), 1.0 / 60.0);
+
+        let switched =
+            state.smoothed_forward(PlayerId::Two, Direction::Right.movement(), 1.0 / 60.0);
+
+        assert!((switched - Direction::Right.movement()).length() < 0.001);
+    }
+
+    #[test]
+    fn view_3d_camera_state_smooths_transform_motion() {
+        let mut state = View3dCameraState::default();
+        let first = Transform::from_xyz(0.0, 20.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y);
+        let second = Transform::from_xyz(100.0, 20.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y);
+
+        let initial = state.smoothed_transform(PlayerId::One, first, 1.0 / 60.0);
+        let smoothed = state.smoothed_transform(PlayerId::One, second, 1.0 / 60.0);
+
+        assert!((initial.translation - first.translation).length() < 0.001);
+        assert!(smoothed.translation.x > first.translation.x);
+        assert!(smoothed.translation.x < second.translation.x);
     }
 
     #[test]
@@ -12573,7 +12845,11 @@ mod tests {
         );
 
         assert_eq!(
-            next_mode_select_difficulty_profile(ModeSelectDifficultyProfile::Auto),
+            ModeSelect::default().difficulty_profile,
+            ModeSelectDifficultyProfile::Easy
+        );
+        assert_eq!(
+            next_mode_select_difficulty_profile(ModeSelectDifficultyProfile::Easy),
             ModeSelectDifficultyProfile::Normal
         );
         assert_eq!(
@@ -12585,12 +12861,28 @@ mod tests {
             ModeSelectDifficultyProfile::Auto
         );
         assert_eq!(
+            next_mode_select_difficulty_profile(ModeSelectDifficultyProfile::Auto),
+            ModeSelectDifficultyProfile::Easy
+        );
+        assert_eq!(
+            previous_mode_select_difficulty_profile(ModeSelectDifficultyProfile::Easy),
+            ModeSelectDifficultyProfile::Auto
+        );
+        assert_eq!(
             previous_mode_select_difficulty_profile(ModeSelectDifficultyProfile::Auto),
             ModeSelectDifficultyProfile::Hard
         );
         assert_eq!(
+            previous_mode_select_difficulty_profile(ModeSelectDifficultyProfile::Normal),
+            ModeSelectDifficultyProfile::Easy
+        );
+        assert_eq!(
             previous_mode_select_difficulty_profile(ModeSelectDifficultyProfile::Hard),
             ModeSelectDifficultyProfile::Normal
+        );
+        assert_eq!(
+            mode_select_difficulty_profile_label(ModeSelectDifficultyProfile::Easy),
+            "EASY"
         );
         assert_eq!(
             mode_select_difficulty_profile_label(ModeSelectDifficultyProfile::Normal),
@@ -12606,7 +12898,10 @@ mod tests {
             1,
         );
         let level = parse_level(&level_contents).expect("level should parse");
-        let mode_select = ModeSelect::default();
+        let mode_select = ModeSelect {
+            difficulty_profile: ModeSelectDifficultyProfile::Auto,
+            ..ModeSelect::default()
+        };
         assert_eq!(
             selected_enemy_ai_strategy(&mode_select, &level),
             EnemyAiStrategy::PathToObjective
@@ -12614,6 +12909,12 @@ mod tests {
         assert_eq!(
             selected_enemy_difficulty_profile(&mode_select, &level),
             EnemyDifficultyProfile::Hard
+        );
+
+        let mode_select = ModeSelect::default();
+        assert_eq!(
+            selected_enemy_difficulty_profile(&mode_select, &level),
+            EnemyDifficultyProfile::Easy
         );
 
         let mode_select = ModeSelect {
@@ -12676,7 +12977,7 @@ mod tests {
 
         assert_eq!(
             app.world().resource::<ModeSelect>().difficulty_profile,
-            ModeSelectDifficultyProfile::Hard
+            ModeSelectDifficultyProfile::Auto
         );
         let mut cursors = app.world_mut().query::<&ModeSelectCursor>();
         assert_eq!(cursors.iter(app.world()).count(), 1);
@@ -12919,6 +13220,7 @@ mod tests {
             "DUEL",
             "AI",
             "DIFF",
+            "EASY",
             "AUTO",
             "PATH",
             "NORMAL",
@@ -14188,6 +14490,205 @@ mod tests {
             )
         );
         assert_eq!(tank.top_left.y.rem_euclid(TILE_SIZE), 0.0);
+    }
+
+    #[test]
+    fn player_3d_w_moves_forward_in_current_facing() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(32.0, 32.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyW);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(TILE_SIZE / PLAYER_SPEED));
+
+        app.insert_resource(time);
+        app.insert_resource(keys);
+        app.insert_resource(PlayerControl::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(VersusPlayerFreeze::default());
+        spawn_movable_test_player(
+            app.world_mut(),
+            PlayerId::One,
+            tank_top_left,
+            Direction::Right,
+        );
+        app.add_systems(Update, move_player_tank);
+
+        app.update();
+
+        let mut players = app.world_mut().query::<&Tank>();
+        let tank = players.single(app.world()).unwrap();
+        assert_eq!(tank.top_left, tank_top_left + Vec2::new(TILE_SIZE, 0.0));
+        assert_eq!(tank.facing, Direction::Right);
+    }
+
+    #[test]
+    fn player_3d_a_rotates_left_without_world_left_motion() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(32.0, 32.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyA);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(TILE_SIZE / PLAYER_SPEED));
+
+        app.insert_resource(time);
+        app.insert_resource(keys);
+        app.insert_resource(PlayerControl::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(VersusPlayerFreeze::default());
+        spawn_movable_test_player(app.world_mut(), PlayerId::One, tank_top_left, Direction::Up);
+        app.add_systems(Update, move_player_tank);
+
+        app.update();
+
+        let mut players = app.world_mut().query::<&Tank>();
+        let tank = players.single(app.world()).unwrap();
+        assert_eq!(tank.top_left, tank_top_left);
+        assert_eq!(tank.facing, Direction::Left);
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear_just_pressed(KeyCode::KeyA);
+        app.update();
+
+        let tank = players.single(app.world()).unwrap();
+        assert_eq!(tank.top_left, tank_top_left);
+        assert_eq!(tank.facing, Direction::Left);
+    }
+
+    #[test]
+    fn player_3d_held_turn_does_not_repeat_without_new_key_press() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(32.0, 32.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyA);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(1.0 / 60.0));
+
+        app.insert_resource(time);
+        app.insert_resource(keys);
+        app.insert_resource(PlayerControl::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(VersusPlayerFreeze::default());
+        spawn_movable_test_player(app.world_mut(), PlayerId::One, tank_top_left, Direction::Up);
+        app.add_systems(Update, move_player_tank);
+
+        app.update();
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.clear_just_pressed(KeyCode::KeyA);
+        }
+        {
+            let mut time = app.world_mut().resource_mut::<Time>();
+            time.advance_by(Duration::from_secs_f32(1.0));
+        }
+        app.update();
+
+        let mut players = app.world_mut().query::<&Tank>();
+        let tank = players.single(app.world()).unwrap();
+        assert_eq!(tank.top_left, tank_top_left);
+        assert_eq!(tank.facing, Direction::Left);
+    }
+
+    #[test]
+    fn player_3d_turns_and_moves_forward_in_new_facing_on_same_frame() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(32.0, 32.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyW);
+        keys.press(KeyCode::KeyD);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(TILE_SIZE / PLAYER_SPEED));
+
+        app.insert_resource(time);
+        app.insert_resource(keys);
+        app.insert_resource(PlayerControl::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(VersusPlayerFreeze::default());
+        spawn_movable_test_player(app.world_mut(), PlayerId::One, tank_top_left, Direction::Up);
+        app.add_systems(Update, move_player_tank);
+
+        app.update();
+
+        let mut players = app.world_mut().query::<&Tank>();
+        let tank = players.single(app.world()).unwrap();
+        assert_eq!(tank.top_left, tank_top_left + Vec2::new(TILE_SIZE, 0.0));
+        assert_eq!(tank.facing, Direction::Right);
+    }
+
+    #[test]
+    fn player_3d_s_reverses_without_flipping_facing() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(32.0, 32.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyS);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(TILE_SIZE / PLAYER_SPEED));
+
+        app.insert_resource(time);
+        app.insert_resource(keys);
+        app.insert_resource(PlayerControl::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(VersusPlayerFreeze::default());
+        spawn_movable_test_player(
+            app.world_mut(),
+            PlayerId::One,
+            tank_top_left,
+            Direction::Right,
+        );
+        app.add_systems(Update, move_player_tank);
+
+        app.update();
+
+        let mut players = app.world_mut().query::<&Tank>();
+        let tank = players.single(app.world()).unwrap();
+        assert_eq!(tank.top_left, tank_top_left - Vec2::new(TILE_SIZE, 0.0));
+        assert_eq!(tank.facing, Direction::Right);
     }
 
     #[test]
@@ -16299,24 +16800,48 @@ mod tests {
         assert!(enemy_turn_interval(EnemyKind::Basic) < enemy_turn_interval(EnemyKind::Armor));
         assert_eq!(enemy_turn_interval(EnemyKind::Power), 1.0);
         assert!(
+            enemy_turn_interval_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Easy)
+                > enemy_turn_interval(EnemyKind::Basic)
+        );
+        assert!(
             enemy_turn_interval_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Hard)
                 < enemy_turn_interval(EnemyKind::Basic)
+        );
+        assert!(
+            enemy_fire_interval_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Easy)
+                > enemy_fire_interval(EnemyKind::Basic)
         );
         assert!(
             enemy_fire_interval_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Hard)
                 < enemy_fire_interval(EnemyKind::Basic)
         );
         assert!(
+            enemy_speed_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Easy)
+                < enemy_speed(EnemyKind::Basic)
+        );
+        assert!(
             enemy_speed_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Hard)
                 > enemy_speed(EnemyKind::Basic)
+        );
+        assert!(
+            enemy_spawn_interval_for_profile(1.0, EnemyDifficultyProfile::Easy)
+                > enemy_spawn_interval_for_profile(1.0, EnemyDifficultyProfile::Normal)
         );
 
         assert!(enemy_roam_rate(EnemyKind::Fast) < enemy_roam_rate(EnemyKind::Basic));
         assert!(enemy_roam_rate(EnemyKind::Basic) < enemy_roam_rate(EnemyKind::Armor));
         assert_eq!(enemy_roam_rate(EnemyKind::Power), 3);
         assert!(
+            enemy_roam_rate_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Easy)
+                < enemy_roam_rate(EnemyKind::Basic)
+        );
+        assert!(
             enemy_roam_rate_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Hard)
                 > enemy_roam_rate(EnemyKind::Basic)
+        );
+        assert!(
+            enemy_random_fire_rate_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Easy)
+                > enemy_random_fire_rate(EnemyKind::Basic)
         );
         assert!(
             enemy_random_fire_rate_for_profile(EnemyKind::Basic, EnemyDifficultyProfile::Hard)

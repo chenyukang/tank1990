@@ -703,6 +703,8 @@ struct PlayerControl {
     p2_last_direction: Direction,
     p1_direction_priority: Vec<Direction>,
     p2_direction_priority: Vec<Direction>,
+    p1_consumed_3d_turns: Vec<Direction>,
+    p2_consumed_3d_turns: Vec<Direction>,
 }
 
 impl Default for PlayerControl {
@@ -712,6 +714,8 @@ impl Default for PlayerControl {
             p2_last_direction: Direction::Down,
             p1_direction_priority: Vec::new(),
             p2_direction_priority: Vec::new(),
+            p1_consumed_3d_turns: Vec::new(),
+            p2_consumed_3d_turns: Vec::new(),
         }
     }
 }
@@ -1610,6 +1614,11 @@ struct Bullet {
     speed: f32,
     breaks_steel: bool,
     resolved: bool,
+}
+
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+struct BulletImpactDirection {
+    direction: Direction,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -3559,6 +3568,8 @@ fn update_player_control(keys: Res<ButtonInput<KeyCode>>, mut control: ResMut<Pl
         p2_last_direction,
         p1_direction_priority,
         p2_direction_priority,
+        p1_consumed_3d_turns,
+        p2_consumed_3d_turns,
         ..
     } = control.as_mut();
 
@@ -3574,6 +3585,8 @@ fn update_player_control(keys: Res<ButtonInput<KeyCode>>, mut control: ResMut<Pl
         p2_direction_priority,
         p2_last_direction,
     );
+    prune_3d_turn_consumptions(&keys, PlayerId::One, p1_consumed_3d_turns);
+    prune_3d_turn_consumptions(&keys, PlayerId::Two, p2_consumed_3d_turns);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -4114,7 +4127,12 @@ fn move_bullets(
                     }
 
                     if spawn_protection.is_some() {
-                        spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
+                        spawn_directed_bullet_impact_effect(
+                            &mut commands,
+                            &assets,
+                            impact_top_left,
+                            facing,
+                        );
                         resolve_bullet(&mut commands, entity, &mut bullet);
                         play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                         hit_enemy = true;
@@ -4144,7 +4162,12 @@ fn move_bullets(
                             );
                         }
                     } else {
-                        spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
+                        spawn_directed_bullet_impact_effect(
+                            &mut commands,
+                            &assets,
+                            impact_top_left,
+                            facing,
+                        );
                     }
                     play_sound(&mut commands, &sounds, hit_sound);
                     resolve_bullet(&mut commands, entity, &mut bullet);
@@ -4204,7 +4227,12 @@ fn move_bullets(
                         *game_mode,
                     );
                 } else {
-                    spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
+                    spawn_directed_bullet_impact_effect(
+                        &mut commands,
+                        &assets,
+                        impact_top_left,
+                        facing,
+                    );
                     play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                 }
                 resolve_bullet(&mut commands, entity, &mut bullet);
@@ -4239,7 +4267,12 @@ fn move_bullets(
                 }
 
                 if shield.is_some() {
-                    spawn_bullet_impact_effect(&mut commands, &assets, impact_top_left);
+                    spawn_directed_bullet_impact_effect(
+                        &mut commands,
+                        &assets,
+                        impact_top_left,
+                        facing,
+                    );
                     resolve_bullet(&mut commands, entity, &mut bullet);
                     play_sound(&mut commands, &sounds, SoundKind::SteelHit);
                     hit_player = true;
@@ -4274,7 +4307,12 @@ fn move_bullets(
         }
 
         if let Some(tile_hit) = tile_hit {
-            spawn_bullet_impact_effect(&mut commands, &assets, tile_hit.impact_top_left);
+            spawn_directed_bullet_impact_effect(
+                &mut commands,
+                &assets,
+                tile_hit.impact_top_left,
+                facing,
+            );
             if bullet_destroys_tile(tile_hit.tile, bullet.breaks_steel) {
                 grid.set(tile_hit.x, tile_hit.y, TileKind::Empty);
                 play_sound(
@@ -6141,7 +6179,9 @@ fn player_3d_tank_motion(
     current_facing: Direction,
 ) -> Option<PlayerTankMotion> {
     let last_direction = player_last_direction(control, player);
-    let turn = just_pressed_3d_turn_input(keys, last_direction, player);
+    let consumed_turns = player_consumed_3d_turns(control, player);
+    prune_3d_turn_consumptions(keys, player, consumed_turns);
+    let turn = just_pressed_3d_turn_input(keys, last_direction, player, consumed_turns);
     let facing = turn
         .map(|turn| apply_3d_turn(current_facing, turn))
         .unwrap_or(current_facing);
@@ -6166,17 +6206,24 @@ fn just_pressed_3d_turn_input(
     keys: &ButtonInput<KeyCode>,
     last_direction: Direction,
     player: PlayerId,
+    consumed_turns: &mut Vec<Direction>,
 ) -> Option<Direction> {
-    let left = direction_just_pressed(keys, Direction::Left, player);
-    let right = direction_just_pressed(keys, Direction::Right, player);
-    match (left, right) {
+    let left = direction_just_pressed(keys, Direction::Left, player)
+        && !consumed_turns.contains(&Direction::Left);
+    let right = direction_just_pressed(keys, Direction::Right, player)
+        && !consumed_turns.contains(&Direction::Right);
+    let turn = match (left, right) {
         (true, false) => Some(Direction::Left),
         (false, true) => Some(Direction::Right),
         (true, true) if matches!(last_direction, Direction::Left | Direction::Right) => {
             Some(last_direction)
         }
         _ => None,
+    };
+    if let Some(turn) = turn {
+        record_3d_turn_consumption(consumed_turns, turn);
     }
+    turn
 }
 
 fn direction_just_pressed(
@@ -6224,6 +6271,26 @@ fn update_direction_priority(
     if let Some(direction) = preferred_direction(priority) {
         *last_direction = direction;
     }
+}
+
+fn player_consumed_3d_turns(control: &mut PlayerControl, player: PlayerId) -> &mut Vec<Direction> {
+    match player {
+        PlayerId::One => &mut control.p1_consumed_3d_turns,
+        PlayerId::Two => &mut control.p2_consumed_3d_turns,
+    }
+}
+
+fn record_3d_turn_consumption(consumed_turns: &mut Vec<Direction>, direction: Direction) {
+    consumed_turns.retain(|consumed| *consumed != direction);
+    consumed_turns.push(direction);
+}
+
+fn prune_3d_turn_consumptions(
+    keys: &ButtonInput<KeyCode>,
+    player: PlayerId,
+    consumed_turns: &mut Vec<Direction>,
+) {
+    consumed_turns.retain(|direction| direction_is_held(keys, *direction, player));
 }
 
 fn direction_key_pairs(player: PlayerId) -> [(KeyCode, Direction); 4] {
@@ -6335,8 +6402,26 @@ fn spawn_bullet_impact_effect(
     assets: &SpriteAssets,
     bullet_top_left: Vec2,
 ) {
+    spawn_bullet_impact_effect_with_direction(commands, assets, bullet_top_left, None);
+}
+
+fn spawn_directed_bullet_impact_effect(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    bullet_top_left: Vec2,
+    direction: Direction,
+) {
+    spawn_bullet_impact_effect_with_direction(commands, assets, bullet_top_left, Some(direction));
+}
+
+fn spawn_bullet_impact_effect_with_direction(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    bullet_top_left: Vec2,
+    direction: Option<Direction>,
+) {
     let frames = assets.manifest.bullet_impact_frames();
-    commands.spawn((
+    let mut entity = commands.spawn((
         Sprite::from_atlas_image(
             assets.effect_image.clone(),
             TextureAtlas {
@@ -6359,6 +6444,9 @@ fn spawn_bullet_impact_effect(
         },
         GameEntity,
     ));
+    if let Some(direction) = direction {
+        entity.insert(BulletImpactDirection { direction });
+    }
 }
 
 fn spawn_explosion(commands: &mut Commands, assets: &SpriteAssets, top_left: Vec2) {
@@ -11826,6 +11914,121 @@ mod tests {
     }
 
     #[test]
+    fn view_3d_enemy_direction_indicator_uses_target_facing() {
+        let target = Vec2::new(96.0, 96.0);
+
+        assert_eq!(
+            view_3d_enemy_direction_indicator(target, Direction::Up, Vec2::new(96.0, 64.0))
+                .map(|indicator| indicator.direction),
+            Some(View3dEnemyDirection::Front)
+        );
+        assert_eq!(
+            view_3d_enemy_direction_indicator(target, Direction::Up, Vec2::new(96.0, 128.0))
+                .map(|indicator| indicator.direction),
+            Some(View3dEnemyDirection::Back)
+        );
+        assert_eq!(
+            view_3d_enemy_direction_indicator(target, Direction::Up, Vec2::new(128.0, 96.0))
+                .map(|indicator| indicator.direction),
+            Some(View3dEnemyDirection::Right)
+        );
+        assert_eq!(
+            view_3d_enemy_direction_indicator(target, Direction::Up, Vec2::new(64.0, 96.0))
+                .map(|indicator| indicator.direction),
+            Some(View3dEnemyDirection::Left)
+        );
+        assert_eq!(
+            view_3d_enemy_direction_indicator(target, Direction::Right, Vec2::new(96.0, 128.0))
+                .map(|indicator| indicator.direction),
+            Some(View3dEnemyDirection::Right)
+        );
+    }
+
+    #[test]
+    fn view_3d_enemy_direction_indicators_track_nearest_threat_per_direction() {
+        let target = Tank {
+            top_left: Vec2::new(96.0, 96.0),
+            facing: Direction::Up,
+            speed: PLAYER_SPEED,
+        };
+        let player = Player { id: PlayerId::One };
+        let p2_tank = Tank {
+            top_left: Vec2::new(96.0, 128.0),
+            facing: Direction::Up,
+            speed: PLAYER_SPEED,
+        };
+        let player_two = Player { id: PlayerId::Two };
+        let far_enemy_tank = Tank {
+            top_left: Vec2::new(96.0, 32.0),
+            facing: Direction::Down,
+            speed: enemy_speed(EnemyKind::Basic),
+        };
+        let near_enemy_tank = Tank {
+            top_left: Vec2::new(96.0, 72.0),
+            facing: Direction::Down,
+            speed: enemy_speed(EnemyKind::Fast),
+        };
+        let right_enemy_tank = Tank {
+            top_left: Vec2::new(128.0, 96.0),
+            facing: Direction::Left,
+            speed: enemy_speed(EnemyKind::Power),
+        };
+        let far_enemy = EnemyTank {
+            kind: EnemyKind::Basic,
+            carried_powerup: None,
+        };
+        let near_enemy = EnemyTank {
+            kind: EnemyKind::Fast,
+            carried_powerup: None,
+        };
+        let right_enemy = EnemyTank {
+            kind: EnemyKind::Power,
+            carried_powerup: None,
+        };
+
+        let campaign = view_3d_enemy_direction_indicators(
+            GameMode::Campaign,
+            [
+                (&target, Some(&player), None),
+                (&p2_tank, Some(&player_two), None),
+                (&far_enemy_tank, None, Some(&far_enemy)),
+                (&near_enemy_tank, None, Some(&near_enemy)),
+                (&right_enemy_tank, None, Some(&right_enemy)),
+            ],
+            PlayerId::One,
+        );
+        assert_eq!(
+            campaign,
+            vec![
+                View3dEnemyDirectionIndicator {
+                    direction: View3dEnemyDirection::Front,
+                    distance_tiles: 3
+                },
+                View3dEnemyDirectionIndicator {
+                    direction: View3dEnemyDirection::Right,
+                    distance_tiles: 4
+                },
+            ]
+        );
+
+        let versus = view_3d_enemy_direction_indicators(
+            GameMode::VersusDeathmatch,
+            [
+                (&target, Some(&player), None),
+                (&p2_tank, Some(&player_two), None),
+            ],
+            PlayerId::One,
+        );
+        assert_eq!(
+            versus,
+            vec![View3dEnemyDirectionIndicator {
+                direction: View3dEnemyDirection::Back,
+                distance_tiles: 4
+            }]
+        );
+    }
+
+    #[test]
     fn view_3d_minimap_image_uses_board_sized_pixel_grid() {
         let image = create_3d_minimap_image();
 
@@ -11850,9 +12053,13 @@ mod tests {
 
     #[test]
     fn view_3d_minimap_center_anchors_to_window_top_right() {
-        let windowed_center =
-            view_3d_minimap_center(Vec2::new(VIRTUAL_WIDTH * 3.0, VIRTUAL_HEIGHT * 3.0), 3.0);
-        assert_eq!(windowed_center, Vec2::new(249.0, 225.0));
+        let windowed_size = Vec2::new(VIRTUAL_WIDTH * 3.0, VIRTUAL_HEIGHT * 3.0);
+        let windowed_center = view_3d_minimap_center(windowed_size, 3.0);
+        let windowed_panel_half = ((VIEW_3D_MINIMAP_SIZE as f32 + 6.0) * 3.0) / 2.0;
+        assert_eq!(
+            windowed_center + Vec2::splat(windowed_panel_half),
+            windowed_size / 2.0 - Vec2::splat(9.0)
+        );
 
         let fullscreen_size = Vec2::new(2048.0, 1280.0);
         let fullscreen_center = view_3d_minimap_center(fullscreen_size, 4.0);
@@ -11863,6 +12070,21 @@ mod tests {
             fullscreen_size / 2.0 - Vec2::splat(12.0)
         );
         assert!(fullscreen_center.x > windowed_center.x);
+    }
+
+    #[test]
+    fn window_top_left_center_anchors_to_actual_window_edge() {
+        let window_size = Vec2::new(1254.0, 923.0);
+        let size = Vec2::new(20.0, 28.0);
+
+        assert_eq!(
+            window_top_left_center(Vec2::ZERO, size, window_size, 21.0),
+            Vec3::new(-617.0, 447.5, 21.0)
+        );
+        assert_eq!(
+            window_top_left_center(Vec2::new(12.0, 8.0), size, window_size, 21.0),
+            Vec3::new(-605.0, 439.5, 21.0)
+        );
     }
 
     #[test]
@@ -11942,6 +12164,10 @@ mod tests {
             [152, 64, 36, 255]
         );
         assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, cell, 2 * cell),
+            [8, 8, 8, 210]
+        );
+        assert_eq!(
             pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 3 * cell + 1, 4 * cell + 1),
             [144, 152, 160, 255]
         );
@@ -11958,6 +12184,10 @@ mod tests {
             [184, 248, 184, 255]
         );
         assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 9 * cell, 3 * cell),
+            [0, 0, 0, 255]
+        );
+        assert_eq!(
             pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 9 * cell + 1, 3 * cell + 1),
             [248, 88, 80, 255]
         );
@@ -11966,7 +12196,11 @@ mod tests {
             [248, 88, 72, 255]
         );
         assert_eq!(
-            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 12 * cell + 1, 0),
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 12 * cell, 0),
+            [0, 0, 0, 255]
+        );
+        assert_eq!(
+            pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 12 * cell + 1, 1),
             [184, 248, 184, 255]
         );
         assert_eq!(
@@ -12002,7 +12236,7 @@ mod tests {
     }
 
     #[test]
-    fn view_3d_chase_camera_raises_when_path_is_obstructed() {
+    fn view_3d_chase_camera_moves_closer_without_raising_when_path_is_obstructed() {
         let tank = Tank {
             top_left: Vec2::new(96.0, 96.0),
             facing: Direction::Up,
@@ -12015,8 +12249,29 @@ mod tests {
 
         grid.set(13, 15, TileKind::Steel);
         let obstructed = chase_camera_transform(&tank, &grid);
-        assert!(obstructed.translation.y > clear.translation.y + 10.0);
+        assert!((obstructed.translation.y - clear.translation.y).abs() < 0.01);
         assert!(obstructed.translation.z < clear.translation.z);
+    }
+
+    #[test]
+    fn view_3d_turning_between_camera_modes_keeps_eye_height_stable() {
+        let tank = Tank {
+            top_left: Vec2::new(96.0, 96.0),
+            facing: Direction::Up,
+            speed: PLAYER_SPEED,
+        };
+        let chase = chase_camera_transform_with_forward_and_height_mode(
+            &tank,
+            Vec2::Y,
+            View3dCameraHeightMode::Chase,
+        );
+        let tactical = chase_camera_transform_with_forward_and_height_mode(
+            &tank,
+            Direction::Right.movement(),
+            View3dCameraHeightMode::Tactical,
+        );
+
+        assert!((tactical.translation.y - chase.translation.y).abs() < 0.01);
     }
 
     #[test]
@@ -12457,6 +12712,187 @@ mod tests {
     }
 
     #[test]
+    fn sloped_box_mesh_insets_top_face_for_less_blocky_models() {
+        let mesh = sloped_box_mesh(Vec2::new(12.0, 10.0), Vec2::new(8.0, 6.0), 4.0);
+        let positions = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .expect("mesh should have positions")
+            .as_float3()
+            .expect("positions should be vec3");
+        let bottom_max_x = positions
+            .iter()
+            .filter(|position| position[1] < 0.0)
+            .map(|position| position[0].abs())
+            .fold(0.0, f32::max);
+        let top_max_x = positions
+            .iter()
+            .filter(|position| position[1] > 0.0)
+            .map(|position| position[0].abs())
+            .fold(0.0, f32::max);
+
+        assert_eq!(mesh.count_vertices(), 24);
+        assert!(top_max_x < bottom_max_x);
+    }
+
+    #[test]
+    fn tank_barrel_transform_rotates_cylinder_axis_to_facing() {
+        for (direction, expected_axis) in [
+            (Direction::Up, Vec3::NEG_Z),
+            (Direction::Down, Vec3::Z),
+            (Direction::Left, Vec3::NEG_X),
+            (Direction::Right, Vec3::X),
+        ] {
+            let transform = tank_barrel_transform(Vec2::new(96.0, 96.0), direction);
+            let axis = transform.rotation * Vec3::Y;
+
+            assert!(
+                axis.dot(expected_axis) > 0.999,
+                "{direction:?} barrel should align with {expected_axis:?}, got {axis:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tank_front_plate_transform_rotates_local_front_to_facing() {
+        for (direction, expected_axis) in [
+            (Direction::Up, Vec3::NEG_Z),
+            (Direction::Down, Vec3::Z),
+            (Direction::Left, Vec3::NEG_X),
+            (Direction::Right, Vec3::X),
+        ] {
+            let transform = tank_front_plate_transform(Vec2::new(96.0, 96.0), direction);
+            let axis = transform.rotation * Vec3::NEG_Z;
+
+            assert!(
+                axis.dot(expected_axis) > 0.999,
+                "{direction:?} front plate should align with {expected_axis:?}, got {axis:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tank_muzzle_transform_sits_ahead_of_barrel() {
+        for (direction, expected_axis) in [
+            (Direction::Up, Vec3::NEG_Z),
+            (Direction::Down, Vec3::Z),
+            (Direction::Left, Vec3::NEG_X),
+            (Direction::Right, Vec3::X),
+        ] {
+            let barrel = tank_barrel_transform(Vec2::new(96.0, 96.0), direction);
+            let muzzle = tank_muzzle_transform(Vec2::new(96.0, 96.0), direction);
+            let delta = (muzzle.translation - barrel.translation).normalize_or_zero();
+
+            assert!(
+                delta.dot(expected_axis) > 0.999,
+                "{direction:?} muzzle should sit ahead of barrel, got {delta:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bullet_3d_transform_rotates_capsule_axis_to_facing() {
+        for (direction, expected_axis) in [
+            (Direction::Up, Vec3::NEG_Z),
+            (Direction::Down, Vec3::Z),
+            (Direction::Left, Vec3::NEG_X),
+            (Direction::Right, Vec3::X),
+        ] {
+            let bullet = Bullet {
+                previous_top_left: Vec2::new(64.0, 64.0),
+                top_left: Vec2::new(64.0, 64.0),
+                facing: direction,
+                owner: Team::Player1,
+                speed: BULLET_SPEED,
+                breaks_steel: false,
+                resolved: false,
+            };
+            let transform = bullet_3d_transform(&bullet);
+            let axis = transform.rotation * Vec3::Y;
+
+            assert!(
+                axis.dot(expected_axis) > 0.999,
+                "{direction:?} bullet should align with {expected_axis:?}, got {axis:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bullet_trail_3d_transform_sits_behind_bullet() {
+        for (direction, expected_axis) in [
+            (Direction::Up, Vec3::NEG_Z),
+            (Direction::Down, Vec3::Z),
+            (Direction::Left, Vec3::NEG_X),
+            (Direction::Right, Vec3::X),
+        ] {
+            let bullet = Bullet {
+                previous_top_left: Vec2::new(64.0, 64.0),
+                top_left: Vec2::new(64.0, 64.0),
+                facing: direction,
+                owner: Team::Enemy,
+                speed: BULLET_SPEED,
+                breaks_steel: false,
+                resolved: false,
+            };
+            let bullet_transform = bullet_3d_transform(&bullet);
+            let trail_transform = bullet_trail_3d_transform(&bullet);
+            let delta = bullet_transform.translation - trail_transform.translation;
+            let horizontal_delta = Vec3::new(delta.x, 0.0, delta.z).normalize_or_zero();
+
+            assert!(
+                horizontal_delta.dot(expected_axis) > 0.999,
+                "{direction:?} trail should sit behind the bullet, got {horizontal_delta:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn water_tile_exposed_edges_skip_internal_water_borders() {
+        let mut grid = TileGrid::empty();
+        grid.set(4, 4, TileKind::Water);
+        grid.set(5, 4, TileKind::Water);
+
+        assert_eq!(
+            water_tile_exposed_edges(&grid, 4, 4),
+            vec![Direction::Up, Direction::Down, Direction::Left]
+        );
+        assert_eq!(
+            water_tile_exposed_edges(&grid, 5, 4),
+            vec![Direction::Up, Direction::Right, Direction::Down]
+        );
+    }
+
+    #[test]
+    fn movement_block_contact_distance_uses_full_tank_footprint() {
+        let mut grid = TileGrid::empty();
+        grid.set(6, 4, TileKind::Brick);
+        let tank = Tank {
+            top_left: Vec2::new(4.0 * TILE_SIZE, 4.0 * TILE_SIZE),
+            facing: Direction::Right,
+            speed: PLAYER_SPEED,
+        };
+
+        assert_eq!(
+            movement_block_contact_distance(&grid, &tank, TILE_SIZE * 3.0),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn movement_block_contact_distance_ignores_clear_paths() {
+        let grid = TileGrid::empty();
+        let tank = Tank {
+            top_left: Vec2::new(4.0 * TILE_SIZE, 4.0 * TILE_SIZE),
+            facing: Direction::Right,
+            speed: PLAYER_SPEED,
+        };
+
+        assert_eq!(
+            movement_block_contact_distance(&grid, &tank, TILE_SIZE * 3.0),
+            None
+        );
+    }
+
+    #[test]
     fn sync_3d_dynamic_scene_spawns_sprite_animation_effects() {
         let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
         let mut app = App::new();
@@ -12493,11 +12929,18 @@ mod tests {
         app.update();
 
         let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
-        assert!(
-            names
-                .iter(app.world())
-                .any(|(name, _)| name.as_str().starts_with("3D Effect Explosion"))
-        );
+        let effect_names = names
+            .iter(app.world())
+            .map(|(name, _)| name.as_str().to_owned())
+            .collect::<Vec<_>>();
+        for expected_part in ["Flash", "Core", "Smoke", "Spark"] {
+            assert!(
+                effect_names
+                    .iter()
+                    .any(|name| name.starts_with(&format!("3D Effect Explosion {expected_part}"))),
+                "3D explosion should include {expected_part}; got {effect_names:?}"
+            );
+        }
     }
 
     #[test]
@@ -12530,10 +12973,24 @@ mod tests {
         app.update();
 
         let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
+        let bullet_names = names
+            .iter(app.world())
+            .map(|(name, _)| name.as_str().to_owned())
+            .collect::<Vec<_>>();
         assert!(
-            names
-                .iter(app.world())
-                .any(|(name, _)| name.as_str().starts_with("3D Bullet PlayerTwo"))
+            bullet_names
+                .iter()
+                .any(|name| name.starts_with("3D Bullet PlayerTwo"))
+        );
+        assert!(
+            bullet_names
+                .iter()
+                .any(|name| name.starts_with("3D Bullet Trail PlayerTwo"))
+        );
+        assert!(
+            bullet_names
+                .iter()
+                .any(|name| name.starts_with("3D Bullet Glow PlayerTwo"))
         );
     }
 
@@ -12657,6 +13114,20 @@ mod tests {
                 .iter()
                 .any(|name| name.starts_with("3D Tank PlayerUpgrade3"))
         );
+        for expected_part in [
+            "3D Tank Side Armor",
+            "3D Tank Track Pad",
+            "3D Tank Exhaust",
+            "3D Tank Turret Ring",
+            "3D Tank Periscope",
+            "3D Tank Antenna",
+            "3D Tank Headlight",
+        ] {
+            assert!(
+                names.iter().any(|name| name == expected_part),
+                "3D tank should include {expected_part}; got {names:?}"
+            );
+        }
         assert!(names.iter().any(|name| name == "3D Player Marker Two"));
         assert!(!names.iter().any(|name| name == "3D Aim Guide"));
     }
@@ -12735,6 +13206,45 @@ mod tests {
             names
                 .iter(app.world())
                 .any(|(name, _)| name.as_str() == "3D Aim Guide")
+        );
+    }
+
+    #[test]
+    fn sync_3d_dynamic_scene_spawns_movement_block_for_view_target_footprint() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            view_assist: false,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        let mut grid = TileGrid::empty();
+        grid.set(6, 4, TileKind::Brick);
+        app.insert_resource(grid);
+        app.world_mut().spawn((
+            Tank {
+                top_left: Vec2::new(4.0 * TILE_SIZE, 4.0 * TILE_SIZE),
+                facing: Direction::Right,
+                speed: PLAYER_SPEED,
+            },
+            Player { id: PlayerId::One },
+        ));
+        app.add_systems(Startup, setup_3d_view);
+        app.add_systems(Update, sync_3d_dynamic_scene);
+
+        app.update();
+
+        let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
+        assert!(
+            names
+                .iter(app.world())
+                .any(|(name, _)| name.as_str() == "3D Movement Block")
         );
     }
 
@@ -12833,11 +13343,26 @@ mod tests {
         app.update();
 
         let mut names = app.world_mut().query::<(&Name, &View3dDynamic)>();
+        let names = names
+            .iter(app.world())
+            .map(|(name, _)| name.as_str().to_string())
+            .collect::<Vec<_>>();
         assert!(
             names
-                .iter(app.world())
-                .any(|(name, _)| name.as_str().starts_with("3D Base PlayerTwo"))
+                .iter()
+                .any(|name| name.starts_with("3D Base PlayerTwo"))
         );
+        for expected_part in [
+            "3D Base Plinth",
+            "3D Base Front Lip",
+            "3D Base Crest Body",
+            "3D Base Crest Wing",
+        ] {
+            assert!(
+                names.iter().any(|name| name == expected_part),
+                "3D base should include {expected_part}; got {names:?}"
+            );
+        }
     }
 
     #[test]
@@ -12920,6 +13445,57 @@ mod tests {
             .filter(|(name, _)| name.as_str().starts_with("3D Enemy Reserve"))
             .count();
         assert_eq!(reserve_markers, 16);
+    }
+
+    #[test]
+    fn sync_3d_hud_spawns_enemy_direction_indicators_for_threats() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<Assets<StandardMaterial>>();
+        app.init_resource::<Assets<Image>>();
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ScoreBoard::campaign(20));
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            view_target: PlayerId::One,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(TileGrid::empty());
+        app.world_mut().spawn((
+            Tank {
+                top_left: Vec2::new(96.0, 96.0),
+                facing: Direction::Up,
+                speed: PLAYER_SPEED,
+            },
+            Player { id: PlayerId::One },
+        ));
+        app.world_mut().spawn((
+            Tank {
+                top_left: Vec2::new(96.0, 64.0),
+                facing: Direction::Down,
+                speed: enemy_speed(EnemyKind::Basic),
+            },
+            EnemyTank {
+                kind: EnemyKind::Basic,
+                carried_powerup: None,
+            },
+        ));
+        app.add_systems(Startup, setup_3d_view);
+        app.add_systems(Update, sync_3d_hud);
+
+        app.update();
+
+        let mut names = app.world_mut().query::<(&Name, &View3dHud)>();
+        let direction_markers = names
+            .iter(app.world())
+            .filter(|(name, _)| name.as_str().starts_with("3D Enemy Direction"))
+            .count();
+        assert_eq!(direction_markers, 1);
     }
 
     #[test]
@@ -14720,6 +15296,64 @@ mod tests {
         let tank = players.single(app.world()).unwrap();
         assert_eq!(tank.top_left, tank_top_left);
         assert_eq!(tank.facing, Direction::Left);
+    }
+
+    #[test]
+    fn player_3d_turn_press_is_consumed_once_across_fixed_ticks() {
+        let mut app = App::new();
+        let tank_top_left = Vec2::new(32.0, 32.0);
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyD);
+        let mut time = Time::<()>::default();
+        time.advance_by(Duration::from_secs_f32(1.0 / 60.0));
+
+        app.insert_resource(time);
+        app.insert_resource(keys);
+        app.insert_resource(PlayerControl::default());
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(GameStatus {
+            phase: GamePhase::Playing,
+            ..GameStatus::default()
+        });
+        app.insert_resource(ModeSelect {
+            view_mode: TankViewMode::ThreeD,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(VersusPlayerFreeze::default());
+        spawn_movable_test_player(app.world_mut(), PlayerId::One, tank_top_left, Direction::Up);
+        app.add_systems(Update, move_player_tank);
+
+        app.update();
+        app.update();
+
+        let mut players = app.world_mut().query::<&Tank>();
+        let tank = players.single(app.world()).unwrap();
+        assert_eq!(tank.top_left, tank_top_left);
+        assert_eq!(tank.facing, Direction::Right);
+    }
+
+    #[test]
+    fn player_3d_turn_can_repeat_after_key_release() {
+        let mut control = PlayerControl::default();
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyD);
+
+        let first = player_3d_tank_motion(&keys, &mut control, PlayerId::One, Direction::Up)
+            .expect("first press should turn");
+        assert_eq!(first.facing, Direction::Right);
+
+        keys.clear_just_pressed(KeyCode::KeyD);
+        keys.release(KeyCode::KeyD);
+        assert_eq!(
+            player_3d_tank_motion(&keys, &mut control, PlayerId::One, first.facing),
+            None
+        );
+
+        keys.press(KeyCode::KeyD);
+        let second = player_3d_tank_motion(&keys, &mut control, PlayerId::One, first.facing)
+            .expect("new press after release should turn again");
+        assert_eq!(second.facing, Direction::Down);
     }
 
     #[test]

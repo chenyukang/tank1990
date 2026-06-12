@@ -1,6 +1,7 @@
 use super::*;
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{PerspectiveProjection, Projection};
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::render::view::Msaa;
 
 const VIEW_3D_LAYER: usize = 1;
@@ -10,9 +11,28 @@ const VIEW_3D_BRICK_HEIGHT: f32 = 3.4;
 const VIEW_3D_STEEL_HEIGHT: f32 = 4.8;
 const VIEW_3D_FOREST_HEIGHT: f32 = 5.2;
 const VIEW_3D_TILE_VISUAL_FOOTPRINT: f32 = TILE_SIZE - 0.8;
-const VIEW_3D_WATER_SURFACE_HEIGHT: f32 = 0.12;
+const VIEW_3D_WATER_SURFACE_HEIGHT: f32 = 0.07;
+const VIEW_3D_WATER_BASIN_HEIGHT: f32 = 0.04;
+const VIEW_3D_WATER_EDGE_HEIGHT: f32 = 0.55;
+const VIEW_3D_WATER_EDGE_THICKNESS: f32 = 0.42;
 const VIEW_3D_ICE_SURFACE_HEIGHT: f32 = 0.1;
 const VIEW_3D_TANK_HEIGHT: f32 = 3.4;
+const VIEW_3D_TANK_TRACK_Y: f32 = 0.55;
+const VIEW_3D_TANK_WHEEL_Y: f32 = 0.95;
+const VIEW_3D_TANK_BARREL_CENTER_OFFSET: f32 = 7.0;
+const VIEW_3D_TANK_BARREL_HALF_LENGTH: f32 = 6.8;
+const VIEW_3D_TANK_BARREL_Y: f32 = VIEW_3D_TANK_HEIGHT + 0.8;
+const VIEW_3D_TANK_FRONT_PLATE_Y: f32 = VIEW_3D_TANK_HEIGHT + 0.12;
+const VIEW_3D_TANK_HATCH_Y: f32 = VIEW_3D_TANK_HEIGHT + 1.72;
+const VIEW_3D_TANK_SIDE_ARMOR_Y: f32 = VIEW_3D_TANK_HEIGHT * 0.56;
+const VIEW_3D_TANK_TRACK_PAD_Y: f32 = 1.35;
+const VIEW_3D_TANK_EXHAUST_Y: f32 = VIEW_3D_TANK_HEIGHT + 0.25;
+const VIEW_3D_TANK_HEADLIGHT_Y: f32 = VIEW_3D_TANK_HEIGHT + 0.42;
+const VIEW_3D_TANK_ANTENNA_Y: f32 = VIEW_3D_TANK_HEIGHT + 3.1;
+const VIEW_3D_BULLET_Y: f32 = 2.0;
+const VIEW_3D_BULLET_TRAIL_Y: f32 = 1.55;
+const VIEW_3D_BULLET_TRAIL_LENGTH: f32 = 5.6;
+const VIEW_3D_BULLET_TRAIL_MIN_LENGTH: f32 = 1.6;
 const VIEW_3D_PROTECTION_BAR_LENGTH: f32 = TANK_SIZE + 2.0;
 const VIEW_3D_PROTECTION_BAR_THICKNESS: f32 = 0.38;
 const VIEW_3D_PROTECTION_BAR_OFFSET: f32 = TANK_SIZE / 2.0 + 0.65;
@@ -28,6 +48,11 @@ const VIEW_3D_AIM_GUIDE_SAMPLE_STEP: f32 = TILE_SIZE / 4.0;
 const VIEW_3D_AIM_GUIDE_WIDTH: f32 = 1.4;
 const VIEW_3D_AIM_GUIDE_HEIGHT: f32 = 0.24;
 const VIEW_3D_AIM_GUIDE_Y: f32 = 0.45;
+const VIEW_3D_MOVEMENT_BLOCK_MAX_LENGTH: f32 = TILE_SIZE * 3.0;
+const VIEW_3D_MOVEMENT_BLOCK_SAMPLE_STEP: f32 = 1.0;
+const VIEW_3D_MOVEMENT_BLOCK_WIDTH: f32 = TANK_SIZE + 1.2;
+const VIEW_3D_MOVEMENT_BLOCK_HEIGHT: f32 = 5.4;
+const VIEW_3D_MOVEMENT_BLOCK_THICKNESS: f32 = 0.5;
 const VIEW_3D_CAMERA_DISTANCE: f32 = 38.0;
 const VIEW_3D_CAMERA_HEIGHT: f32 = 22.0;
 const VIEW_3D_CAMERA_LOOK_AHEAD: f32 = 36.0;
@@ -37,20 +62,22 @@ const VIEW_3D_CAMERA_TURN_RATE: f32 = std::f32::consts::PI * 7.0;
 const VIEW_3D_CAMERA_POSITION_RESPONSE: f32 = 24.0;
 const VIEW_3D_CAMERA_HEIGHT_MODE_SETTLED_DOT: f32 = 0.995;
 const VIEW_3D_OCCLUDED_CAMERA_DISTANCE: f32 = 30.0;
-const VIEW_3D_OCCLUDED_CAMERA_HEIGHT: f32 = 52.0;
-const VIEW_3D_OCCLUDED_LOOK_HEIGHT: f32 = 12.0;
-const VIEW_3D_HUD_LEFT: f32 = 6.0;
-const VIEW_3D_HUD_TOP: f32 = 6.0;
+const VIEW_3D_OCCLUDED_CAMERA_HEIGHT: f32 = VIEW_3D_CAMERA_HEIGHT;
+const VIEW_3D_OCCLUDED_LOOK_HEIGHT: f32 = VIEW_3D_CAMERA_LOOK_HEIGHT;
 const VIEW_3D_HUD_LINE_STEP: f32 = 9.0;
 const VIEW_3D_HUD_TEXT_Z: f32 = 21.0;
 const VIEW_3D_HUD_PANEL_Z: f32 = 20.0;
-const VIEW_3D_ENEMY_RESERVE_LEFT: f32 = VIEW_3D_HUD_LEFT;
+const VIEW_3D_STATUS_PANEL_WIDTH: f32 = 116.0;
+const VIEW_3D_ENEMY_RESERVE_LEFT: f32 = 0.0;
 const VIEW_3D_ENEMY_RESERVE_TOP: f32 = 72.0;
 const VIEW_3D_ENEMY_RESERVE_COLUMNS: usize = 10;
 const VIEW_3D_ENEMY_RESERVE_ICON_SIZE: f32 = 5.0;
 const VIEW_3D_ENEMY_RESERVE_CELL_X: f32 = 6.0;
 const VIEW_3D_ENEMY_RESERVE_CELL_Y: f32 = 6.0;
-pub(super) const VIEW_3D_MINIMAP_CELL_PIXELS: usize = 3;
+const VIEW_3D_ENEMY_DIRECTION_ARROW_SIZE: usize = 9;
+const VIEW_3D_ENEMY_DIRECTION_LABEL_GAP: f32 = 3.0;
+const VIEW_3D_ENEMY_DIRECTION_CENTER_OFFSET: f32 = 68.0;
+pub(super) const VIEW_3D_MINIMAP_CELL_PIXELS: usize = 4;
 pub(super) const VIEW_3D_MINIMAP_SIZE: usize = BOARD_TILES * VIEW_3D_MINIMAP_CELL_PIXELS;
 const VIEW_3D_MINIMAP_PANEL_PADDING: f32 = 3.0;
 const VIEW_3D_MINIMAP_EDGE_MARGIN: f32 = 3.0;
@@ -76,6 +103,7 @@ const MINIMAP_PLAYER_TWO_BASE_COLOR: [u8; 4] = [112, 184, 255, 255];
 const MINIMAP_PLAYER_ONE_COLOR: [u8; 4] = [184, 248, 184, 255];
 const MINIMAP_PLAYER_TWO_COLOR: [u8; 4] = [136, 216, 255, 255];
 const MINIMAP_ENEMY_COLOR: [u8; 4] = [248, 88, 80, 255];
+const MINIMAP_OBJECT_OUTLINE_COLOR: [u8; 4] = [0, 0, 0, 255];
 const MINIMAP_PLAYER_ONE_BULLET_COLOR: [u8; 4] = [184, 248, 184, 255];
 const MINIMAP_PLAYER_TWO_BULLET_COLOR: [u8; 4] = [136, 216, 255, 255];
 const MINIMAP_ENEMY_BULLET_COLOR: [u8; 4] = [248, 88, 80, 255];
@@ -115,6 +143,40 @@ pub(super) struct View3dHud;
 pub(super) enum View3dCameraHeightMode {
     Chase,
     Tactical,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum View3dEnemyDirection {
+    Front,
+    Right,
+    Back,
+    Left,
+}
+
+impl View3dEnemyDirection {
+    fn index(self) -> usize {
+        match self {
+            View3dEnemyDirection::Front => 0,
+            View3dEnemyDirection::Right => 1,
+            View3dEnemyDirection::Back => 2,
+            View3dEnemyDirection::Left => 3,
+        }
+    }
+
+    fn arrow_rotation(self) -> f32 {
+        match self {
+            View3dEnemyDirection::Front => 0.0,
+            View3dEnemyDirection::Right => -std::f32::consts::FRAC_PI_2,
+            View3dEnemyDirection::Back => std::f32::consts::PI,
+            View3dEnemyDirection::Left => std::f32::consts::FRAC_PI_2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct View3dEnemyDirectionIndicator {
+    pub(super) direction: View3dEnemyDirection,
+    pub(super) distance_tiles: u8,
 }
 
 #[derive(Default)]
@@ -216,23 +278,35 @@ impl View3dCameraState {
 #[derive(Resource)]
 pub(super) struct View3dAssets {
     minimap_image: Handle<Image>,
+    enemy_direction_arrow_image: Handle<Image>,
     ground_mesh: Handle<Mesh>,
     floor_grid_x_mesh: Handle<Mesh>,
     floor_grid_z_mesh: Handle<Mesh>,
     floor_tile_mesh: Handle<Mesh>,
+    beveled_block_mesh: Handle<Mesh>,
+    round_detail_mesh: Handle<Mesh>,
+    canopy_mesh: Handle<Mesh>,
+    capsule_strip_mesh: Handle<Mesh>,
     tank_body_mesh: Handle<Mesh>,
+    tank_front_plate_mesh: Handle<Mesh>,
     tank_turret_mesh: Handle<Mesh>,
-    tank_barrel_x_mesh: Handle<Mesh>,
-    tank_barrel_z_mesh: Handle<Mesh>,
-    tank_track_x_mesh: Handle<Mesh>,
-    tank_track_z_mesh: Handle<Mesh>,
+    tank_barrel_mesh: Handle<Mesh>,
+    tank_track_mesh: Handle<Mesh>,
+    tank_wheel_mesh: Handle<Mesh>,
+    tank_hatch_mesh: Handle<Mesh>,
+    tank_muzzle_mesh: Handle<Mesh>,
     protection_x_mesh: Handle<Mesh>,
     protection_z_mesh: Handle<Mesh>,
     effect_mesh: Handle<Mesh>,
+    effect_sphere_mesh: Handle<Mesh>,
+    effect_spark_mesh: Handle<Mesh>,
     base_mesh: Handle<Mesh>,
+    base_cap_mesh: Handle<Mesh>,
     bullet_mesh: Handle<Mesh>,
+    bullet_trail_mesh: Handle<Mesh>,
     marker_mesh: Handle<Mesh>,
     powerup_mesh: Handle<Mesh>,
+    powerup_ring_mesh: Handle<Mesh>,
     ground_material: Handle<StandardMaterial>,
     grid_line_material: Handle<StandardMaterial>,
     brick_material: Handle<StandardMaterial>,
@@ -245,6 +319,8 @@ pub(super) struct View3dAssets {
     forest_dark_material: Handle<StandardMaterial>,
     forest_trunk_material: Handle<StandardMaterial>,
     water_material: Handle<StandardMaterial>,
+    water_basin_material: Handle<StandardMaterial>,
+    water_edge_material: Handle<StandardMaterial>,
     water_highlight_material: Handle<StandardMaterial>,
     ice_material: Handle<StandardMaterial>,
     ice_mark_material: Handle<StandardMaterial>,
@@ -262,6 +338,8 @@ pub(super) struct View3dAssets {
     enemy_power_material: Handle<StandardMaterial>,
     enemy_armor_material: Handle<StandardMaterial>,
     barrel_material: Handle<StandardMaterial>,
+    tank_detail_material: Handle<StandardMaterial>,
+    tank_headlight_material: Handle<StandardMaterial>,
     base_material: Handle<StandardMaterial>,
     player_one_base_material: Handle<StandardMaterial>,
     player_two_base_material: Handle<StandardMaterial>,
@@ -270,6 +348,7 @@ pub(super) struct View3dAssets {
     player_one_bullet_material: Handle<StandardMaterial>,
     player_two_bullet_material: Handle<StandardMaterial>,
     enemy_bullet_material: Handle<StandardMaterial>,
+    bullet_trail_material: Handle<StandardMaterial>,
     powerup_star_material: Handle<StandardMaterial>,
     powerup_helmet_material: Handle<StandardMaterial>,
     powerup_clock_material: Handle<StandardMaterial>,
@@ -280,9 +359,13 @@ pub(super) struct View3dAssets {
     spawn_protection_material: Handle<StandardMaterial>,
     frozen_material: Handle<StandardMaterial>,
     aim_guide_material: Handle<StandardMaterial>,
+    movement_block_material: Handle<StandardMaterial>,
     explosion_material: Handle<StandardMaterial>,
     base_destruction_material: Handle<StandardMaterial>,
     bullet_impact_material: Handle<StandardMaterial>,
+    effect_flash_material: Handle<StandardMaterial>,
+    effect_smoke_material: Handle<StandardMaterial>,
+    effect_debris_material: Handle<StandardMaterial>,
     spawn_effect_material: Handle<StandardMaterial>,
     powerup_sparkle_material: Handle<StandardMaterial>,
 }
@@ -412,6 +495,7 @@ fn create_3d_assets(
 ) -> View3dAssets {
     View3dAssets {
         minimap_image: images.add(create_3d_minimap_image()),
+        enemy_direction_arrow_image: images.add(create_3d_enemy_direction_arrow_image()),
         ground_mesh: meshes.add(Cuboid::new(
             board_size(),
             VIEW_3D_GROUND_THICKNESS,
@@ -420,12 +504,47 @@ fn create_3d_assets(
         floor_grid_x_mesh: meshes.add(Cuboid::new(board_size(), 0.05, 0.16)),
         floor_grid_z_mesh: meshes.add(Cuboid::new(0.16, 0.05, board_size())),
         floor_tile_mesh: meshes.add(Cuboid::new(TILE_SIZE, 0.08, TILE_SIZE)),
-        tank_body_mesh: meshes.add(Cuboid::new(12.0, VIEW_3D_TANK_HEIGHT, 12.0)),
-        tank_turret_mesh: meshes.add(Cuboid::new(8.0, 1.4, 8.0)),
-        tank_barrel_x_mesh: meshes.add(Cuboid::new(13.0, 1.5, 2.0)),
-        tank_barrel_z_mesh: meshes.add(Cuboid::new(2.0, 1.5, 13.0)),
-        tank_track_x_mesh: meshes.add(Cuboid::new(13.4, 0.5, 1.5)),
-        tank_track_z_mesh: meshes.add(Cuboid::new(1.5, 0.5, 13.4)),
+        beveled_block_mesh: meshes.add(sloped_box_mesh(Vec2::splat(1.0), Vec2::splat(0.84), 1.0)),
+        round_detail_mesh: meshes.add(Cylinder {
+            radius: 1.0,
+            half_height: 0.5,
+        }),
+        canopy_mesh: meshes.add(Sphere { radius: 1.0 }),
+        capsule_strip_mesh: meshes.add(Capsule3d {
+            radius: 0.5,
+            half_length: 0.5,
+        }),
+        tank_body_mesh: meshes.add(sloped_box_mesh(
+            Vec2::new(13.4, 12.6),
+            Vec2::new(8.8, 8.2),
+            VIEW_3D_TANK_HEIGHT,
+        )),
+        tank_front_plate_mesh: meshes.add(sloped_box_mesh(
+            Vec2::new(6.8, 4.8),
+            Vec2::new(4.8, 2.8),
+            0.65,
+        )),
+        tank_turret_mesh: meshes.add(Cylinder {
+            radius: 3.7,
+            half_height: 0.75,
+        }),
+        tank_barrel_mesh: meshes.add(Cylinder {
+            radius: 0.65,
+            half_height: VIEW_3D_TANK_BARREL_HALF_LENGTH,
+        }),
+        tank_track_mesh: meshes.add(Capsule3d {
+            radius: 0.76,
+            half_length: 5.7,
+        }),
+        tank_wheel_mesh: meshes.add(Cylinder {
+            radius: 0.62,
+            half_height: 0.22,
+        }),
+        tank_hatch_mesh: meshes.add(Cylinder {
+            radius: 1.45,
+            half_height: 0.24,
+        }),
+        tank_muzzle_mesh: meshes.add(Sphere { radius: 0.86 }),
         protection_x_mesh: meshes.add(Cuboid::new(
             VIEW_3D_PROTECTION_BAR_LENGTH,
             0.3,
@@ -437,10 +556,34 @@ fn create_3d_assets(
             VIEW_3D_PROTECTION_BAR_LENGTH,
         )),
         effect_mesh: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
-        base_mesh: meshes.add(Cuboid::new(TANK_SIZE, VIEW_3D_BASE_HEIGHT, TANK_SIZE)),
-        bullet_mesh: meshes.add(Cuboid::new(2.4, 2.4, 2.4)),
-        marker_mesh: meshes.add(Cuboid::new(3.0, 3.0, 3.0)),
-        powerup_mesh: meshes.add(Cuboid::new(6.0, 1.5, 6.0)),
+        effect_sphere_mesh: meshes.add(Sphere { radius: 1.0 }),
+        effect_spark_mesh: meshes.add(Capsule3d {
+            radius: 0.5,
+            half_length: 0.5,
+        }),
+        base_mesh: meshes.add(sloped_box_mesh(
+            Vec2::splat(TANK_SIZE),
+            Vec2::splat(TANK_SIZE * 0.72),
+            VIEW_3D_BASE_HEIGHT,
+        )),
+        base_cap_mesh: meshes.add(Cylinder {
+            radius: 4.2,
+            half_height: 0.55,
+        }),
+        bullet_mesh: meshes.add(Capsule3d {
+            radius: 0.95,
+            half_length: 1.7,
+        }),
+        bullet_trail_mesh: meshes.add(Capsule3d {
+            radius: 0.5,
+            half_length: 0.5,
+        }),
+        marker_mesh: meshes.add(Sphere { radius: 1.5 }),
+        powerup_mesh: meshes.add(Sphere { radius: 1.0 }),
+        powerup_ring_mesh: meshes.add(Torus {
+            major_radius: 2.4,
+            minor_radius: 0.18,
+        }),
         ground_material: materials.add(StandardMaterial {
             base_color: Color::srgb_u8(30, 38, 34),
             perceptual_roughness: 0.96,
@@ -506,6 +649,16 @@ fn create_3d_assets(
             base_color: Color::srgba_u8(28, 96, 184, 210),
             alpha_mode: AlphaMode::Blend,
             perceptual_roughness: 0.6,
+            ..default()
+        }),
+        water_basin_material: materials.add(StandardMaterial {
+            base_color: Color::srgb_u8(10, 26, 44),
+            perceptual_roughness: 0.82,
+            ..default()
+        }),
+        water_edge_material: materials.add(StandardMaterial {
+            base_color: Color::srgb_u8(36, 52, 56),
+            perceptual_roughness: 0.84,
             ..default()
         }),
         water_highlight_material: materials.add(StandardMaterial {
@@ -580,6 +733,18 @@ fn create_3d_assets(
             perceptual_roughness: 0.6,
             ..default()
         }),
+        tank_detail_material: materials.add(StandardMaterial {
+            base_color: Color::srgb_u8(24, 30, 28),
+            perceptual_roughness: 0.72,
+            metallic: 0.15,
+            ..default()
+        }),
+        tank_headlight_material: materials.add(StandardMaterial {
+            base_color: Color::srgba_u8(255, 232, 128, 235),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
         base_material: materials.add(StandardMaterial {
             base_color: Color::srgb_u8(232, 196, 96),
             perceptual_roughness: 0.62,
@@ -617,6 +782,12 @@ fn create_3d_assets(
         }),
         enemy_bullet_material: materials.add(StandardMaterial {
             base_color: Color::srgb_u8(248, 88, 80),
+            unlit: true,
+            ..default()
+        }),
+        bullet_trail_material: materials.add(StandardMaterial {
+            base_color: Color::srgba_u8(255, 232, 128, 150),
+            alpha_mode: AlphaMode::Blend,
             unlit: true,
             ..default()
         }),
@@ -673,6 +844,12 @@ fn create_3d_assets(
             unlit: true,
             ..default()
         }),
+        movement_block_material: materials.add(StandardMaterial {
+            base_color: Color::srgba_u8(255, 72, 56, 190),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
         explosion_material: materials.add(StandardMaterial {
             base_color: Color::srgba_u8(248, 128, 48, 230),
             alpha_mode: AlphaMode::Blend,
@@ -691,6 +868,24 @@ fn create_3d_assets(
             unlit: true,
             ..default()
         }),
+        effect_flash_material: materials.add(StandardMaterial {
+            base_color: Color::srgba_u8(255, 248, 184, 235),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
+        effect_smoke_material: materials.add(StandardMaterial {
+            base_color: Color::srgba_u8(48, 44, 40, 170),
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 1.0,
+            unlit: true,
+            ..default()
+        }),
+        effect_debris_material: materials.add(StandardMaterial {
+            base_color: Color::srgb_u8(96, 68, 48),
+            perceptual_roughness: 0.95,
+            ..default()
+        }),
         spawn_effect_material: materials.add(StandardMaterial {
             base_color: Color::srgba_u8(208, 248, 255, 210),
             alpha_mode: AlphaMode::Blend,
@@ -704,6 +899,117 @@ fn create_3d_assets(
             ..default()
         }),
     }
+}
+
+pub(super) fn sloped_box_mesh(bottom_size: Vec2, top_size: Vec2, height: f32) -> Mesh {
+    let bx = bottom_size.x / 2.0;
+    let bz = bottom_size.y / 2.0;
+    let tx = top_size.x / 2.0;
+    let tz = top_size.y / 2.0;
+    let bottom_y = -height / 2.0;
+    let top_y = height / 2.0;
+
+    let bfl = Vec3::new(-bx, bottom_y, -bz);
+    let bfr = Vec3::new(bx, bottom_y, -bz);
+    let bbr = Vec3::new(bx, bottom_y, bz);
+    let bbl = Vec3::new(-bx, bottom_y, bz);
+    let tfl = Vec3::new(-tx, top_y, -tz);
+    let tfr = Vec3::new(tx, top_y, -tz);
+    let tbr = Vec3::new(tx, top_y, tz);
+    let tbl = Vec3::new(-tx, top_y, tz);
+
+    let mut positions = Vec::with_capacity(24);
+    let mut normals = Vec::with_capacity(24);
+    let mut uvs = Vec::with_capacity(24);
+    let mut indices = Vec::with_capacity(36);
+
+    push_sloped_box_quad(
+        &mut positions,
+        &mut normals,
+        &mut uvs,
+        &mut indices,
+        tfl,
+        tbl,
+        tbr,
+        tfr,
+    );
+    push_sloped_box_quad(
+        &mut positions,
+        &mut normals,
+        &mut uvs,
+        &mut indices,
+        bfl,
+        bfr,
+        bbr,
+        bbl,
+    );
+    push_sloped_box_quad(
+        &mut positions,
+        &mut normals,
+        &mut uvs,
+        &mut indices,
+        bfl,
+        tfl,
+        tfr,
+        bfr,
+    );
+    push_sloped_box_quad(
+        &mut positions,
+        &mut normals,
+        &mut uvs,
+        &mut indices,
+        bfr,
+        tfr,
+        tbr,
+        bbr,
+    );
+    push_sloped_box_quad(
+        &mut positions,
+        &mut normals,
+        &mut uvs,
+        &mut indices,
+        bbr,
+        tbr,
+        tbl,
+        bbl,
+    );
+    push_sloped_box_quad(
+        &mut positions,
+        &mut normals,
+        &mut uvs,
+        &mut indices,
+        bbl,
+        tbl,
+        tfl,
+        bfl,
+    );
+
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(Indices::U32(indices))
+}
+
+fn push_sloped_box_quad(
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u32>,
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+    d: Vec3,
+) {
+    let base = positions.len() as u32;
+    let normal = (b - a).cross(c - a).normalize_or_zero().to_array();
+    positions.extend([a.to_array(), b.to_array(), c.to_array(), d.to_array()]);
+    normals.extend([normal; 4]);
+    uvs.extend([[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]]);
+    indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
 fn player_upgrade_3d_color(upgrade_level: u8) -> Color {
@@ -808,7 +1114,12 @@ pub(super) fn sync_3d_dynamic_scene(
     bullets: Query<(Entity, &Bullet)>,
     bases: Query<(Entity, &BaseSprite)>,
     powerups: Query<(Entity, &PowerUp, &Transform)>,
-    effects: Query<(Entity, &Transform, &SpriteAnimation)>,
+    effects: Query<(
+        Entity,
+        &Transform,
+        &SpriteAnimation,
+        Option<&BulletImpactDirection>,
+    )>,
 ) {
     despawn_entities(&mut commands, dynamic_entities.iter());
 
@@ -881,14 +1192,21 @@ pub(super) fn sync_3d_dynamic_scene(
     }
 
     if let Some(sprite_assets) = sprite_assets {
-        for (entity, transform, animation) in &effects {
+        for (entity, transform, animation, impact_direction) in &effects {
             let Some(kind) = view_3d_effect_kind(animation, &sprite_assets.manifest) else {
                 continue;
             };
             let size = view_3d_effect_size(kind);
             let top_left = board_top_left_from_translation(transform.translation, size);
             if top_left_is_on_board(top_left) {
-                spawn_3d_effect(&mut commands, &assets, entity, kind, top_left);
+                spawn_3d_effect(
+                    &mut commands,
+                    &assets,
+                    entity,
+                    kind,
+                    top_left,
+                    impact_direction.map(|impact| impact.direction),
+                );
             }
         }
     }
@@ -981,25 +1299,8 @@ pub(super) fn sync_3d_hud(
         &mode_select,
         view_target,
     );
-    spawn_3d_hud_panel(
-        &mut commands,
-        Vec2::new(VIEW_3D_HUD_LEFT - 3.0, VIEW_3D_HUD_TOP - 3.0),
-        Vec2::new(
-            116.0,
-            status_lines.len() as f32 * VIEW_3D_HUD_LINE_STEP + 5.0,
-        ),
-    );
-    for (index, line) in status_lines.iter().enumerate() {
-        spawn_3d_hud_text(
-            &mut commands,
-            &assets,
-            line,
-            Vec2::new(
-                VIEW_3D_HUD_LEFT,
-                VIEW_3D_HUD_TOP + index as f32 * VIEW_3D_HUD_LINE_STEP,
-            ),
-        );
-    }
+    let hud_window_size = view_3d_hud_window_size(&primary_window);
+    spawn_3d_status_hud(&mut commands, &assets, &status_lines, hud_window_size);
 
     spawn_3d_enemy_reserve(
         &mut commands,
@@ -1022,10 +1323,14 @@ pub(super) fn sync_3d_hud(
             &powerups,
             view_target,
         );
-        spawn_3d_minimap(
+        spawn_3d_minimap(&mut commands, &view_assets, hud_window_size);
+        let enemy_direction_indicators =
+            view_3d_enemy_direction_indicators(*game_mode, tanks.iter(), view_target);
+        spawn_3d_enemy_direction_indicators(
             &mut commands,
+            &assets,
             &view_assets,
-            view_3d_hud_window_size(&primary_window),
+            &enemy_direction_indicators,
         );
     }
 }
@@ -1157,6 +1462,30 @@ pub(super) fn create_3d_minimap_image() -> Image {
     )
 }
 
+pub(super) fn create_3d_enemy_direction_arrow_image() -> Image {
+    let size = VIEW_3D_ENEMY_DIRECTION_ARROW_SIZE;
+    let mut pixels = vec![0; size * size * 4];
+    let fill = [248, 216, 72, 245];
+    let highlight = [255, 248, 160, 255];
+    let shadow = [112, 80, 24, 220];
+
+    for y in 0..=4 {
+        let half_width = y;
+        for x in (4 - half_width)..=(4 + half_width) {
+            set_pixel(&mut pixels, size, x, y, fill);
+        }
+    }
+    fill_rect(&mut pixels, size, 3, 4, 3, 5, fill);
+    for y in 1..=4 {
+        set_pixel(&mut pixels, size, 4, y, highlight);
+    }
+    for y in 4..size {
+        set_pixel(&mut pixels, size, 6, y, shadow);
+    }
+
+    image_from_pixels(size, size, pixels)
+}
+
 fn update_3d_minimap_image(
     images: &mut Assets<Image>,
     image: &Handle<Image>,
@@ -1193,7 +1522,7 @@ pub(super) fn render_3d_minimap_pixels<'a>(
     for y in 0..BOARD_TILES {
         for x in 0..BOARD_TILES {
             let tile = tile_grid.get(x as i32, y as i32).unwrap_or(TileKind::Empty);
-            fill_minimap_cell(&mut pixels, x, y, minimap_tile_color(tile));
+            fill_minimap_tile_cell(&mut pixels, x, y, minimap_tile_color(tile));
         }
     }
 
@@ -1247,6 +1576,91 @@ pub(super) fn render_3d_minimap_pixels<'a>(
     pixels
 }
 
+pub(super) fn view_3d_enemy_direction_indicators<'a>(
+    mode: GameMode,
+    tanks: impl IntoIterator<Item = (&'a Tank, Option<&'a Player>, Option<&'a EnemyTank>)>,
+    view_target: PlayerId,
+) -> Vec<View3dEnemyDirectionIndicator> {
+    let mut target = None;
+    let mut threats = Vec::new();
+
+    for (tank, player, enemy) in tanks {
+        if player.is_some_and(|player| player.id == view_target) {
+            target = Some((tank.top_left, tank.facing));
+        }
+        if view_3d_tank_threatens_target(mode, view_target, player, enemy) {
+            threats.push(tank.top_left);
+        }
+    }
+
+    let Some((target_top_left, target_facing)) = target else {
+        return Vec::new();
+    };
+
+    let mut nearest: [Option<View3dEnemyDirectionIndicator>; 4] = [None; 4];
+    for threat_top_left in threats {
+        let Some(indicator) =
+            view_3d_enemy_direction_indicator(target_top_left, target_facing, threat_top_left)
+        else {
+            continue;
+        };
+        let index = indicator.direction.index();
+        if nearest[index].is_none_or(|current| indicator.distance_tiles < current.distance_tiles) {
+            nearest[index] = Some(indicator);
+        }
+    }
+
+    nearest.into_iter().flatten().collect()
+}
+
+fn view_3d_tank_threatens_target(
+    mode: GameMode,
+    view_target: PlayerId,
+    player: Option<&Player>,
+    enemy: Option<&EnemyTank>,
+) -> bool {
+    enemy.is_some()
+        || (matches!(
+            mode,
+            GameMode::VersusDeathmatch | GameMode::VersusBaseBattle
+        ) && player.is_some_and(|player| player.id != view_target))
+}
+
+pub(super) fn view_3d_enemy_direction_indicator(
+    target_top_left: Vec2,
+    target_facing: Direction,
+    threat_top_left: Vec2,
+) -> Option<View3dEnemyDirectionIndicator> {
+    let target_center = target_top_left + Vec2::splat(TANK_SIZE / 2.0);
+    let threat_center = threat_top_left + Vec2::splat(TANK_SIZE / 2.0);
+    let delta = threat_center - target_center;
+    if delta.length_squared() <= f32::EPSILON {
+        return None;
+    }
+
+    let forward = target_facing.movement().normalize_or_zero();
+    let right = Vec2::new(-forward.y, forward.x);
+    let ahead = delta.dot(forward);
+    let side = delta.dot(right);
+    let direction = if ahead.abs() >= side.abs() {
+        if ahead >= 0.0 {
+            View3dEnemyDirection::Front
+        } else {
+            View3dEnemyDirection::Back
+        }
+    } else if side >= 0.0 {
+        View3dEnemyDirection::Right
+    } else {
+        View3dEnemyDirection::Left
+    };
+    let distance_tiles = ((delta.length() / TILE_SIZE).ceil() as u8).clamp(1, 99);
+
+    Some(View3dEnemyDirectionIndicator {
+        direction,
+        distance_tiles,
+    })
+}
+
 fn spawn_3d_minimap(commands: &mut Commands, assets: &View3dAssets, window_size: Vec2) {
     let scale = window_scale();
     let panel_size = view_3d_minimap_panel_size();
@@ -1271,6 +1685,85 @@ fn spawn_3d_minimap(commands: &mut Commands, assets: &View3dAssets, window_size:
     ));
 }
 
+fn spawn_3d_enemy_direction_indicators(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    view_assets: &View3dAssets,
+    indicators: &[View3dEnemyDirectionIndicator],
+) {
+    for indicator in indicators {
+        spawn_3d_enemy_direction_indicator(commands, assets, view_assets, *indicator);
+    }
+}
+
+fn spawn_3d_enemy_direction_indicator(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    view_assets: &View3dAssets,
+    indicator: View3dEnemyDirectionIndicator,
+) {
+    let arrow_size = Vec2::splat(VIEW_3D_ENEMY_DIRECTION_ARROW_SIZE as f32);
+    let label = format!("E{:02}", indicator.distance_tiles);
+    let label_size = Vec2::new(phase_text_width(&label), GENERATED_GLYPH_HEIGHT as f32);
+    let panel_size = Vec2::new(
+        arrow_size.x.max(label_size.x) + 6.0,
+        arrow_size.y + VIEW_3D_ENEMY_DIRECTION_LABEL_GAP + label_size.y + 6.0,
+    );
+    let panel_top_left = view_3d_enemy_direction_panel_top_left(indicator.direction, panel_size);
+    let panel_center = panel_top_left + panel_size / 2.0;
+    let arrow_top_left = Vec2::new(panel_center.x - arrow_size.x / 2.0, panel_top_left.y + 3.0);
+    let label_top_left = Vec2::new(
+        panel_center.x - label_size.x / 2.0,
+        arrow_top_left.y + arrow_size.y + VIEW_3D_ENEMY_DIRECTION_LABEL_GAP,
+    );
+
+    spawn_3d_hud_panel(commands, panel_top_left, panel_size);
+
+    let mut arrow_transform = Transform::from_translation(virtual_center_scaled(
+        arrow_top_left,
+        arrow_size,
+        VIEW_3D_HUD_TEXT_Z,
+    ))
+    .with_scale(Vec3::splat(window_scale()));
+    arrow_transform.rotation = Quat::from_rotation_z(indicator.direction.arrow_rotation());
+    commands.spawn((
+        Sprite::from_image(view_assets.enemy_direction_arrow_image.clone()),
+        arrow_transform,
+        RenderLayers::layer(VIEW_3D_HUD_LAYER),
+        View3dHud,
+        GameEntity,
+        Name::new(format!("3D Enemy Direction {:?}", indicator.direction)),
+    ));
+
+    spawn_3d_hud_text(commands, assets, &label, label_top_left);
+}
+
+fn view_3d_enemy_direction_panel_top_left(
+    direction: View3dEnemyDirection,
+    panel_size: Vec2,
+) -> Vec2 {
+    let center = match direction {
+        View3dEnemyDirection::Front => Vec2::new(
+            VIRTUAL_WIDTH / 2.0,
+            VIRTUAL_HEIGHT / 2.0 - VIEW_3D_ENEMY_DIRECTION_CENTER_OFFSET,
+        ),
+        View3dEnemyDirection::Right => Vec2::new(
+            VIRTUAL_WIDTH / 2.0 + VIEW_3D_ENEMY_DIRECTION_CENTER_OFFSET,
+            VIRTUAL_HEIGHT / 2.0,
+        ),
+        View3dEnemyDirection::Back => Vec2::new(
+            VIRTUAL_WIDTH / 2.0,
+            VIRTUAL_HEIGHT / 2.0 + VIEW_3D_ENEMY_DIRECTION_CENTER_OFFSET,
+        ),
+        View3dEnemyDirection::Left => Vec2::new(
+            VIRTUAL_WIDTH / 2.0 - VIEW_3D_ENEMY_DIRECTION_CENTER_OFFSET,
+            VIRTUAL_HEIGHT / 2.0,
+        ),
+    };
+
+    center - panel_size / 2.0
+}
+
 fn view_3d_hud_window_size(primary_window: &Query<&Window, With<PrimaryWindow>>) -> Vec2 {
     primary_window
         .single()
@@ -1291,6 +1784,103 @@ pub(super) fn view_3d_minimap_center(window_size: Vec2, scale: f32) -> Vec2 {
     Vec2::new(
         window_size.x / 2.0 - edge_margin - panel_size.x / 2.0,
         window_size.y / 2.0 - edge_margin - panel_size.y / 2.0,
+    )
+}
+
+fn spawn_3d_status_hud(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    lines: &[String],
+    window_size: Vec2,
+) {
+    let scale = window_scale();
+    let panel_size = Vec2::new(
+        VIEW_3D_STATUS_PANEL_WIDTH * scale,
+        (lines.len() as f32 * VIEW_3D_HUD_LINE_STEP + 2.0) * scale,
+    );
+    spawn_3d_window_hud_panel(commands, Vec2::ZERO, panel_size, window_size);
+
+    for (index, line) in lines.iter().enumerate() {
+        spawn_3d_window_hud_text(
+            commands,
+            assets,
+            line,
+            Vec2::new(0.0, index as f32 * VIEW_3D_HUD_LINE_STEP * scale),
+            window_size,
+        );
+    }
+}
+
+fn spawn_3d_window_hud_panel(
+    commands: &mut Commands,
+    top_left: Vec2,
+    size: Vec2,
+    window_size: Vec2,
+) {
+    commands.spawn((
+        Sprite::from_color(Color::srgba_u8(0, 0, 0, 190), size),
+        Transform::from_translation(window_top_left_center(
+            top_left,
+            size,
+            window_size,
+            VIEW_3D_HUD_PANEL_Z,
+        )),
+        RenderLayers::layer(VIEW_3D_HUD_LAYER),
+        View3dHud,
+        GameEntity,
+    ));
+}
+
+fn spawn_3d_window_hud_text(
+    commands: &mut Commands,
+    assets: &SpriteAssets,
+    text: &str,
+    top_left: Vec2,
+    window_size: Vec2,
+) {
+    let scale = window_scale();
+    let glyph_size = glyph_size(&assets.manifest.glyphs) * scale;
+    for (index, ch) in text.chars().enumerate() {
+        if ch == ' ' {
+            continue;
+        }
+
+        commands.spawn((
+            Sprite::from_atlas_image(
+                assets.glyph_image.clone(),
+                TextureAtlas {
+                    layout: assets.glyph_layout.clone(),
+                    index: glyph_index(ch, &assets.manifest.glyphs),
+                },
+            ),
+            Transform::from_translation(window_top_left_center(
+                Vec2::new(
+                    top_left.x + index as f32 * GLYPH_ADVANCE * scale,
+                    top_left.y,
+                ),
+                glyph_size,
+                window_size,
+                VIEW_3D_HUD_TEXT_Z,
+            ))
+            .with_scale(Vec3::splat(scale)),
+            RenderLayers::layer(VIEW_3D_HUD_LAYER),
+            View3dHud,
+            GameEntity,
+        ));
+    }
+}
+
+pub(super) fn window_top_left_center(
+    top_left: Vec2,
+    size: Vec2,
+    window_size: Vec2,
+    z: f32,
+) -> Vec3 {
+    let center = top_left + size / 2.0;
+    Vec3::new(
+        center.x - window_size.x / 2.0,
+        window_size.y / 2.0 - center.y,
+        z,
     )
 }
 
@@ -1403,14 +1993,78 @@ pub(super) fn minimap_enemy_color(enemy: &EnemyTank) -> [u8; 4] {
         .unwrap_or(MINIMAP_ENEMY_COLOR)
 }
 
-fn fill_minimap_cell(pixels: &mut [u8], grid_x: usize, grid_y: usize, color: [u8; 4]) {
+fn fill_minimap_tile_cell(pixels: &mut [u8], grid_x: usize, grid_y: usize, color: [u8; 4]) {
+    fill_minimap_cell_rect(
+        pixels,
+        grid_x,
+        grid_y,
+        0,
+        0,
+        VIEW_3D_MINIMAP_CELL_PIXELS,
+        VIEW_3D_MINIMAP_CELL_PIXELS,
+        MINIMAP_EMPTY_COLOR,
+    );
+    if color == MINIMAP_EMPTY_COLOR {
+        return;
+    }
+    fill_minimap_cell_rect(
+        pixels,
+        grid_x,
+        grid_y,
+        1,
+        1,
+        VIEW_3D_MINIMAP_CELL_PIXELS.saturating_sub(2),
+        VIEW_3D_MINIMAP_CELL_PIXELS.saturating_sub(2),
+        color,
+    );
+}
+
+fn fill_minimap_object_cell(
+    pixels: &mut [u8],
+    grid_x: usize,
+    grid_y: usize,
+    color: [u8; 4],
+    outline: [u8; 4],
+) {
+    fill_minimap_cell_rect(
+        pixels,
+        grid_x,
+        grid_y,
+        0,
+        0,
+        VIEW_3D_MINIMAP_CELL_PIXELS,
+        VIEW_3D_MINIMAP_CELL_PIXELS,
+        outline,
+    );
+    fill_minimap_cell_rect(
+        pixels,
+        grid_x,
+        grid_y,
+        1,
+        1,
+        VIEW_3D_MINIMAP_CELL_PIXELS.saturating_sub(2),
+        VIEW_3D_MINIMAP_CELL_PIXELS.saturating_sub(2),
+        color,
+    );
+}
+
+fn fill_minimap_cell_rect(
+    pixels: &mut [u8],
+    grid_x: usize,
+    grid_y: usize,
+    offset_x: usize,
+    offset_y: usize,
+    width: usize,
+    height: usize,
+    color: [u8; 4],
+) {
     fill_rect(
         pixels,
         VIEW_3D_MINIMAP_SIZE,
-        grid_x * VIEW_3D_MINIMAP_CELL_PIXELS,
-        grid_y * VIEW_3D_MINIMAP_CELL_PIXELS,
-        VIEW_3D_MINIMAP_CELL_PIXELS,
-        VIEW_3D_MINIMAP_CELL_PIXELS,
+        grid_x * VIEW_3D_MINIMAP_CELL_PIXELS + offset_x,
+        grid_y * VIEW_3D_MINIMAP_CELL_PIXELS + offset_y,
+        width,
+        height,
         color,
     );
 }
@@ -1427,12 +2081,9 @@ fn draw_minimap_object(
     };
 
     if highlighted {
-        fill_minimap_cell(pixels, grid_x, grid_y, MINIMAP_TARGET_COLOR);
-        let x = grid_x * VIEW_3D_MINIMAP_CELL_PIXELS + 1;
-        let y = grid_y * VIEW_3D_MINIMAP_CELL_PIXELS + 1;
-        fill_rect(pixels, VIEW_3D_MINIMAP_SIZE, x, y, 1, 1, color);
+        fill_minimap_object_cell(pixels, grid_x, grid_y, color, MINIMAP_TARGET_COLOR);
     } else {
-        fill_minimap_cell(pixels, grid_x, grid_y, color);
+        fill_minimap_object_cell(pixels, grid_x, grid_y, color, MINIMAP_OBJECT_OUTLINE_COLOR);
     }
 }
 
@@ -1462,7 +2113,7 @@ fn spawn_3d_static_scene(commands: &mut Commands, assets: &View3dAssets, tile_gr
             let Some(tile) = tile_grid.get(x as i32, y as i32) else {
                 continue;
             };
-            spawn_3d_tile(commands, assets, tile, x, y);
+            spawn_3d_tile(commands, assets, tile_grid, tile, x, y);
         }
     }
 }
@@ -1496,6 +2147,7 @@ fn spawn_3d_floor_grid(commands: &mut Commands, assets: &View3dAssets) {
 fn spawn_3d_tile(
     commands: &mut Commands,
     assets: &View3dAssets,
+    tile_grid: &TileGrid,
     tile: TileKind,
     x: usize,
     y: usize,
@@ -1505,7 +2157,7 @@ fn spawn_3d_tile(
         TileKind::Brick => spawn_3d_brick_tile(commands, assets, x, y),
         TileKind::Steel => spawn_3d_steel_tile(commands, assets, x, y),
         TileKind::Forest => spawn_3d_forest_tile(commands, assets, x, y),
-        TileKind::Water => spawn_3d_water_tile(commands, assets, x, y),
+        TileKind::Water => spawn_3d_water_tile(commands, assets, tile_grid, x, y),
         TileKind::Ice => spawn_3d_ice_tile(commands, assets, x, y),
     }
 }
@@ -1545,7 +2197,7 @@ fn spawn_3d_brick_tile(commands: &mut Commands, assets: &View3dAssets, x: usize,
             } else {
                 assets.brick_shadow_material.clone()
             };
-            spawn_3d_static_box(
+            spawn_3d_static_beveled_block(
                 commands,
                 assets,
                 center,
@@ -1575,7 +2227,7 @@ fn spawn_3d_steel_tile(commands: &mut Commands, assets: &View3dAssets, x: usize,
         ),
         assets.steel_dark_material.clone(),
     );
-    spawn_3d_static_box(
+    spawn_3d_static_beveled_block(
         commands,
         assets,
         center,
@@ -1589,7 +2241,7 @@ fn spawn_3d_steel_tile(commands: &mut Commands, assets: &View3dAssets, x: usize,
     );
 
     let seam_y = VIEW_3D_STEEL_HEIGHT + 0.16;
-    spawn_3d_static_box(
+    spawn_3d_static_beveled_block(
         commands,
         assets,
         center,
@@ -1597,7 +2249,7 @@ fn spawn_3d_steel_tile(commands: &mut Commands, assets: &View3dAssets, x: usize,
         Vec3::new(seam_length, 0.18, 0.3),
         assets.steel_dark_material.clone(),
     );
-    spawn_3d_static_box(
+    spawn_3d_static_beveled_block(
         commands,
         assets,
         center,
@@ -1612,12 +2264,12 @@ fn spawn_3d_steel_tile(commands: &mut Commands, assets: &View3dAssets, x: usize,
         Vec2::new(-2.35, 2.35),
         Vec2::new(2.35, 2.35),
     ] {
-        spawn_3d_static_box(
+        spawn_3d_static_round_detail(
             commands,
             assets,
             center + offset,
             VIEW_3D_STEEL_HEIGHT + 0.38,
-            Vec3::new(0.72, 0.34, 0.72),
+            Vec3::new(0.36, 0.34, 0.36),
             assets.steel_bolt_material.clone(),
         );
     }
@@ -1638,15 +2290,15 @@ fn spawn_3d_forest_tile(commands: &mut Commands, assets: &View3dAssets, x: usize
     .enumerate()
     {
         let cluster_center = center + offset;
-        spawn_3d_static_box(
+        spawn_3d_static_round_detail(
             commands,
             assets,
             cluster_center,
             1.2,
-            Vec3::new(0.7, 2.4, 0.7),
+            Vec3::new(0.35, 2.4, 0.35),
             assets.forest_trunk_material.clone(),
         );
-        spawn_3d_static_box(
+        spawn_3d_static_canopy(
             commands,
             assets,
             cluster_center,
@@ -1661,24 +2313,138 @@ fn spawn_3d_forest_tile(commands: &mut Commands, assets: &View3dAssets, x: usize
     }
 }
 
-fn spawn_3d_water_tile(commands: &mut Commands, assets: &View3dAssets, x: usize, y: usize) {
-    spawn_3d_floor_tile(commands, assets, x, y, assets.water_material.clone());
-
+fn spawn_3d_water_tile(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    tile_grid: &TileGrid,
+    x: usize,
+    y: usize,
+) {
     let top_left = Vec2::new(x as f32 * TILE_SIZE, y as f32 * TILE_SIZE);
+    let center = top_left + Vec2::splat(TILE_SIZE / 2.0);
+    spawn_3d_static_box(
+        commands,
+        assets,
+        center,
+        VIEW_3D_WATER_BASIN_HEIGHT / 2.0,
+        Vec3::new(
+            VIEW_3D_TILE_VISUAL_FOOTPRINT,
+            VIEW_3D_WATER_BASIN_HEIGHT,
+            VIEW_3D_TILE_VISUAL_FOOTPRINT,
+        ),
+        assets.water_basin_material.clone(),
+    );
+    spawn_3d_static_box(
+        commands,
+        assets,
+        center,
+        VIEW_3D_WATER_SURFACE_HEIGHT,
+        Vec3::new(
+            VIEW_3D_TILE_VISUAL_FOOTPRINT - 1.2,
+            0.04,
+            VIEW_3D_TILE_VISUAL_FOOTPRINT - 1.2,
+        ),
+        assets.water_material.clone(),
+    );
+
+    for edge in water_tile_exposed_edges(tile_grid, x, y) {
+        spawn_3d_water_edge(commands, assets, top_left, edge);
+    }
+
     for (offset, width) in [
         (Vec2::new(-1.3, -2.0), 4.2),
         (Vec2::new(1.2, 0.0), 5.0),
         (Vec2::new(-0.6, 2.1), 3.6),
     ] {
-        spawn_3d_static_box(
+        spawn_3d_static_capsule_strip_with_yaw(
             commands,
             assets,
             top_left + Vec2::splat(TILE_SIZE / 2.0) + offset,
             VIEW_3D_WATER_SURFACE_HEIGHT + 0.08,
-            Vec3::new(width, 0.08, 0.52),
+            width,
+            0.52,
+            0.08,
+            0.0,
             assets.water_highlight_material.clone(),
         );
     }
+}
+
+pub(super) fn water_tile_exposed_edges(tile_grid: &TileGrid, x: usize, y: usize) -> Vec<Direction> {
+    [
+        Direction::Up,
+        Direction::Right,
+        Direction::Down,
+        Direction::Left,
+    ]
+    .into_iter()
+    .filter(|direction| !water_neighbor_matches(tile_grid, x, y, *direction))
+    .collect()
+}
+
+fn water_neighbor_matches(tile_grid: &TileGrid, x: usize, y: usize, direction: Direction) -> bool {
+    let (dx, dy) = match direction {
+        Direction::Up => (0, -1),
+        Direction::Right => (1, 0),
+        Direction::Down => (0, 1),
+        Direction::Left => (-1, 0),
+    };
+    tile_grid
+        .get(x as i32 + dx, y as i32 + dy)
+        .is_some_and(|tile| tile == TileKind::Water)
+}
+
+fn spawn_3d_water_edge(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    top_left: Vec2,
+    edge: Direction,
+) {
+    let half_tile = TILE_SIZE / 2.0;
+    let half_edge = VIEW_3D_WATER_EDGE_THICKNESS / 2.0;
+    let edge_length = TILE_SIZE;
+    let (center, size) = match edge {
+        Direction::Up => (
+            top_left + Vec2::new(half_tile, half_edge),
+            Vec3::new(
+                edge_length,
+                VIEW_3D_WATER_EDGE_HEIGHT,
+                VIEW_3D_WATER_EDGE_THICKNESS,
+            ),
+        ),
+        Direction::Right => (
+            top_left + Vec2::new(TILE_SIZE - half_edge, half_tile),
+            Vec3::new(
+                VIEW_3D_WATER_EDGE_THICKNESS,
+                VIEW_3D_WATER_EDGE_HEIGHT,
+                edge_length,
+            ),
+        ),
+        Direction::Down => (
+            top_left + Vec2::new(half_tile, TILE_SIZE - half_edge),
+            Vec3::new(
+                edge_length,
+                VIEW_3D_WATER_EDGE_HEIGHT,
+                VIEW_3D_WATER_EDGE_THICKNESS,
+            ),
+        ),
+        Direction::Left => (
+            top_left + Vec2::new(half_edge, half_tile),
+            Vec3::new(
+                VIEW_3D_WATER_EDGE_THICKNESS,
+                VIEW_3D_WATER_EDGE_HEIGHT,
+                edge_length,
+            ),
+        ),
+    };
+    spawn_3d_static_beveled_block(
+        commands,
+        assets,
+        center,
+        VIEW_3D_WATER_EDGE_HEIGHT / 2.0,
+        size,
+        assets.water_edge_material.clone(),
+    );
 }
 
 fn spawn_3d_ice_tile(commands: &mut Commands, assets: &View3dAssets, x: usize, y: usize) {
@@ -1690,12 +2456,14 @@ fn spawn_3d_ice_tile(commands: &mut Commands, assets: &View3dAssets, x: usize, y
         (Vec2::new(-1.2, -0.7), 5.0, 0.72),
         (Vec2::new(1.4, 1.3), 3.7, -0.62),
     ] {
-        spawn_3d_static_box_with_yaw(
+        spawn_3d_static_capsule_strip_with_yaw(
             commands,
             assets,
             center + offset,
             VIEW_3D_ICE_SURFACE_HEIGHT + 0.08,
-            Vec3::new(length, 0.08, 0.38),
+            length,
+            0.38,
+            0.08,
             yaw,
             assets.ice_mark_material.clone(),
         );
@@ -1744,11 +2512,105 @@ fn spawn_3d_static_box_with_yaw(
     transform.scale = size;
     spawn_3d_mesh(
         commands,
-        assets.effect_mesh.clone(),
+        assets.beveled_block_mesh.clone(),
         material,
         transform,
         View3dStatic,
     );
+}
+
+fn spawn_3d_static_beveled_block(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    center: Vec2,
+    y_center: f32,
+    size: Vec3,
+    material: Handle<StandardMaterial>,
+) {
+    spawn_3d_static_mesh_with_rotation(
+        commands,
+        assets.beveled_block_mesh.clone(),
+        center,
+        y_center,
+        size,
+        Quat::IDENTITY,
+        material,
+    );
+}
+
+fn spawn_3d_static_round_detail(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    center: Vec2,
+    y_center: f32,
+    size: Vec3,
+    material: Handle<StandardMaterial>,
+) {
+    spawn_3d_static_mesh_with_rotation(
+        commands,
+        assets.round_detail_mesh.clone(),
+        center,
+        y_center,
+        size,
+        Quat::IDENTITY,
+        material,
+    );
+}
+
+fn spawn_3d_static_canopy(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    center: Vec2,
+    y_center: f32,
+    size: Vec3,
+    material: Handle<StandardMaterial>,
+) {
+    spawn_3d_static_mesh_with_rotation(
+        commands,
+        assets.canopy_mesh.clone(),
+        center,
+        y_center,
+        size / 2.0,
+        Quat::IDENTITY,
+        material,
+    );
+}
+
+fn spawn_3d_static_capsule_strip_with_yaw(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    center: Vec2,
+    y_center: f32,
+    length: f32,
+    thickness: f32,
+    height: f32,
+    yaw: f32,
+    material: Handle<StandardMaterial>,
+) {
+    spawn_3d_static_mesh_with_rotation(
+        commands,
+        assets.capsule_strip_mesh.clone(),
+        center,
+        y_center,
+        Vec3::new(height, length / 2.0, thickness),
+        Quat::from_rotation_y(yaw) * Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2),
+        material,
+    );
+}
+
+fn spawn_3d_static_mesh_with_rotation(
+    commands: &mut Commands,
+    mesh: Handle<Mesh>,
+    center: Vec2,
+    y_center: f32,
+    scale: Vec3,
+    rotation: Quat,
+    material: Handle<StandardMaterial>,
+) {
+    let mut transform = Transform::from_translation(board_3d_point(center, y_center));
+    transform.rotation = rotation;
+    transform.scale = scale;
+    spawn_3d_mesh(commands, mesh, material, transform, View3dStatic);
 }
 
 fn spawn_3d_tank(
@@ -1780,11 +2642,13 @@ fn spawn_3d_tank(
     );
     let material = tank_3d_material(assets, material_kind);
     let center = board_3d_center(tank.top_left, Vec2::splat(TANK_SIZE), VIEW_3D_TANK_HEIGHT);
+    let mut body_transform = Transform::from_translation(center);
+    body_transform.rotation = rotation_from_forward_to_direction(tank.facing);
     let body = spawn_3d_mesh(
         commands,
         assets.tank_body_mesh.clone(),
         material.clone(),
-        Transform::from_translation(center),
+        body_transform,
         View3dDynamic,
     );
     commands.entity(body).insert(Name::new(format!(
@@ -1793,7 +2657,15 @@ fn spawn_3d_tank(
     )));
 
     spawn_3d_tank_tracks(commands, assets, tank.top_left, tank.facing);
-    spawn_3d_tank_turret(commands, assets, tank.top_left, material);
+    spawn_3d_tank_body_details(commands, assets, tank.top_left, tank.facing);
+    spawn_3d_tank_front_plate(
+        commands,
+        assets,
+        tank.top_left,
+        tank.facing,
+        material.clone(),
+    );
+    spawn_3d_tank_turret(commands, assets, tank.top_left, tank.facing, material);
 
     if let Some(player) = player {
         spawn_3d_player_marker(commands, assets, tank.top_left, player.id);
@@ -1802,14 +2674,8 @@ fn spawn_3d_tank(
         }
     }
 
-    let (barrel_mesh_kind, barrel_translation) = tank_barrel_transform(tank.top_left, tank.facing);
-    spawn_3d_mesh(
-        commands,
-        barrel_mesh(assets, barrel_mesh_kind),
-        assets.barrel_material.clone(),
-        Transform::from_translation(barrel_translation),
-        View3dDynamic,
-    );
+    spawn_3d_tank_barrel(commands, assets, tank.top_left, tank.facing);
+    spawn_3d_tank_headlights(commands, assets, tank.top_left, tank.facing);
 
     if assist_enabled && enemy.is_some() {
         spawn_3d_marker(
@@ -1827,6 +2693,9 @@ fn spawn_3d_tank(
     if assist_enabled && player.is_some() {
         spawn_3d_aim_guide(commands, assets, tank, tile_grid);
     }
+    if player.is_some() && view_target {
+        spawn_3d_movement_block_indicator(commands, assets, tank, tile_grid);
+    }
 
     if let Some(kind) = tank_3d_protection_kind(shield.is_some(), spawn_protection.is_some()) {
         spawn_3d_tank_protection(commands, assets, tank.top_left, kind);
@@ -1842,18 +2711,89 @@ fn spawn_3d_tank_tracks(
     let center = top_left + Vec2::splat(TANK_SIZE / 2.0);
     let forward = facing.movement();
     let side = Vec2::new(-forward.y, forward.x);
-    let mesh = match facing {
-        Direction::Left | Direction::Right => assets.tank_track_x_mesh.clone(),
-        Direction::Up | Direction::Down => assets.tank_track_z_mesh.clone(),
-    };
 
     for offset in [-5.2, 5.2] {
+        let mut transform = Transform::from_translation(board_3d_point(
+            center + side * offset,
+            VIEW_3D_TANK_TRACK_Y,
+        ));
+        transform.rotation = rotation_from_y_to_direction(facing);
         spawn_3d_mesh(
             commands,
-            mesh.clone(),
+            assets.tank_track_mesh.clone(),
             assets.barrel_material.clone(),
-            Transform::from_translation(board_3d_point(center + side * offset, 0.35)),
+            transform,
             View3dDynamic,
+        );
+
+        for forward_offset in [-4.1, 0.0, 4.1] {
+            let mut wheel_transform = Transform::from_translation(board_3d_point(
+                center + side * offset + forward * forward_offset,
+                VIEW_3D_TANK_WHEEL_Y,
+            ));
+            wheel_transform.rotation = rotation_from_y_to_horizontal_vector(side);
+            spawn_3d_mesh(
+                commands,
+                assets.tank_wheel_mesh.clone(),
+                assets.barrel_material.clone(),
+                wheel_transform,
+                View3dDynamic,
+            );
+        }
+    }
+}
+
+fn spawn_3d_tank_body_details(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    top_left: Vec2,
+    facing: Direction,
+) {
+    let center = top_left + Vec2::splat(TANK_SIZE / 2.0);
+    let forward = facing.movement();
+    let side = Vec2::new(-forward.y, forward.x);
+
+    for side_offset in [-4.85, 4.85] {
+        spawn_3d_named_dynamic_mesh(
+            commands,
+            assets.effect_mesh.clone(),
+            assets.tank_detail_material.clone(),
+            Transform::from_translation(board_3d_point(
+                center + side * side_offset,
+                VIEW_3D_TANK_SIDE_ARMOR_Y,
+            ))
+            .with_scale(oriented_tank_box_scale(facing, 8.4, 0.58, 1.2)),
+            "3D Tank Side Armor",
+        );
+
+        for forward_offset in [-5.0, -2.5, 0.0, 2.5, 5.0] {
+            spawn_3d_named_dynamic_mesh(
+                commands,
+                assets.effect_mesh.clone(),
+                assets.tank_detail_material.clone(),
+                Transform::from_translation(board_3d_point(
+                    center + side * side_offset + forward * forward_offset,
+                    VIEW_3D_TANK_TRACK_PAD_Y,
+                ))
+                .with_scale(oriented_tank_box_scale(facing, 0.62, 0.24, 1.55)),
+                "3D Tank Track Pad",
+            );
+        }
+    }
+
+    for side_offset in [-2.1, 2.1] {
+        let mut exhaust_transform = Transform::from_translation(board_3d_point(
+            center - forward * 5.8 + side * side_offset,
+            VIEW_3D_TANK_EXHAUST_Y,
+        ));
+        exhaust_transform.rotation = rotation_from_y_to_direction(facing.opposite());
+        exhaust_transform.scale = Vec3::new(0.34, 1.15, 0.34);
+        spawn_3d_named_dynamic_mesh(
+            commands,
+            assets.capsule_strip_mesh.clone(),
+            assets.tank_detail_material.clone(),
+            exhaust_transform,
+            "3D Tank Exhaust",
         );
     }
 }
@@ -1862,16 +2802,120 @@ fn spawn_3d_tank_turret(
     commands: &mut Commands,
     assets: &View3dAssets,
     top_left: Vec2,
+    facing: Direction,
     material: Handle<StandardMaterial>,
 ) {
     let center = top_left + Vec2::splat(TANK_SIZE / 2.0);
+    let forward = facing.movement();
+    let side = Vec2::new(-forward.y, forward.x);
     spawn_3d_mesh(
         commands,
         assets.tank_turret_mesh.clone(),
-        material,
+        material.clone(),
         Transform::from_translation(board_3d_point(center, VIEW_3D_TANK_HEIGHT + 0.7)),
         View3dDynamic,
     );
+    spawn_3d_named_dynamic_mesh(
+        commands,
+        assets.powerup_ring_mesh.clone(),
+        assets.tank_detail_material.clone(),
+        Transform::from_translation(board_3d_point(center, VIEW_3D_TANK_HEIGHT + 1.02))
+            .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
+            .with_scale(Vec3::new(0.92, 0.92, 0.92)),
+        "3D Tank Turret Ring",
+    );
+    spawn_3d_mesh(
+        commands,
+        assets.tank_hatch_mesh.clone(),
+        assets.barrel_material.clone(),
+        Transform::from_translation(board_3d_point(center, VIEW_3D_TANK_HATCH_Y)),
+        View3dDynamic,
+    );
+    spawn_3d_named_dynamic_mesh(
+        commands,
+        assets.effect_mesh.clone(),
+        assets.tank_detail_material.clone(),
+        Transform::from_translation(board_3d_point(
+            center + forward * 1.35 + side * 1.05,
+            VIEW_3D_TANK_HATCH_Y + 0.34,
+        ))
+        .with_scale(oriented_tank_box_scale(facing, 1.2, 0.44, 0.72)),
+        "3D Tank Periscope",
+    );
+    spawn_3d_named_dynamic_mesh(
+        commands,
+        assets.capsule_strip_mesh.clone(),
+        assets.tank_detail_material.clone(),
+        Transform::from_translation(board_3d_point(
+            center - forward * 2.8 - side * 2.2,
+            VIEW_3D_TANK_ANTENNA_Y,
+        ))
+        .with_scale(Vec3::new(0.13, 2.35, 0.13)),
+        "3D Tank Antenna",
+    );
+}
+
+fn spawn_3d_tank_front_plate(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    top_left: Vec2,
+    facing: Direction,
+    material: Handle<StandardMaterial>,
+) {
+    spawn_3d_mesh(
+        commands,
+        assets.tank_front_plate_mesh.clone(),
+        material,
+        tank_front_plate_transform(top_left, facing),
+        View3dDynamic,
+    );
+}
+
+fn spawn_3d_tank_barrel(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    top_left: Vec2,
+    facing: Direction,
+) {
+    spawn_3d_mesh(
+        commands,
+        assets.tank_barrel_mesh.clone(),
+        assets.barrel_material.clone(),
+        tank_barrel_transform(top_left, facing),
+        View3dDynamic,
+    );
+    spawn_3d_mesh(
+        commands,
+        assets.tank_muzzle_mesh.clone(),
+        assets.barrel_material.clone(),
+        tank_muzzle_transform(top_left, facing),
+        View3dDynamic,
+    );
+}
+
+fn spawn_3d_tank_headlights(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    top_left: Vec2,
+    facing: Direction,
+) {
+    let center = top_left + Vec2::splat(TANK_SIZE / 2.0);
+    let forward = facing.movement();
+    let side = Vec2::new(-forward.y, forward.x);
+
+    for side_offset in [-2.45, 2.45] {
+        spawn_3d_named_dynamic_mesh(
+            commands,
+            assets.effect_sphere_mesh.clone(),
+            assets.tank_headlight_material.clone(),
+            Transform::from_translation(board_3d_point(
+                center + forward * 6.4 + side * side_offset,
+                VIEW_3D_TANK_HEADLIGHT_Y,
+            ))
+            .with_scale(Vec3::new(0.42, 0.32, 0.42)),
+            "3D Tank Headlight",
+        );
+    }
 }
 
 fn spawn_3d_bullet(
@@ -1885,17 +2929,63 @@ fn spawn_3d_bullet(
         commands,
         assets.bullet_mesh.clone(),
         bullet_3d_material(assets, material_kind),
-        Transform::from_translation(board_3d_center(
-            bullet.top_left,
-            Vec2::splat(BULLET_SIZE),
-            1.4,
-        )),
+        bullet_3d_transform(bullet),
         View3dDynamic,
     );
     commands.entity(entity).insert(Name::new(format!(
         "3D Bullet {:?} {:?}",
         material_kind, source
     )));
+
+    let trail = spawn_3d_mesh(
+        commands,
+        assets.bullet_trail_mesh.clone(),
+        assets.bullet_trail_material.clone(),
+        bullet_trail_3d_transform(bullet),
+        View3dDynamic,
+    );
+    commands.entity(trail).insert(Name::new(format!(
+        "3D Bullet Trail {:?} {:?}",
+        material_kind, source
+    )));
+
+    let glow = spawn_3d_mesh(
+        commands,
+        assets.effect_sphere_mesh.clone(),
+        bullet_3d_material(assets, material_kind),
+        bullet_glow_3d_transform(bullet),
+        View3dDynamic,
+    );
+    commands.entity(glow).insert(Name::new(format!(
+        "3D Bullet Glow {:?} {:?}",
+        material_kind, source
+    )));
+}
+
+pub(super) fn bullet_3d_transform(bullet: &Bullet) -> Transform {
+    let mut transform = Transform::from_translation(board_3d_point(
+        bullet.top_left + Vec2::splat(BULLET_SIZE / 2.0),
+        VIEW_3D_BULLET_Y,
+    ));
+    transform.rotation = rotation_from_y_to_direction(bullet.facing);
+    transform
+}
+
+pub(super) fn bullet_trail_3d_transform(bullet: &Bullet) -> Transform {
+    let center = bullet.top_left + Vec2::splat(BULLET_SIZE / 2.0)
+        - bullet.facing.movement() * VIEW_3D_BULLET_TRAIL_BACK_OFFSET;
+    let mut transform = Transform::from_translation(board_3d_point(center, VIEW_3D_BULLET_TRAIL_Y));
+    transform.rotation = rotation_from_y_to_direction(bullet.facing);
+    transform.scale = Vec3::new(0.65, VIEW_3D_BULLET_TRAIL_LENGTH / 2.0, 0.65);
+    transform
+}
+
+fn bullet_glow_3d_transform(bullet: &Bullet) -> Transform {
+    let center = bullet.top_left
+        + Vec2::splat(BULLET_SIZE / 2.0)
+        + bullet.facing.movement() * (BULLET_SIZE * 0.38);
+    Transform::from_translation(board_3d_point(center, VIEW_3D_BULLET_Y))
+        .with_scale(Vec3::new(1.25, 1.25, 1.25))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1932,10 +3022,11 @@ fn spawn_3d_base(
     assist_enabled: bool,
 ) {
     let material_kind = base_3d_material_kind(base.owner);
+    let material = base_3d_material(assets, material_kind);
     let entity = spawn_3d_mesh(
         commands,
         assets.base_mesh.clone(),
-        base_3d_material(assets, material_kind),
+        material.clone(),
         Transform::from_translation(board_3d_center(
             base.top_left,
             Vec2::splat(TANK_SIZE),
@@ -1947,6 +3038,17 @@ fn spawn_3d_base(
         "3D Base {:?} {:?}",
         material_kind, source
     )));
+    spawn_3d_mesh(
+        commands,
+        assets.base_cap_mesh.clone(),
+        material.clone(),
+        Transform::from_translation(board_3d_point(
+            base.top_left + Vec2::splat(TANK_SIZE / 2.0),
+            VIEW_3D_BASE_HEIGHT + 0.5,
+        )),
+        View3dDynamic,
+    );
+    spawn_3d_base_details(commands, assets, base.top_left, material);
 
     if assist_enabled {
         spawn_3d_marker(
@@ -1954,6 +3056,61 @@ fn spawn_3d_base(
             assets,
             base.top_left,
             assets.base_marker_material.clone(),
+        );
+    }
+}
+
+fn spawn_3d_base_details(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    top_left: Vec2,
+    material: Handle<StandardMaterial>,
+) {
+    let center = top_left + Vec2::splat(TANK_SIZE / 2.0);
+    spawn_3d_named_dynamic_mesh(
+        commands,
+        assets.effect_mesh.clone(),
+        assets.tank_detail_material.clone(),
+        Transform::from_translation(board_3d_point(center, 0.35)).with_scale(Vec3::new(
+            TANK_SIZE + 2.0,
+            0.7,
+            TANK_SIZE + 2.0,
+        )),
+        "3D Base Plinth",
+    );
+
+    spawn_3d_named_dynamic_mesh(
+        commands,
+        assets.effect_mesh.clone(),
+        assets.tank_detail_material.clone(),
+        Transform::from_translation(board_3d_point(
+            center + Vec2::new(0.0, -TANK_SIZE / 2.0 - 0.35),
+            1.35,
+        ))
+        .with_scale(Vec3::new(TANK_SIZE * 0.72, 1.6, 0.7)),
+        "3D Base Front Lip",
+    );
+
+    spawn_3d_named_dynamic_mesh(
+        commands,
+        assets.effect_mesh.clone(),
+        material.clone(),
+        Transform::from_translation(board_3d_point(center, VIEW_3D_BASE_HEIGHT + 1.32))
+            .with_scale(Vec3::new(2.6, 0.55, 4.4)),
+        "3D Base Crest Body",
+    );
+
+    for side_offset in [-2.65, 2.65] {
+        spawn_3d_named_dynamic_mesh(
+            commands,
+            assets.effect_mesh.clone(),
+            material.clone(),
+            Transform::from_translation(board_3d_point(
+                center + Vec2::new(side_offset, 0.8),
+                VIEW_3D_BASE_HEIGHT + 1.18,
+            ))
+            .with_scale(Vec3::new(2.2, 0.46, 2.0)),
+            "3D Base Crest Wing",
         );
     }
 }
@@ -1969,12 +3126,25 @@ fn spawn_3d_powerup(
         commands,
         assets.powerup_mesh.clone(),
         powerup_3d_material(assets, kind),
-        Transform::from_translation(board_3d_center(top_left, Vec2::splat(TANK_SIZE), 2.0)),
+        Transform::from_translation(board_3d_point(top_left + Vec2::splat(TANK_SIZE / 2.0), 1.8))
+            .with_scale(Vec3::new(3.0, 1.25, 3.0)),
         View3dDynamic,
     );
     commands
         .entity(entity)
         .insert(Name::new(format!("3D PowerUp {:?} {:?}", kind, source)));
+    let mut ring_transform = Transform::from_translation(board_3d_point(
+        top_left + Vec2::splat(TANK_SIZE / 2.0),
+        3.15,
+    ));
+    ring_transform.rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    spawn_3d_mesh(
+        commands,
+        assets.powerup_ring_mesh.clone(),
+        powerup_3d_material(assets, kind),
+        ring_transform,
+        View3dDynamic,
+    );
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2057,57 +3227,450 @@ fn spawn_3d_effect(
     source: Entity,
     kind: View3dEffectKind,
     top_left: Vec2,
+    impact_direction: Option<Direction>,
 ) {
-    let (material, scale, height) = view_3d_effect_style(assets, kind);
-    let mut transform = Transform::from_translation(board_3d_center(
-        top_left,
-        Vec2::splat(view_3d_effect_size(kind)),
-        height,
-    ));
-    transform.scale = scale;
-    let entity = spawn_3d_mesh(
-        commands,
-        assets.effect_mesh.clone(),
-        material,
-        transform,
-        View3dDynamic,
-    );
-    commands
-        .entity(entity)
-        .insert(Name::new(format!("3D Effect {:?} {:?}", kind, source)));
+    match kind {
+        View3dEffectKind::Explosion => {
+            spawn_3d_explosion_effect(commands, assets, source, top_left)
+        }
+        View3dEffectKind::BaseDestruction => {
+            spawn_3d_base_destruction_effect(commands, assets, source, top_left);
+        }
+        View3dEffectKind::BulletImpact => {
+            spawn_3d_bullet_impact_effect(commands, assets, source, top_left, impact_direction);
+        }
+        View3dEffectKind::SpawnShimmer => {
+            spawn_3d_spawn_shimmer_effect(commands, assets, source, top_left);
+        }
+        View3dEffectKind::PowerUpSparkle => {
+            spawn_3d_powerup_sparkle_effect(commands, assets, source, top_left);
+        }
+    }
 }
 
-fn view_3d_effect_style(
+fn spawn_3d_explosion_effect(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    source: Entity,
+    top_left: Vec2,
+) {
+    spawn_3d_effect_part(
+        commands,
+        assets.effect_sphere_mesh.clone(),
+        assets.effect_flash_material.clone(),
+        effect_part_transform(
+            View3dEffectKind::Explosion,
+            top_left,
+            Vec2::ZERO,
+            2.7,
+            Vec3::new(11.5, 2.4, 11.5),
+        ),
+        View3dEffectKind::Explosion,
+        "Flash",
+        source,
+    );
+    spawn_3d_effect_part(
+        commands,
+        assets.effect_sphere_mesh.clone(),
+        assets.explosion_material.clone(),
+        effect_part_transform(
+            View3dEffectKind::Explosion,
+            top_left,
+            Vec2::ZERO,
+            6.4,
+            Vec3::new(7.2, 5.2, 7.2),
+        ),
+        View3dEffectKind::Explosion,
+        "Core",
+        source,
+    );
+
+    for (index, (offset, y, scale)) in [
+        (Vec2::new(-4.8, -3.6), 7.0, Vec3::new(4.4, 3.2, 4.4)),
+        (Vec2::new(4.4, -2.8), 7.8, Vec3::new(3.8, 3.0, 3.8)),
+        (Vec2::new(-2.2, 4.6), 8.5, Vec3::new(4.8, 3.4, 4.8)),
+        (Vec2::new(4.6, 4.0), 6.8, Vec3::new(3.4, 2.8, 3.4)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        spawn_3d_effect_part(
+            commands,
+            assets.effect_sphere_mesh.clone(),
+            assets.effect_smoke_material.clone(),
+            effect_part_transform(View3dEffectKind::Explosion, top_left, offset, y, scale),
+            View3dEffectKind::Explosion,
+            effect_indexed_part_name("Smoke", index),
+            source,
+        );
+    }
+
+    for (index, direction) in [
+        Vec2::new(1.0, 0.0),
+        Vec2::new(-1.0, 0.0),
+        Vec2::new(0.0, 1.0),
+        Vec2::new(0.0, -1.0),
+        Vec2::new(0.74, 0.74),
+        Vec2::new(-0.74, -0.74),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        spawn_3d_effect_spark(
+            commands,
+            assets,
+            View3dEffectKind::Explosion,
+            top_left,
+            direction * 4.3,
+            direction,
+            4.2,
+            0.28,
+            effect_indexed_part_name("Spark", index),
+            source,
+        );
+    }
+}
+
+fn spawn_3d_base_destruction_effect(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    source: Entity,
+    top_left: Vec2,
+) {
+    spawn_3d_effect_part(
+        commands,
+        assets.effect_sphere_mesh.clone(),
+        assets.base_destruction_material.clone(),
+        effect_part_transform(
+            View3dEffectKind::BaseDestruction,
+            top_left,
+            Vec2::ZERO,
+            6.8,
+            Vec3::new(10.0, 5.5, 10.0),
+        ),
+        View3dEffectKind::BaseDestruction,
+        "Core",
+        source,
+    );
+
+    for (index, (offset, scale, rotation)) in [
+        (Vec2::new(-5.2, -3.8), Vec3::new(3.4, 1.4, 2.2), -0.35),
+        (Vec2::new(4.8, -3.2), Vec3::new(2.8, 1.2, 2.8), 0.55),
+        (Vec2::new(-3.4, 5.1), Vec3::new(2.4, 1.6, 3.2), 1.25),
+        (Vec2::new(5.8, 4.4), Vec3::new(3.0, 1.1, 2.0), -1.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut transform = effect_part_transform(
+            View3dEffectKind::BaseDestruction,
+            top_left,
+            offset,
+            2.2,
+            scale,
+        );
+        transform.rotation = Quat::from_rotation_y(rotation);
+        spawn_3d_effect_part(
+            commands,
+            assets.beveled_block_mesh.clone(),
+            assets.effect_debris_material.clone(),
+            transform,
+            View3dEffectKind::BaseDestruction,
+            effect_indexed_part_name("Debris", index),
+            source,
+        );
+    }
+
+    for (index, (offset, scale)) in [
+        (Vec2::new(-5.5, 0.5), Vec3::new(4.6, 3.8, 4.6)),
+        (Vec2::new(0.5, -5.8), Vec3::new(4.0, 4.0, 4.0)),
+        (Vec2::new(5.4, 1.6), Vec3::new(5.0, 3.5, 5.0)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        spawn_3d_effect_part(
+            commands,
+            assets.effect_sphere_mesh.clone(),
+            assets.effect_smoke_material.clone(),
+            effect_part_transform(
+                View3dEffectKind::BaseDestruction,
+                top_left,
+                offset,
+                8.2,
+                scale,
+            ),
+            View3dEffectKind::BaseDestruction,
+            effect_indexed_part_name("Smoke", index),
+            source,
+        );
+    }
+}
+
+fn spawn_3d_bullet_impact_effect(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    source: Entity,
+    top_left: Vec2,
+) {
+    spawn_3d_effect_part(
+        commands,
+        assets.effect_sphere_mesh.clone(),
+        assets.bullet_impact_material.clone(),
+        effect_part_transform(
+            View3dEffectKind::BulletImpact,
+            top_left,
+            Vec2::ZERO,
+            2.6,
+            Vec3::new(3.2, 1.5, 3.2),
+        ),
+        View3dEffectKind::BulletImpact,
+        "Flash",
+        source,
+    );
+
+    for (index, direction) in [
+        Vec2::new(1.0, 0.0),
+        Vec2::new(-1.0, 0.0),
+        Vec2::new(0.0, 1.0),
+        Vec2::new(0.0, -1.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        spawn_3d_effect_spark(
+            commands,
+            assets,
+            View3dEffectKind::BulletImpact,
+            top_left,
+            direction * 1.9,
+            direction,
+            2.4,
+            0.22,
+            effect_indexed_part_name("Spark", index),
+            source,
+        );
+    }
+
+    spawn_3d_effect_part(
+        commands,
+        assets.effect_sphere_mesh.clone(),
+        assets.effect_smoke_material.clone(),
+        effect_part_transform(
+            View3dEffectKind::BulletImpact,
+            top_left,
+            Vec2::new(0.4, 0.2),
+            3.4,
+            Vec3::new(2.0, 1.3, 2.0),
+        ),
+        View3dEffectKind::BulletImpact,
+        "Smoke",
+        source,
+    );
+}
+
+fn spawn_3d_spawn_shimmer_effect(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    source: Entity,
+    top_left: Vec2,
+) {
+    spawn_3d_effect_part(
+        commands,
+        assets.effect_sphere_mesh.clone(),
+        assets.spawn_effect_material.clone(),
+        effect_part_transform(
+            View3dEffectKind::SpawnShimmer,
+            top_left,
+            Vec2::ZERO,
+            6.0,
+            Vec3::new(9.0, 4.0, 9.0),
+        ),
+        View3dEffectKind::SpawnShimmer,
+        "Glow",
+        source,
+    );
+
+    let mut ring_transform = effect_part_transform(
+        View3dEffectKind::SpawnShimmer,
+        top_left,
+        Vec2::ZERO,
+        2.6,
+        Vec3::new(1.8, 1.8, 1.8),
+    );
+    ring_transform.rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    spawn_3d_effect_part(
+        commands,
+        assets.powerup_ring_mesh.clone(),
+        assets.spawn_effect_material.clone(),
+        ring_transform,
+        View3dEffectKind::SpawnShimmer,
+        "Ring",
+        source,
+    );
+
+    for (index, offset) in [
+        Vec2::new(-5.5, -5.5),
+        Vec2::new(5.5, -5.5),
+        Vec2::new(-5.5, 5.5),
+        Vec2::new(5.5, 5.5),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        spawn_3d_effect_part(
+            commands,
+            assets.effect_spark_mesh.clone(),
+            assets.spawn_effect_material.clone(),
+            effect_part_transform(
+                View3dEffectKind::SpawnShimmer,
+                top_left,
+                offset,
+                5.2,
+                Vec3::new(0.34, 5.8, 0.34),
+            ),
+            View3dEffectKind::SpawnShimmer,
+            effect_indexed_part_name("Column", index),
+            source,
+        );
+    }
+}
+
+fn spawn_3d_powerup_sparkle_effect(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    source: Entity,
+    top_left: Vec2,
+) {
+    spawn_3d_effect_part(
+        commands,
+        assets.effect_sphere_mesh.clone(),
+        assets.powerup_sparkle_material.clone(),
+        effect_part_transform(
+            View3dEffectKind::PowerUpSparkle,
+            top_left,
+            Vec2::ZERO,
+            4.8,
+            Vec3::new(4.2, 2.4, 4.2),
+        ),
+        View3dEffectKind::PowerUpSparkle,
+        "Flash",
+        source,
+    );
+
+    let mut ring_transform = effect_part_transform(
+        View3dEffectKind::PowerUpSparkle,
+        top_left,
+        Vec2::ZERO,
+        4.1,
+        Vec3::new(1.25, 1.25, 1.25),
+    );
+    ring_transform.rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    spawn_3d_effect_part(
+        commands,
+        assets.powerup_ring_mesh.clone(),
+        assets.powerup_sparkle_material.clone(),
+        ring_transform,
+        View3dEffectKind::PowerUpSparkle,
+        "Ring",
+        source,
+    );
+
+    for (index, direction) in [
+        Vec2::new(1.0, 0.0),
+        Vec2::new(-1.0, 0.0),
+        Vec2::new(0.0, 1.0),
+        Vec2::new(0.0, -1.0),
+        Vec2::new(0.7, -0.7),
+        Vec2::new(-0.7, 0.7),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        spawn_3d_effect_spark(
+            commands,
+            assets,
+            View3dEffectKind::PowerUpSparkle,
+            top_left,
+            direction * 3.2,
+            direction,
+            2.8,
+            0.2,
+            effect_indexed_part_name("Ray", index),
+            source,
+        );
+    }
+}
+
+fn spawn_3d_effect_spark(
+    commands: &mut Commands,
     assets: &View3dAssets,
     kind: View3dEffectKind,
-) -> (Handle<StandardMaterial>, Vec3, f32) {
-    match kind {
-        View3dEffectKind::Explosion => (
-            assets.explosion_material.clone(),
-            Vec3::new(15.0, 9.0, 15.0),
-            9.0,
-        ),
-        View3dEffectKind::BaseDestruction => (
-            assets.base_destruction_material.clone(),
-            Vec3::new(18.0, 12.0, 18.0),
-            12.0,
-        ),
-        View3dEffectKind::BulletImpact => (
-            assets.bullet_impact_material.clone(),
-            Vec3::new(5.5, 3.5, 5.5),
-            3.5,
-        ),
-        View3dEffectKind::SpawnShimmer => (
-            assets.spawn_effect_material.clone(),
-            Vec3::new(18.0, 8.0, 18.0),
-            8.0,
-        ),
-        View3dEffectKind::PowerUpSparkle => (
-            assets.powerup_sparkle_material.clone(),
-            Vec3::new(10.0, 5.0, 10.0),
-            5.0,
-        ),
-    }
+    top_left: Vec2,
+    offset: Vec2,
+    direction: Vec2,
+    length: f32,
+    width: f32,
+    part: impl Into<String>,
+    source: Entity,
+) {
+    let mut transform = effect_part_transform(
+        kind,
+        top_left,
+        offset,
+        3.7,
+        Vec3::new(width, length / 2.0, width),
+    );
+    transform.rotation = rotation_from_y_to_horizontal_vector(direction);
+    spawn_3d_effect_part(
+        commands,
+        assets.effect_spark_mesh.clone(),
+        assets.bullet_impact_material.clone(),
+        transform,
+        kind,
+        part,
+        source,
+    );
+}
+
+fn spawn_3d_effect_part(
+    commands: &mut Commands,
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+    transform: Transform,
+    kind: View3dEffectKind,
+    part: impl Into<String>,
+    source: Entity,
+) {
+    let entity = spawn_3d_mesh(commands, mesh, material, transform, View3dDynamic);
+    commands.entity(entity).insert(Name::new(format!(
+        "3D Effect {:?} {} {:?}",
+        kind,
+        part.into(),
+        source
+    )));
+}
+
+fn effect_part_transform(
+    kind: View3dEffectKind,
+    top_left: Vec2,
+    offset: Vec2,
+    y: f32,
+    scale: Vec3,
+) -> Transform {
+    Transform::from_translation(effect_part_translation(kind, top_left, offset, y))
+        .with_scale(scale)
+}
+
+fn effect_part_translation(kind: View3dEffectKind, top_left: Vec2, offset: Vec2, y: f32) -> Vec3 {
+    board_3d_point(
+        top_left + Vec2::splat(view_3d_effect_size(kind) / 2.0) + offset,
+        y,
+    )
+}
+
+fn effect_indexed_part_name(label: &'static str, index: usize) -> String {
+    format!("{label}{index}")
 }
 
 fn spawn_3d_marker(
@@ -2275,6 +3838,74 @@ fn aim_guide_scale(direction: Direction, length: f32) -> Vec3 {
     }
 }
 
+fn spawn_3d_movement_block_indicator(
+    commands: &mut Commands,
+    assets: &View3dAssets,
+    tank: &Tank,
+    tile_grid: &TileGrid,
+) {
+    let Some(clear_distance) =
+        movement_block_contact_distance(tile_grid, tank, VIEW_3D_MOVEMENT_BLOCK_MAX_LENGTH)
+    else {
+        return;
+    };
+
+    let movement = tank.facing.movement();
+    let center = tank.top_left
+        + Vec2::splat(TANK_SIZE / 2.0)
+        + movement * (TANK_SIZE / 2.0 + clear_distance);
+    let mut transform =
+        Transform::from_translation(board_3d_point(center, VIEW_3D_MOVEMENT_BLOCK_HEIGHT / 2.0));
+    transform.scale = movement_block_indicator_scale(tank.facing);
+    let entity = spawn_3d_mesh(
+        commands,
+        assets.effect_mesh.clone(),
+        assets.movement_block_material.clone(),
+        transform,
+        View3dDynamic,
+    );
+    commands
+        .entity(entity)
+        .insert(Name::new("3D Movement Block"));
+}
+
+pub(super) fn movement_block_contact_distance(
+    tile_grid: &TileGrid,
+    tank: &Tank,
+    max_length: f32,
+) -> Option<f32> {
+    let movement = tank.facing.movement();
+    let samples = (max_length / VIEW_3D_MOVEMENT_BLOCK_SAMPLE_STEP).ceil() as usize;
+    let mut clear_distance = 0.0;
+
+    for sample in 1..=samples {
+        let distance =
+            (sample as f32 * VIEW_3D_MOVEMENT_BLOCK_SAMPLE_STEP).min(max_length.max(0.0));
+        let top_left = tank.top_left + movement * distance;
+        if !tile_grid.can_tank_occupy(top_left) {
+            return Some(clear_distance);
+        }
+        clear_distance = distance;
+    }
+
+    None
+}
+
+fn movement_block_indicator_scale(direction: Direction) -> Vec3 {
+    match direction {
+        Direction::Left | Direction::Right => Vec3::new(
+            VIEW_3D_MOVEMENT_BLOCK_THICKNESS,
+            VIEW_3D_MOVEMENT_BLOCK_HEIGHT,
+            VIEW_3D_MOVEMENT_BLOCK_WIDTH,
+        ),
+        Direction::Up | Direction::Down => Vec3::new(
+            VIEW_3D_MOVEMENT_BLOCK_WIDTH,
+            VIEW_3D_MOVEMENT_BLOCK_HEIGHT,
+            VIEW_3D_MOVEMENT_BLOCK_THICKNESS,
+        ),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Tank3dProtectionKind {
     Shield,
@@ -2407,6 +4038,18 @@ fn spawn_3d_hud_text(commands: &mut Commands, assets: &SpriteAssets, text: &str,
     }
 }
 
+fn spawn_3d_named_dynamic_mesh(
+    commands: &mut Commands,
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+    transform: Transform,
+    name: &'static str,
+) -> Entity {
+    let entity = spawn_3d_mesh(commands, mesh, material, transform, View3dDynamic);
+    commands.entity(entity).insert(Name::new(name));
+    entity
+}
+
 fn spawn_3d_mesh<C: Component>(
     commands: &mut Commands,
     mesh: Handle<Mesh>,
@@ -2423,6 +4066,18 @@ fn spawn_3d_mesh<C: Component>(
             marker,
         ))
         .id()
+}
+
+fn oriented_tank_box_scale(
+    facing: Direction,
+    forward_length: f32,
+    height: f32,
+    width: f32,
+) -> Vec3 {
+    match facing {
+        Direction::Left | Direction::Right => Vec3::new(forward_length, height, width),
+        Direction::Up | Direction::Down => Vec3::new(width, height, forward_length),
+    }
 }
 
 fn despawn_entities(commands: &mut Commands, entities: impl IntoIterator<Item = Entity>) {
@@ -2474,7 +4129,7 @@ fn chase_camera_height_mode(
     }
 }
 
-fn chase_camera_transform_with_forward_and_height_mode(
+pub(super) fn chase_camera_transform_with_forward_and_height_mode(
     tank: &Tank,
     forward_2d: Vec2,
     height_mode: View3dCameraHeightMode,
@@ -2598,36 +4253,56 @@ fn top_left_is_on_board(top_left: Vec2) -> bool {
         && top_left.y <= board_size()
 }
 
-fn direction_3d(direction: Direction) -> Vec3 {
+pub(super) fn tank_barrel_transform(top_left: Vec2, direction: Direction) -> Transform {
+    let center = top_left + Vec2::splat(TANK_SIZE / 2.0);
+    let barrel_center = center + direction.movement() * VIEW_3D_TANK_BARREL_CENTER_OFFSET;
+    let mut transform =
+        Transform::from_translation(board_3d_point(barrel_center, VIEW_3D_TANK_BARREL_Y));
+    transform.rotation = rotation_from_y_to_direction(direction);
+    transform
+}
+
+pub(super) fn tank_front_plate_transform(top_left: Vec2, direction: Direction) -> Transform {
+    let center = top_left + Vec2::splat(TANK_SIZE / 2.0);
+    let plate_center = center + direction.movement() * 3.7;
+    let mut transform =
+        Transform::from_translation(board_3d_point(plate_center, VIEW_3D_TANK_FRONT_PLATE_Y));
+    transform.rotation = rotation_from_forward_to_direction(direction);
+    transform
+}
+
+pub(super) fn tank_muzzle_transform(top_left: Vec2, direction: Direction) -> Transform {
+    let center = top_left + Vec2::splat(TANK_SIZE / 2.0);
+    let muzzle_center = center
+        + direction.movement()
+            * (VIEW_3D_TANK_BARREL_CENTER_OFFSET + VIEW_3D_TANK_BARREL_HALF_LENGTH + 0.15);
+    Transform::from_translation(board_3d_point(muzzle_center, VIEW_3D_TANK_BARREL_Y))
+}
+
+fn rotation_from_y_to_direction(direction: Direction) -> Quat {
     match direction {
-        Direction::Up => Vec3::NEG_Z,
-        Direction::Down => Vec3::Z,
-        Direction::Left => Vec3::NEG_X,
-        Direction::Right => Vec3::X,
+        Direction::Up => Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+        Direction::Down => Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+        Direction::Left => Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+        Direction::Right => Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2),
     }
 }
 
-#[derive(Clone, Copy)]
-enum BarrelMesh {
-    X,
-    Z,
+fn rotation_from_forward_to_direction(direction: Direction) -> Quat {
+    match direction {
+        Direction::Up => Quat::IDENTITY,
+        Direction::Down => Quat::from_rotation_y(std::f32::consts::PI),
+        Direction::Left => Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+        Direction::Right => Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2),
+    }
 }
 
-fn tank_barrel_transform(top_left: Vec2, direction: Direction) -> (BarrelMesh, Vec3) {
-    let center = board_3d_center(top_left, Vec2::splat(TANK_SIZE), VIEW_3D_TANK_HEIGHT);
-    let forward = direction_3d(direction);
-    let barrel_center = center + forward * 7.0 + Vec3::Y * (VIEW_3D_TANK_HEIGHT / 2.0 + 0.8);
-    let mesh = match direction {
-        Direction::Left | Direction::Right => BarrelMesh::X,
-        Direction::Up | Direction::Down => BarrelMesh::Z,
-    };
-    (mesh, barrel_center)
-}
-
-fn barrel_mesh(assets: &View3dAssets, mesh: BarrelMesh) -> Handle<Mesh> {
-    match mesh {
-        BarrelMesh::X => assets.tank_barrel_x_mesh.clone(),
-        BarrelMesh::Z => assets.tank_barrel_z_mesh.clone(),
+fn rotation_from_y_to_horizontal_vector(direction: Vec2) -> Quat {
+    let target = Vec3::new(direction.x, 0.0, direction.y).normalize_or_zero();
+    if target.length_squared() <= f32::EPSILON {
+        Quat::IDENTITY
+    } else {
+        Quat::from_rotation_arc(Vec3::Y, target)
     }
 }
 

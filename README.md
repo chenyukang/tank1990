@@ -32,7 +32,7 @@ In game:
 - P1 fire: `Space`
 - P2 move: arrow keys
 - P2 fire: `Enter` or `RightShift`
-- Pause/resume: `Esc`
+- Pause/resume: `P`, `Esc`, or `Pause`
 - Restart current stage or round: `R`
 - Return to mode select: `M`
 
@@ -43,6 +43,37 @@ In game:
 - Arenas 5, 6, and 8 are `BaseBattle`; the others are `Deathmatch`.
 - Generated placeholder sprite atlases and sounds are used when no personal
   override exists.
+
+## Distribution
+
+Build the release executable with:
+
+```bash
+cargo build --release
+```
+
+Then run the binary directly:
+
+```bash
+./target/release/tank
+```
+
+The default asset manifest, campaign stages, versus arenas, generated sprites,
+and generated sounds are built into the executable, so the default game can be
+distributed as one platform-specific binary without an `assets/` directory.
+Optional private overrides still work when `assets/personal/` is present next
+to the working directory used to launch the game. This is asset-free
+distribution, not a fully static Linux build; target systems may still need the
+usual graphics and audio runtime libraries.
+
+Tag-based GitHub Releases are published by `.github/workflows/release.yml`.
+Pushing a version tag such as `v0.1.0` builds Linux, macOS, and Windows release
+archives that each contain only the executable:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 ## Personal Assets
 
@@ -114,7 +145,8 @@ same RON schema and validation rules as committed maps.
 
 ```bash
 cargo fmt --all
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
+cargo build --locked --release
 git diff --check
 ```

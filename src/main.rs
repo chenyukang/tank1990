@@ -142,7 +142,7 @@ const MODE_SELECT_LEFT: f32 = (VIRTUAL_WIDTH - MODE_SELECT_WIDTH) / 2.0;
 const MODE_SELECT_TITLE_Y: f32 = 35.0;
 const MODE_SELECT_CURSOR_GAP: f32 = 22.0;
 const MODE_SELECT_HINT_TOP: f32 = 198.0;
-static PAUSED_BANNER_LINES: [&str; 4] = ["PAUSED", "ESC RESUME", "R RESTART", "M MENU"];
+static PAUSED_BANNER_LINES: [&str; 4] = ["PAUSED", "P ESC RESUME", "R RESTART", "M MENU"];
 static GAME_OVER_BANNER_LINES: [&str; 2] = ["GAME OVER", "PRESS R OR M"];
 static LEVEL_CLEAR_BANNER_LINES: [&str; 1] = ["LEVEL CLEAR"];
 static P1_WIN_BANNER_LINES: [&str; 2] = ["P1 WIN", "PRESS R OR M"];
@@ -2283,7 +2283,7 @@ fn handle_shared_controls(
         return;
     }
 
-    if keys.just_pressed(KeyCode::Escape) {
+    if pause_toggle_requested(&keys) {
         game_status.phase = toggle_pause_phase(game_status.phase);
     }
 
@@ -5783,6 +5783,12 @@ fn toggle_pause_phase(phase: GamePhase) -> GamePhase {
     }
 }
 
+fn pause_toggle_requested(keys: &ButtonInput<KeyCode>) -> bool {
+    keys.just_pressed(KeyCode::KeyP)
+        || keys.just_pressed(KeyCode::Escape)
+        || keys.just_pressed(KeyCode::Pause)
+}
+
 fn visual_effects_can_advance(phase: GamePhase) -> bool {
     phase != GamePhase::Paused
 }
@@ -8372,6 +8378,91 @@ mod tests {
     }
 
     #[test]
+    fn embedded_distribution_content_matches_authored_defaults() {
+        assert_eq!(embedded_asset_manifest_contents(), MANIFEST);
+        assert_eq!(embedded_stage_contents(1), Some(LEVEL_1));
+        assert_eq!(embedded_stage_contents(LEVEL_COUNT), Some(LEVEL_50));
+        assert_eq!(embedded_stage_contents(0), None);
+        assert_eq!(embedded_stage_contents(LEVEL_COUNT + 1), None);
+        assert_eq!(embedded_arena_contents(1), Some(ARENA_1));
+        assert_eq!(embedded_arena_contents(ARENA_COUNT), Some(ARENA_8));
+        assert_eq!(embedded_arena_contents(0), None);
+        assert_eq!(embedded_arena_contents(ARENA_COUNT + 1), None);
+
+        parse_asset_manifest(embedded_asset_manifest_contents())
+            .expect("embedded manifest should parse");
+        parse_level(embedded_stage_contents(1).expect("stage one should be embedded"))
+            .expect("embedded stage should parse");
+        parse_arena(embedded_arena_contents(1).expect("arena one should be embedded"))
+            .expect("embedded arena should parse");
+    }
+
+    #[test]
+    fn runtime_text_prefers_personal_override_before_authored_default() {
+        let personal = "assets/personal/levels/001.level.ron";
+        let authored = "assets/levels/001.level.ron";
+        let (path, contents) = load_runtime_text_with(
+            personal,
+            authored,
+            Some("embedded"),
+            |path| path == personal || path == authored,
+            |path| Ok(format!("disk:{path}")),
+        )
+        .expect("runtime text should load");
+
+        assert_eq!(path, personal);
+        assert_eq!(
+            contents.as_ref(),
+            "disk:assets/personal/levels/001.level.ron"
+        );
+    }
+
+    #[test]
+    fn runtime_text_uses_embedded_default_when_asset_files_are_absent() {
+        let (path, contents) = load_runtime_text_with(
+            "assets/personal/levels/001.level.ron",
+            "assets/levels/001.level.ron",
+            Some("embedded-stage"),
+            |_| false,
+            |path| Err(format!("failed to read {path}: missing")),
+        )
+        .expect("embedded runtime text should load");
+
+        assert_eq!(path, "assets/levels/001.level.ron");
+        assert_eq!(contents.as_ref(), "embedded-stage");
+    }
+
+    #[test]
+    fn runtime_text_still_reports_authored_path_when_no_default_exists() {
+        let err = match load_runtime_text_with(
+            "assets/personal/levels/099.level.ron",
+            "assets/levels/099.level.ron",
+            None,
+            |_| false,
+            |path| Err(format!("failed to read {path}: missing")),
+        ) {
+            Ok(_) => panic!("missing runtime text should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.contains("assets/levels/099.level.ron"));
+    }
+
+    #[test]
+    fn manifest_text_can_fall_back_to_embedded_default() {
+        let contents = load_text_or_embedded_with(
+            ASSET_MANIFEST_PATH,
+            Some(embedded_asset_manifest_contents()),
+            |_| false,
+            |path| Err(format!("failed to read {path}: missing")),
+        )
+        .expect("embedded manifest text should load");
+        let manifest = parse_asset_manifest(&contents).expect("embedded manifest should parse");
+
+        assert_eq!(manifest.glyphs.tile_width, GENERATED_GLYPH_WIDTH);
+    }
+
+    #[test]
     fn load_level_errors_include_file_path_for_authoring_failures() {
         let path = unique_temp_asset_path("bad-level.ron");
         let path_text = path.to_string_lossy().into_owned();
@@ -10612,6 +10703,20 @@ mod tests {
     }
 
     #[test]
+    fn pause_toggle_accepts_p_escape_and_pause_keys() {
+        for key in [KeyCode::KeyP, KeyCode::Escape, KeyCode::Pause] {
+            let mut keys = ButtonInput::<KeyCode>::default();
+            keys.press(key);
+
+            assert!(pause_toggle_requested(&keys), "{key:?} should pause");
+        }
+
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyR);
+        assert!(!pause_toggle_requested(&keys));
+    }
+
+    #[test]
     fn shared_control_m_returns_to_mode_select_and_clears_runtime_state() {
         let mut app = App::new();
         let level = parse_level(LEVEL_1).expect("level should parse");
@@ -11193,7 +11298,7 @@ mod tests {
     #[test]
     fn paused_banner_shows_resume_restart_and_menu_hints() {
         let lines = phase_banner_lines(GamePhase::Paused, None).expect("paused should show banner");
-        assert!(lines.contains(&"ESC RESUME"));
+        assert!(lines.contains(&"P ESC RESUME"));
         assert!(lines.contains(&"R RESTART"));
         assert!(lines.contains(&"M MENU"));
     }

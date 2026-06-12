@@ -210,7 +210,7 @@ Two-player co-op is not required for MVP, but the architecture should not block 
 
 ### 6.3 Shared Controls
 
-- Pause: `Esc`
+- Pause: `P`, `Esc`, or `Pause`
 - Restart current stage/round: `R`
 - Return to mode select: `M`
 

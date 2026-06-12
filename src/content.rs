@@ -1,7 +1,72 @@
 use super::*;
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+
+const EMBEDDED_ASSET_MANIFEST: &str = include_str!("../assets/manifest.ron");
+const EMBEDDED_LEVELS: [&str; 50] = [
+    include_str!("../assets/levels/001.level.ron"),
+    include_str!("../assets/levels/002.level.ron"),
+    include_str!("../assets/levels/003.level.ron"),
+    include_str!("../assets/levels/004.level.ron"),
+    include_str!("../assets/levels/005.level.ron"),
+    include_str!("../assets/levels/006.level.ron"),
+    include_str!("../assets/levels/007.level.ron"),
+    include_str!("../assets/levels/008.level.ron"),
+    include_str!("../assets/levels/009.level.ron"),
+    include_str!("../assets/levels/010.level.ron"),
+    include_str!("../assets/levels/011.level.ron"),
+    include_str!("../assets/levels/012.level.ron"),
+    include_str!("../assets/levels/013.level.ron"),
+    include_str!("../assets/levels/014.level.ron"),
+    include_str!("../assets/levels/015.level.ron"),
+    include_str!("../assets/levels/016.level.ron"),
+    include_str!("../assets/levels/017.level.ron"),
+    include_str!("../assets/levels/018.level.ron"),
+    include_str!("../assets/levels/019.level.ron"),
+    include_str!("../assets/levels/020.level.ron"),
+    include_str!("../assets/levels/021.level.ron"),
+    include_str!("../assets/levels/022.level.ron"),
+    include_str!("../assets/levels/023.level.ron"),
+    include_str!("../assets/levels/024.level.ron"),
+    include_str!("../assets/levels/025.level.ron"),
+    include_str!("../assets/levels/026.level.ron"),
+    include_str!("../assets/levels/027.level.ron"),
+    include_str!("../assets/levels/028.level.ron"),
+    include_str!("../assets/levels/029.level.ron"),
+    include_str!("../assets/levels/030.level.ron"),
+    include_str!("../assets/levels/031.level.ron"),
+    include_str!("../assets/levels/032.level.ron"),
+    include_str!("../assets/levels/033.level.ron"),
+    include_str!("../assets/levels/034.level.ron"),
+    include_str!("../assets/levels/035.level.ron"),
+    include_str!("../assets/levels/036.level.ron"),
+    include_str!("../assets/levels/037.level.ron"),
+    include_str!("../assets/levels/038.level.ron"),
+    include_str!("../assets/levels/039.level.ron"),
+    include_str!("../assets/levels/040.level.ron"),
+    include_str!("../assets/levels/041.level.ron"),
+    include_str!("../assets/levels/042.level.ron"),
+    include_str!("../assets/levels/043.level.ron"),
+    include_str!("../assets/levels/044.level.ron"),
+    include_str!("../assets/levels/045.level.ron"),
+    include_str!("../assets/levels/046.level.ron"),
+    include_str!("../assets/levels/047.level.ron"),
+    include_str!("../assets/levels/048.level.ron"),
+    include_str!("../assets/levels/049.level.ron"),
+    include_str!("../assets/levels/050.level.ron"),
+];
+const EMBEDDED_ARENAS: [&str; 8] = [
+    include_str!("../assets/arenas/arena_01.ron"),
+    include_str!("../assets/arenas/arena_02.ron"),
+    include_str!("../assets/arenas/arena_03.ron"),
+    include_str!("../assets/arenas/arena_04.ron"),
+    include_str!("../assets/arenas/arena_05.ron"),
+    include_str!("../assets/arenas/arena_06.ron"),
+    include_str!("../assets/arenas/arena_07.ron"),
+    include_str!("../assets/arenas/arena_08.ron"),
+];
 
 pub(super) fn stage_path(stage: usize) -> String {
     format!("assets/levels/{stage:03}.level.ron")
@@ -30,8 +95,15 @@ pub(super) fn preferred_existing_path(
 }
 
 pub(super) fn load_stage_bundle(stage: usize) -> Result<(LevelDefinition, TileGrid), String> {
-    let path = runtime_stage_path(stage);
-    let level = load_level(&path)?;
+    let personal_path = personal_stage_path(stage);
+    let authored_path = stage_path(stage);
+    let (path, contents) = load_runtime_text(
+        &personal_path,
+        &authored_path,
+        embedded_stage_contents(stage),
+    )?;
+    let level =
+        parse_level(&contents).map_err(|err| format!("failed to load level {path}: {err}"))?;
     let grid = TileGrid::from_level(&level)
         .map_err(|err| format!("failed to build level grid {path}: {err}"))?;
     Ok((level, grid))
@@ -62,13 +134,26 @@ pub(super) fn runtime_arena_path(arena: usize) -> String {
     })
 }
 
+fn load_runtime_arena_definition(arena: usize) -> Result<(String, ArenaDefinition), String> {
+    let personal_path = personal_arena_path(arena);
+    let authored_path = arena_path(arena);
+    let (path, contents) = load_runtime_text(
+        &personal_path,
+        &authored_path,
+        embedded_arena_contents(arena),
+    )?;
+    let arena_definition =
+        parse_arena(&contents).map_err(|err| format!("failed to load arena {path}: {err}"))?;
+
+    Ok((path, arena_definition))
+}
+
 pub(super) fn load_arena_definition(arena: usize) -> Result<ArenaDefinition, String> {
-    load_arena(&runtime_arena_path(arena))
+    load_runtime_arena_definition(arena).map(|(_, arena)| arena)
 }
 
 pub(super) fn load_arena_bundle(arena: usize) -> Result<(ArenaDefinition, TileGrid), String> {
-    let path = runtime_arena_path(arena);
-    let arena_definition = load_arena(&path)?;
+    let (path, arena_definition) = load_runtime_arena_definition(arena)?;
     let grid = TileGrid::from_arena(&arena_definition)
         .map_err(|err| format!("failed to build arena grid {path}: {err}"))?;
     Ok((arena_definition, grid))
@@ -91,15 +176,15 @@ pub(super) fn runtime_asset_manifest_path() -> String {
     })
 }
 
+#[cfg(test)]
 pub(super) fn load_level(path: &str) -> Result<LevelDefinition, String> {
-    let contents =
-        fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
+    let contents = read_text(path)?;
     parse_level(&contents).map_err(|err| format!("failed to load level {path}: {err}"))
 }
 
+#[cfg(test)]
 pub(super) fn load_arena(path: &str) -> Result<ArenaDefinition, String> {
-    let contents =
-        fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
+    let contents = read_text(path)?;
     parse_arena(&contents).map_err(|err| format!("failed to load arena {path}: {err}"))
 }
 
@@ -117,9 +202,90 @@ pub(super) fn battle_kind_label_for_arena(arena: usize) -> &'static str {
 }
 
 pub(super) fn load_asset_manifest(path: &str) -> Result<AssetManifest, String> {
-    let contents =
-        fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
+    let contents = load_text_or_embedded_with(
+        path,
+        (path == ASSET_MANIFEST_PATH).then_some(embedded_asset_manifest_contents()),
+        |path| Path::new(path).is_file(),
+        read_text,
+    )?;
     parse_asset_manifest(&contents)
+}
+
+pub(super) fn embedded_asset_manifest_contents() -> &'static str {
+    EMBEDDED_ASSET_MANIFEST
+}
+
+pub(super) fn embedded_stage_contents(stage: usize) -> Option<&'static str> {
+    stage
+        .checked_sub(1)
+        .and_then(|index| EMBEDDED_LEVELS.get(index))
+        .copied()
+}
+
+pub(super) fn embedded_arena_contents(arena: usize) -> Option<&'static str> {
+    arena
+        .checked_sub(1)
+        .and_then(|index| EMBEDDED_ARENAS.get(index))
+        .copied()
+}
+
+fn read_text(path: &str) -> Result<String, String> {
+    fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))
+}
+
+pub(super) fn load_runtime_text_with(
+    personal_path: &str,
+    authored_path: &str,
+    embedded: Option<&'static str>,
+    exists: impl Fn(&str) -> bool,
+    read_to_string: impl Fn(&str) -> Result<String, String>,
+) -> Result<(String, Cow<'static, str>), String> {
+    if exists(personal_path) {
+        return read_to_string(personal_path)
+            .map(|contents| (personal_path.to_string(), Cow::Owned(contents)));
+    }
+
+    if exists(authored_path) {
+        return read_to_string(authored_path)
+            .map(|contents| (authored_path.to_string(), Cow::Owned(contents)));
+    }
+
+    if let Some(contents) = embedded {
+        return Ok((authored_path.to_string(), Cow::Borrowed(contents)));
+    }
+
+    read_to_string(authored_path).map(|contents| (authored_path.to_string(), Cow::Owned(contents)))
+}
+
+fn load_runtime_text(
+    personal_path: &str,
+    authored_path: &str,
+    embedded: Option<&'static str>,
+) -> Result<(String, Cow<'static, str>), String> {
+    load_runtime_text_with(
+        personal_path,
+        authored_path,
+        embedded,
+        |path| Path::new(path).is_file(),
+        read_text,
+    )
+}
+
+pub(super) fn load_text_or_embedded_with(
+    path: &str,
+    embedded: Option<&'static str>,
+    exists: impl Fn(&str) -> bool,
+    read_to_string: impl Fn(&str) -> Result<String, String>,
+) -> Result<Cow<'static, str>, String> {
+    if exists(path) {
+        return read_to_string(path).map(Cow::Owned);
+    }
+
+    if let Some(contents) = embedded {
+        return Ok(Cow::Borrowed(contents));
+    }
+
+    read_to_string(path).map(Cow::Owned)
 }
 
 pub(super) fn parse_asset_manifest(contents: &str) -> Result<AssetManifest, String> {

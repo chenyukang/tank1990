@@ -9,9 +9,30 @@ permissions:
   actions: read
   contents: write
 
+env:
+  RUST_TOOLCHAIN: "1.95.0"
+
 jobs:
+  verify-tag:
+    name: Verify release tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check tag matches Cargo version
+        run: |
+          version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
+          expected="v${version}"
+          if [ "${GITHUB_REF_NAME}" != "${expected}" ]; then
+            echo "Release tag ${GITHUB_REF_NAME} must match Cargo.toml version ${expected}" >&2
+            exit 1
+          fi
+
   build:
     name: Build ${{ matrix.name }}
+    needs: verify-tag
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -54,8 +75,8 @@ jobs:
 
       - name: Install Rust
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component rustfmt --component clippy
+          rustup default ${{ env.RUST_TOOLCHAIN }}
 
       - name: Build release binary
         run: cargo build --locked --release

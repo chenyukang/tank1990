@@ -9,16 +9,46 @@ on:
 permissions:
   contents: read
 
+env:
+  RUST_TOOLCHAIN: "1.95.0"
+
 jobs:
-  ci:
-    name: fmt, test, clippy, release build
+  fmt:
+    name: fmt
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Install Rust
+        run: |
+          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component rustfmt --component clippy
+          rustup default ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  test:
+    name: test, clippy, release build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+          - name: macos
+            os: macos-latest
+          - name: windows
+            os: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -37,11 +67,8 @@ jobs:
 
       - name: Install Rust
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup default stable
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal --component rustfmt --component clippy
+          rustup default ${{ env.RUST_TOOLCHAIN }}
 
       - name: Run tests
         run: cargo test --locked

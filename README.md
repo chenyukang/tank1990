@@ -28,13 +28,21 @@ Mode select:
 
 In game:
 
-- P1 move: `W` `A` `S` `D`
+- P1 2D move: `W` `A` `S` `D`
+- P1 3D drive: `W` / `S` move forward/backward, `A` / `D` tap-turn left/right
 - P1 fire: `Space`
-- P2 move: arrow keys
+- P2 2D move: arrow keys
 - P2 fire: `Enter` or `RightShift`
 - Pause/resume: `P`, `Esc`, or `Pause`
 - Restart current stage or round: `R`
 - Return to mode select: `M`
+- Toggle fullscreen: `F`
+- Toggle 2D/3D view: `V`, `3`, or numpad `3`
+- Switch the followed player in two-player 3D modes: `Tab`
+
+The 3D mode is currently an experimental single-camera view. In two-player
+co-op or versus, the camera follows one player at a time and `Tab` switches
+between P1 and P2; split-screen 3D is not implemented yet.
 
 ## Current Content
 
@@ -79,3 +87,9 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
+Release tags must match the Cargo package version. For example, `Cargo.toml`
+version `0.1.0` must be released with tag `v0.1.0`.
+
+The macOS binary is not codesigned or notarized. Gatekeeper may warn on first
+launch; use the standard macOS "Open Anyway" flow or build locally with
+`cargo build --release` if you prefer a locally produced binary.

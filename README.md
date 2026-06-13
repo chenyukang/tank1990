@@ -20,9 +20,9 @@ choose a crisp integer scale from the main menu `SCALE` setting: `2X`, `3X`, or
 
 Mode select:
 
-- `W` / `S` or arrow up/down: switch Campaign/Battle/Music/Sound/Scale
-- `A` / `D` or arrow left/right: choose stage while Campaign is selected, or
-  arena while Battle is selected; toggle `MUSIC`, `SOUND`, or `SCALE` settings
+- `W` / `S` or arrow up/down: move between mode and settings rows
+- `A` / `D` or arrow left/right: change the selected row, including `MAP`,
+  `STAGE`, `ARENA`, `VIEW`, `AI`, `DIFF`, `MUSIC`, `SOUND`, and `SCALE`
 - `Space`, `Enter`, or `RightShift`: start selected mode, or toggle the selected
   setting
 
@@ -38,11 +38,15 @@ In game:
 
 ## Current Content
 
-- Campaign: 50 authored stages in `assets/levels/`.
+- Campaign `ORIGINAL`: 35 strict classic layouts in `assets/levels_original/`
+  selected by default.
+- Campaign `CUSTOM`: 50 authored/custom stages in `assets/levels/`.
 - Versus: 8 authored arenas in `assets/arenas/`.
 - Arenas 5, 6, and 8 are `BaseBattle`; the others are `Deathmatch`.
 - Generated placeholder sprite atlases and sounds are used when no personal
   override exists.
+- Original campaign layouts are sourced from the GPLv3 `battle-city-tanks`
+  archive; see `assets/levels_original/README.md`.
 
 ## Distribution
 
@@ -58,13 +62,13 @@ Then run the binary directly:
 ./target/release/tank
 ```
 
-The default asset manifest, campaign stages, versus arenas, generated sprites,
-and generated sounds are built into the executable, so the default game can be
-distributed as one platform-specific binary without an `assets/` directory.
-Optional private overrides still work when `assets/personal/` is present next
-to the working directory used to launch the game. This is asset-free
-distribution, not a fully static Linux build; target systems may still need the
-usual graphics and audio runtime libraries.
+The default asset manifest, campaign map packs, versus arenas, generated
+sprites, and generated sounds are built into the executable, so the default game
+can be distributed as one platform-specific binary without an `assets/`
+directory. Optional private overrides still work when `assets/personal/` is
+present next to the working directory used to launch the game. This is
+asset-free distribution, not a fully static Linux build; target systems may
+still need the usual graphics and audio runtime libraries.
 
 Tag-based GitHub Releases are published by `.github/workflows/release.yml`.
 Pushing a version tag such as `v0.1.0` builds Linux, macOS, and Windows release
@@ -74,5 +78,4 @@ archives that each contain only the executable:
 git tag v0.1.0
 git push origin v0.1.0
 ```
-
 

@@ -80,7 +80,8 @@ const PERSONAL_SOUND_OVERRIDE_PATHS: [&str; 10] = [
     PERSONAL_GAME_OVER_SOUND_PATH,
     PERSONAL_BACKGROUND_MUSIC_SOUND_PATH,
 ];
-const LEVEL_COUNT: usize = 50;
+const CUSTOM_LEVEL_COUNT: usize = 50;
+const ORIGINAL_LEVEL_COUNT: usize = 35;
 const LEVEL_CLEAR_DELAY_SECONDS: f32 = 2.0;
 const LEVEL_CLEAR_SCORECARD_SECONDS: f32 = 4.0;
 const STAGE_INTRO_SECONDS: f32 = 1.2;
@@ -756,10 +757,26 @@ impl GameMode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CampaignMapPack {
+    Original,
+    Custom,
+}
+
+impl CampaignMapPack {
+    fn stage_count(self) -> usize {
+        match self {
+            Self::Original => ORIGINAL_LEVEL_COUNT,
+            Self::Custom => CUSTOM_LEVEL_COUNT,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ModeSelectOption {
     Campaign,
     CoopCampaign,
     Battle,
+    MapPack,
     ViewMode,
     ViewAssist,
     AiStrategy,
@@ -789,6 +806,7 @@ enum ModeSelectDifficultyProfile {
 #[derive(Resource)]
 struct ModeSelect {
     selected: ModeSelectOption,
+    map_pack: CampaignMapPack,
     stage: usize,
     arena: usize,
     view_mode: TankViewMode,
@@ -805,6 +823,7 @@ impl Default for ModeSelect {
     fn default() -> Self {
         Self {
             selected: ModeSelectOption::Campaign,
+            map_pack: CampaignMapPack::Original,
             stage: 1,
             arena: DEFAULT_VERSUS_ARENA,
             view_mode: TankViewMode::TwoD,
@@ -844,6 +863,7 @@ impl PlayerId {
 #[derive(Resource)]
 struct GameStatus {
     phase: GamePhase,
+    map_pack: CampaignMapPack,
     stage: usize,
     arena: usize,
     winner: Option<PlayerId>,
@@ -854,6 +874,7 @@ impl Default for GameStatus {
     fn default() -> Self {
         Self {
             phase: GamePhase::ModeSelect,
+            map_pack: CampaignMapPack::Original,
             stage: 1,
             arena: DEFAULT_VERSUS_ARENA,
             winner: None,
@@ -1847,6 +1868,7 @@ fn setup(
         &mut commands,
         &sprite_assets,
         mode_select.selected,
+        mode_select.map_pack,
         mode_select.stage,
         mode_select.arena,
         mode_select.view_mode,
@@ -1915,7 +1937,7 @@ fn handle_shared_controls(
                 ModeSelectOption::Campaign
                 | ModeSelectOption::CoopCampaign
                 | ModeSelectOption::Stage => {
-                    mode_select.stage = previous_stage(mode_select.stage);
+                    mode_select.stage = previous_stage(mode_select.stage, mode_select.map_pack);
                     update_mode_select_stage_digits(
                         &mut menu_queries.p2(),
                         &assets.manifest.glyphs,
@@ -1933,6 +1955,16 @@ fn handle_shared_controls(
                         &mut menu_queries.p4(),
                         &assets.manifest.glyphs,
                         mode_select.arena,
+                    );
+                }
+                ModeSelectOption::MapPack => {
+                    mode_select.map_pack = previous_campaign_map_pack(mode_select.map_pack);
+                    mode_select.stage = selected_campaign_stage(&mode_select);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
                     );
                 }
                 ModeSelectOption::ViewMode => {
@@ -2022,7 +2054,7 @@ fn handle_shared_controls(
                 ModeSelectOption::Campaign
                 | ModeSelectOption::CoopCampaign
                 | ModeSelectOption::Stage => {
-                    mode_select.stage = next_stage(mode_select.stage);
+                    mode_select.stage = next_stage(mode_select.stage, mode_select.map_pack);
                     update_mode_select_stage_digits(
                         &mut menu_queries.p2(),
                         &assets.manifest.glyphs,
@@ -2040,6 +2072,16 @@ fn handle_shared_controls(
                         &mut menu_queries.p4(),
                         &assets.manifest.glyphs,
                         mode_select.arena,
+                    );
+                }
+                ModeSelectOption::MapPack => {
+                    mode_select.map_pack = next_campaign_map_pack(mode_select.map_pack);
+                    mode_select.stage = selected_campaign_stage(&mode_select);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
+                        &menu_queries.p0(),
                     );
                 }
                 ModeSelectOption::ViewMode => {
@@ -2129,6 +2171,7 @@ fn handle_shared_controls(
         {
             match mode_select.selected {
                 ModeSelectOption::Campaign => {
+                    game_status.map_pack = mode_select.map_pack;
                     game_status.stage = selected_campaign_stage(&mode_select);
                     *game_mode = GameMode::Campaign;
                     restart_level(
@@ -2150,6 +2193,7 @@ fn handle_shared_controls(
                     );
                 }
                 ModeSelectOption::CoopCampaign => {
+                    game_status.map_pack = mode_select.map_pack;
                     game_status.stage = selected_campaign_stage(&mode_select);
                     *game_mode = GameMode::CoopCampaign;
                     restart_level(
@@ -2186,6 +2230,16 @@ fn handle_shared_controls(
                         &mut enemy_freeze,
                         &mut versus_freeze,
                         &mut base_reinforcement,
+                        &menu_queries.p0(),
+                    );
+                }
+                ModeSelectOption::MapPack => {
+                    mode_select.map_pack = next_campaign_map_pack(mode_select.map_pack);
+                    mode_select.stage = selected_campaign_stage(&mode_select);
+                    respawn_mode_select_screen(
+                        &mut commands,
+                        &assets,
+                        &mode_select,
                         &menu_queries.p0(),
                     );
                 }
@@ -2268,7 +2322,7 @@ fn handle_shared_controls(
                     );
                 }
                 ModeSelectOption::Stage => {
-                    mode_select.stage = next_stage(mode_select.stage);
+                    mode_select.stage = next_stage(mode_select.stage, mode_select.map_pack);
                     update_mode_select_stage_digits(
                         &mut menu_queries.p2(),
                         &assets.manifest.glyphs,
@@ -2377,12 +2431,16 @@ fn enter_mode_select(
     }
 
     mode_select.selected = selected_mode.mode_select_option();
-    mode_select.stage = game_status.stage.clamp(1, LEVEL_COUNT);
+    mode_select.map_pack = game_status.map_pack;
+    mode_select.stage = game_status
+        .stage
+        .clamp(1, mode_select.map_pack.stage_count());
     mode_select.arena = game_status.arena.clamp(1, ARENA_COUNT);
     spawn_mode_select_screen(
         commands,
         assets,
         mode_select.selected,
+        mode_select.map_pack,
         mode_select.stage,
         mode_select.arena,
         mode_select.view_mode,
@@ -2421,6 +2479,7 @@ fn respawn_mode_select_screen(
         commands,
         assets,
         mode_select.selected,
+        mode_select.map_pack,
         mode_select.stage,
         mode_select.arena,
         mode_select.view_mode,
@@ -2483,7 +2542,8 @@ fn restart_level(
     mode_select: &ModeSelect,
     game_entities: &Query<Entity, With<GameEntity>>,
 ) {
-    let (level, new_tile_grid) = load_stage_bundle_or_panic(game_status.stage);
+    let (level, new_tile_grid) =
+        load_campaign_stage_bundle_or_panic(game_status.map_pack, game_status.stage);
     info!("Loaded {}", level.name);
 
     for entity in game_entities {
@@ -2591,6 +2651,7 @@ fn start_versus_round(
 
 struct ModeSelectDisplay {
     selected: ModeSelectOption,
+    map_pack: CampaignMapPack,
     stage: usize,
     arena: usize,
     view_mode: TankViewMode,
@@ -2606,6 +2667,7 @@ impl ModeSelectDisplay {
     fn from_mode_select(mode_select: &ModeSelect) -> Self {
         Self {
             selected: mode_select.selected,
+            map_pack: mode_select.map_pack,
             stage: mode_select.stage,
             arena: mode_select.arena,
             view_mode: mode_select.view_mode,
@@ -2623,6 +2685,7 @@ fn spawn_mode_select_screen(
     commands: &mut Commands,
     assets: &SpriteAssets,
     selected: ModeSelectOption,
+    map_pack: CampaignMapPack,
     stage: usize,
     arena: usize,
     view_mode: TankViewMode,
@@ -2655,6 +2718,7 @@ fn spawn_mode_select_screen(
     );
     let display = ModeSelectDisplay {
         selected,
+        map_pack,
         stage,
         arena,
         view_mode,
@@ -2669,6 +2733,7 @@ fn spawn_mode_select_screen(
         ModeSelectOption::Campaign,
         ModeSelectOption::CoopCampaign,
         ModeSelectOption::Battle,
+        ModeSelectOption::MapPack,
         ModeSelectOption::ViewMode,
         ModeSelectOption::ViewAssist,
         ModeSelectOption::AiStrategy,
@@ -5458,7 +5523,7 @@ fn advance_after_level_clear(
         return;
     }
 
-    if game_status.stage >= LEVEL_COUNT {
+    if game_status.stage >= game_status.map_pack.stage_count() {
         enter_victory_screen(
             &mut commands,
             &mut game_status,
@@ -5474,7 +5539,8 @@ fn advance_after_level_clear(
     }
 
     let next_stage = game_status.stage + 1;
-    let (level, new_tile_grid) = load_stage_bundle_or_panic(next_stage);
+    let (level, new_tile_grid) =
+        load_campaign_stage_bundle_or_panic(game_status.map_pack, next_stage);
     info!("Loaded {}", level.name);
 
     for entity in &game_entities {
@@ -5855,24 +5921,48 @@ fn previous_arena(current: usize) -> usize {
     }
 }
 
-fn next_stage(current: usize) -> usize {
-    if current >= LEVEL_COUNT {
+fn next_stage(current: usize, map_pack: CampaignMapPack) -> usize {
+    let stage_count = map_pack.stage_count();
+    if current >= stage_count {
         1
     } else {
         current + 1
     }
 }
 
-fn previous_stage(current: usize) -> usize {
+fn previous_stage(current: usize, map_pack: CampaignMapPack) -> usize {
     if current <= 1 {
-        LEVEL_COUNT
+        map_pack.stage_count()
     } else {
         current - 1
     }
 }
 
 fn selected_campaign_stage(mode_select: &ModeSelect) -> usize {
-    mode_select.stage.clamp(1, LEVEL_COUNT)
+    mode_select
+        .stage
+        .clamp(1, mode_select.map_pack.stage_count())
+}
+
+fn next_campaign_map_pack(pack: CampaignMapPack) -> CampaignMapPack {
+    match pack {
+        CampaignMapPack::Original => CampaignMapPack::Custom,
+        CampaignMapPack::Custom => CampaignMapPack::Original,
+    }
+}
+
+fn previous_campaign_map_pack(pack: CampaignMapPack) -> CampaignMapPack {
+    match pack {
+        CampaignMapPack::Original => CampaignMapPack::Custom,
+        CampaignMapPack::Custom => CampaignMapPack::Original,
+    }
+}
+
+fn campaign_map_pack_label(pack: CampaignMapPack) -> &'static str {
+    match pack {
+        CampaignMapPack::Original => "ORIGINAL",
+        CampaignMapPack::Custom => "CUSTOM",
+    }
 }
 
 fn selected_enemy_ai_strategy(
@@ -5957,7 +6047,8 @@ fn next_mode_select_option(option: ModeSelectOption) -> ModeSelectOption {
     match option {
         ModeSelectOption::Campaign => ModeSelectOption::CoopCampaign,
         ModeSelectOption::CoopCampaign => ModeSelectOption::Battle,
-        ModeSelectOption::Battle => ModeSelectOption::ViewMode,
+        ModeSelectOption::Battle => ModeSelectOption::MapPack,
+        ModeSelectOption::MapPack => ModeSelectOption::ViewMode,
         ModeSelectOption::ViewMode => ModeSelectOption::ViewAssist,
         ModeSelectOption::ViewAssist => ModeSelectOption::AiStrategy,
         ModeSelectOption::AiStrategy => ModeSelectOption::Difficulty,
@@ -5975,7 +6066,8 @@ fn previous_mode_select_option(option: ModeSelectOption) -> ModeSelectOption {
         ModeSelectOption::Campaign => ModeSelectOption::Arena,
         ModeSelectOption::CoopCampaign => ModeSelectOption::Campaign,
         ModeSelectOption::Battle => ModeSelectOption::CoopCampaign,
-        ModeSelectOption::ViewMode => ModeSelectOption::Battle,
+        ModeSelectOption::MapPack => ModeSelectOption::Battle,
+        ModeSelectOption::ViewMode => ModeSelectOption::MapPack,
         ModeSelectOption::ViewAssist => ModeSelectOption::ViewMode,
         ModeSelectOption::AiStrategy => ModeSelectOption::ViewAssist,
         ModeSelectOption::Difficulty => ModeSelectOption::AiStrategy,
@@ -6015,6 +6107,9 @@ fn mode_select_option_text(display: &ModeSelectDisplay, option: ModeSelectOption
         ModeSelectOption::Campaign => "1 PLAYER".to_string(),
         ModeSelectOption::CoopCampaign => "2 PLAYERS".to_string(),
         ModeSelectOption::Battle => "BATTLE".to_string(),
+        ModeSelectOption::MapPack => {
+            format!("MAP {}", campaign_map_pack_label(display.map_pack))
+        }
         ModeSelectOption::ViewMode => format!("VIEW {}", tank_view_mode_label(display.view_mode)),
         ModeSelectOption::ViewAssist => {
             format!("ASSIST {}", view_assist_label(display.view_assist))
@@ -6054,15 +6149,16 @@ fn mode_select_option_y(option: ModeSelectOption) -> f32 {
         ModeSelectOption::Campaign => 46.0,
         ModeSelectOption::CoopCampaign => 57.0,
         ModeSelectOption::Battle => 68.0,
-        ModeSelectOption::ViewMode => 87.0,
-        ModeSelectOption::ViewAssist => 98.0,
-        ModeSelectOption::AiStrategy => 109.0,
-        ModeSelectOption::Difficulty => 120.0,
-        ModeSelectOption::Music => 131.0,
-        ModeSelectOption::Sound => 142.0,
-        ModeSelectOption::Scale => 153.0,
-        ModeSelectOption::Stage => 169.0,
-        ModeSelectOption::Arena => 180.0,
+        ModeSelectOption::MapPack => 87.0,
+        ModeSelectOption::ViewMode => 98.0,
+        ModeSelectOption::ViewAssist => 109.0,
+        ModeSelectOption::AiStrategy => 120.0,
+        ModeSelectOption::Difficulty => 131.0,
+        ModeSelectOption::Music => 142.0,
+        ModeSelectOption::Sound => 153.0,
+        ModeSelectOption::Scale => 164.0,
+        ModeSelectOption::Stage => 178.0,
+        ModeSelectOption::Arena => 189.0,
     }
 }
 
@@ -7434,7 +7530,7 @@ mod tests {
             .expect("pixel should have four channels")
     }
 
-    fn authored_levels() -> [(usize, &'static str); LEVEL_COUNT] {
+    fn authored_levels() -> [(usize, &'static str); CUSTOM_LEVEL_COUNT] {
         [
             (1, LEVEL_1),
             (2, LEVEL_2),
@@ -8493,11 +8589,27 @@ mod tests {
         assert_eq!(stage_path(1), "assets/levels/001.level.ron");
         assert_eq!(stage_path(12), "assets/levels/012.level.ron");
         assert_eq!(
+            campaign_stage_path(CampaignMapPack::Original, 1),
+            "assets/levels_original/001.level.ron"
+        );
+        assert_eq!(
+            campaign_stage_path(CampaignMapPack::Custom, 12),
+            "assets/levels/012.level.ron"
+        );
+        assert_eq!(
             personal_stage_path(1),
             "assets/personal/levels/001.level.ron"
         );
         assert_eq!(
             personal_stage_path(12),
+            "assets/personal/levels/012.level.ron"
+        );
+        assert_eq!(
+            personal_campaign_stage_path(CampaignMapPack::Original, 1),
+            "assets/personal/levels_original/001.level.ron"
+        );
+        assert_eq!(
+            personal_campaign_stage_path(CampaignMapPack::Custom, 12),
             "assets/personal/levels/012.level.ron"
         );
     }
@@ -8542,9 +8654,18 @@ mod tests {
     fn embedded_distribution_content_matches_authored_defaults() {
         assert_eq!(embedded_asset_manifest_contents(), MANIFEST);
         assert_eq!(embedded_stage_contents(1), Some(LEVEL_1));
-        assert_eq!(embedded_stage_contents(LEVEL_COUNT), Some(LEVEL_50));
+        assert_eq!(embedded_stage_contents(CUSTOM_LEVEL_COUNT), Some(LEVEL_50));
         assert_eq!(embedded_stage_contents(0), None);
-        assert_eq!(embedded_stage_contents(LEVEL_COUNT + 1), None);
+        assert_eq!(embedded_stage_contents(CUSTOM_LEVEL_COUNT + 1), None);
+        assert!(embedded_campaign_stage_contents(CampaignMapPack::Original, 1).is_some());
+        assert!(
+            embedded_campaign_stage_contents(CampaignMapPack::Original, ORIGINAL_LEVEL_COUNT)
+                .is_some()
+        );
+        assert_eq!(
+            embedded_campaign_stage_contents(CampaignMapPack::Original, ORIGINAL_LEVEL_COUNT + 1),
+            None
+        );
         assert_eq!(embedded_arena_contents(1), Some(ARENA_1));
         assert_eq!(embedded_arena_contents(ARENA_COUNT), Some(ARENA_8));
         assert_eq!(embedded_arena_contents(0), None);
@@ -8554,6 +8675,11 @@ mod tests {
             .expect("embedded manifest should parse");
         parse_level(embedded_stage_contents(1).expect("stage one should be embedded"))
             .expect("embedded stage should parse");
+        parse_level(
+            embedded_campaign_stage_contents(CampaignMapPack::Original, 1)
+                .expect("original stage one should be embedded"),
+        )
+        .expect("embedded original stage should parse");
         parse_arena(embedded_arena_contents(1).expect("arena one should be embedded"))
             .expect("embedded arena should parse");
     }
@@ -8666,6 +8792,18 @@ mod tests {
             grid.get(level.base_position.x as i32, level.base_position.y as i32),
             Some(TileKind::Base)
         );
+
+        let (original, original_grid) = load_campaign_stage_bundle(CampaignMapPack::Original, 1)
+            .expect("original stage bundle should load");
+        assert_eq!(original.name, "Stage 1");
+        assert_ne!(original.map, level.map);
+        assert_eq!(
+            original_grid.get(
+                original.base_position.x as i32,
+                original.base_position.y as i32
+            ),
+            Some(TileKind::Base)
+        );
     }
 
     #[test]
@@ -8692,12 +8830,13 @@ mod tests {
     #[test]
     fn runtime_stage_load_error_names_stage_path_and_reason() {
         let err = campaign_stage_load_error(
+            CampaignMapPack::Custom,
             7,
             "assets/levels/007.level.ron",
             "spawn_interval_secs must be positive",
         );
 
-        assert!(err.contains("campaign stage 7"));
+        assert!(err.contains("CUSTOM campaign stage 7"));
         assert!(err.contains("assets/levels/007.level.ron"));
         assert!(err.contains("spawn_interval_secs must be positive"));
     }
@@ -9346,6 +9485,73 @@ mod tests {
     }
 
     #[test]
+    fn original_campaign_levels_match_original_pack_shape() {
+        for stage in 1..=ORIGINAL_LEVEL_COUNT {
+            let contents = embedded_campaign_stage_contents(CampaignMapPack::Original, stage)
+                .expect("original stage should be embedded");
+            let level = parse_level(contents).expect("original level should parse");
+            assert_eq!(level.name, format!("Stage {stage}"));
+            assert_eq!(level.map.len(), BOARD_TILES);
+            assert!(
+                level
+                    .map
+                    .iter()
+                    .all(|row| row.chars().count() == BOARD_TILES)
+            );
+            assert_eq!(level.enemies.len(), 20);
+            assert_eq!(level.enemy_spawns.len(), 3);
+            assert_eq!(
+                level
+                    .enemy_spawns
+                    .iter()
+                    .map(spawn_signature)
+                    .collect::<Vec<_>>(),
+                [
+                    (0, 0, Direction::Down),
+                    (12, 0, Direction::Down),
+                    (24, 0, Direction::Down)
+                ]
+            );
+            assert_eq!(
+                level.base_position,
+                GridPoint {
+                    x: CLASSIC_BASE_X,
+                    y: CLASSIC_BASE_Y
+                }
+            );
+            let grid = TileGrid::from_level(&level).expect("original grid should build");
+            assert!(grid.can_tank_occupy(Vec2::new(
+                CLASSIC_COOP_P2_SPAWN_X as f32 * TILE_SIZE,
+                CLASSIC_COOP_P2_SPAWN_Y as f32 * TILE_SIZE
+            )));
+            for x in (CLASSIC_BASE_X - 1)..=(CLASSIC_BASE_X + 2) {
+                assert!(
+                    grid.get(x as i32, (CLASSIC_BASE_Y - 1) as i32)
+                        .is_some_and(TileKind::bullet_blocks),
+                    "Original stage {stage} should keep the one-tile top fortress wall at ({x}, {})",
+                    CLASSIC_BASE_Y - 1
+                );
+            }
+            for y in CLASSIC_BASE_Y..=(CLASSIC_BASE_Y + 1) {
+                for x in [CLASSIC_BASE_X - 1, CLASSIC_BASE_X + 2] {
+                    assert!(
+                        grid.get(x as i32, y as i32)
+                            .is_some_and(TileKind::bullet_blocks),
+                        "Original stage {stage} should keep the one-tile side fortress wall at ({x}, {y})"
+                    );
+                }
+                for x in CLASSIC_BASE_X..=(CLASSIC_BASE_X + 1) {
+                    assert_eq!(
+                        grid.get(x as i32, y as i32),
+                        Some(TileKind::Base),
+                        "Original stage {stage} should keep the base at ({x}, {y})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn level_rules_default_to_normal_steel_and_later_levels_enable_upgrade_breaking() {
         let stage_1 = parse_level(LEVEL_1).expect("level should parse");
         assert_eq!(StageRules::from_level(&stage_1), StageRules::default());
@@ -9742,545 +9948,176 @@ mod tests {
         );
     }
 
-    #[test]
-    fn stage_six_authors_ice_corridors() {
-        let stage_6 = parse_level(LEVEL_6).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_6).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Ice));
+    fn tank_grid_point_is_open(grid: &TileGrid, x: usize, y: usize) -> bool {
+        grid.can_tank_occupy(Vec2::new(x as f32 * TILE_SIZE, y as f32 * TILE_SIZE))
+    }
+
+    fn campaign_base_approach_targets(grid: &TileGrid) -> Vec<(usize, usize)> {
+        let mut targets = Vec::new();
+
+        for y in [CLASSIC_BASE_Y - 2, CLASSIC_BASE_Y - 1] {
+            for x in (CLASSIC_BASE_X - 3)..=(CLASSIC_BASE_X + 3) {
+                if tank_grid_point_is_open(grid, x, y) {
+                    targets.push((x, y));
+                }
+            }
+        }
+
+        for y in (CLASSIC_BASE_Y - 4)..CLASSIC_BASE_Y {
+            for x in [
+                CLASSIC_BASE_X - 4,
+                CLASSIC_BASE_X - 3,
+                CLASSIC_BASE_X + 4,
+                CLASSIC_BASE_X + 5,
+            ] {
+                if tank_grid_point_is_open(grid, x, y) {
+                    targets.push((x, y));
+                }
+            }
+        }
+
+        targets.sort_unstable();
+        targets.dedup();
+        targets
+    }
+
+    fn tank_route_reaches_any(
+        grid: &TileGrid,
+        start: (usize, usize),
+        targets: &[(usize, usize)],
+    ) -> bool {
+        if !tank_grid_point_is_open(grid, start.0, start.1) || targets.is_empty() {
+            return false;
+        }
+
+        let target_set: HashSet<(usize, usize)> = targets.iter().copied().collect();
+        let max_top_left_tile = BOARD_TILES - 2;
+        let width = max_top_left_tile + 1;
+        let mut visited = vec![false; width * width];
+        let mut queue = VecDeque::from([start]);
+        visited[start.1 * width + start.0] = true;
+
+        while let Some((x, y)) = queue.pop_front() {
+            if target_set.contains(&(x, y)) {
+                return true;
+            }
+
+            for (dx, dy) in [(-1isize, 0isize), (1, 0), (0, -1), (0, 1)] {
+                let next_x = x as isize + dx;
+                let next_y = y as isize + dy;
+                if !(0..=max_top_left_tile as isize).contains(&next_x)
+                    || !(0..=max_top_left_tile as isize).contains(&next_y)
+                {
+                    continue;
+                }
+
+                let next = (next_x as usize, next_y as usize);
+                let index = next.1 * width + next.0;
+                if visited[index] || !tank_grid_point_is_open(grid, next.0, next.1) {
+                    continue;
+                }
+
+                visited[index] = true;
+                queue.push_back(next);
+            }
+        }
+
+        false
     }
 
     #[test]
-    fn stage_seven_authors_forest_pressure_lanes() {
-        let stage_7 = parse_level(LEVEL_7).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_7).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Water));
+    fn authored_campaign_levels_use_distinct_classic_terrain_mix() {
+        let mut unique_maps = HashSet::new();
+        let mut steel_stages = 0;
+        let mut water_stages = 0;
+        let mut forest_stages = 0;
+        let mut ice_stages = 0;
+
+        for (stage, contents) in authored_levels() {
+            let level = parse_level(contents).expect("level should parse");
+            let grid = TileGrid::from_level(&level).expect("grid should build");
+            assert!(
+                unique_maps.insert(level.map.join("\n")),
+                "Stage {stage} should not duplicate another authored map"
+            );
+            assert!(
+                grid.tiles.contains(&TileKind::Brick),
+                "Stage {stage} should keep destructible cover"
+            );
+
+            steel_stages += usize::from(grid.tiles.contains(&TileKind::Steel));
+            water_stages += usize::from(grid.tiles.contains(&TileKind::Water));
+            forest_stages += usize::from(grid.tiles.contains(&TileKind::Forest));
+            ice_stages += usize::from(grid.tiles.contains(&TileKind::Ice));
+        }
+
+        assert_eq!(unique_maps.len(), CUSTOM_LEVEL_COUNT);
+        assert!(steel_stages >= 25, "steel appears in {steel_stages} stages");
+        assert!(water_stages >= 25, "water appears in {water_stages} stages");
+        assert!(
+            forest_stages >= 30,
+            "forest appears in {forest_stages} stages"
+        );
+        assert!(ice_stages >= 15, "ice appears in {ice_stages} stages");
     }
 
     #[test]
-    fn stage_eight_authors_steel_maze_pressure() {
-        let stage_8 = parse_level(LEVEL_8).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_8).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
+    fn authored_campaign_levels_use_classic_base_enclosure() {
+        for (stage, contents) in authored_levels() {
+            let level = parse_level(contents).expect("level should parse");
+            let grid = TileGrid::from_level(&level).expect("grid should build");
+
+            for y in [CLASSIC_BASE_Y - 2, CLASSIC_BASE_Y - 1] {
+                for x in (CLASSIC_BASE_X - 2)..=(CLASSIC_BASE_X + 3) {
+                    let tile = grid.get(x as i32, y as i32);
+                    assert!(
+                        tile.is_some_and(TileKind::bullet_blocks),
+                        "Stage {stage} should cap the base with a bullet-blocking wall at ({x}, {y})"
+                    );
+                    assert_ne!(
+                        tile,
+                        Some(TileKind::Base),
+                        "Stage {stage} should protect the base before bullets reach the eagle"
+                    );
+                }
+            }
+
+            for y in CLASSIC_BASE_Y..=(CLASSIC_BASE_Y + 1) {
+                for x in [
+                    CLASSIC_BASE_X - 2,
+                    CLASSIC_BASE_X - 1,
+                    CLASSIC_BASE_X + 2,
+                    CLASSIC_BASE_X + 3,
+                ] {
+                    assert!(
+                        grid.get(x as i32, y as i32)
+                            .is_some_and(TileKind::bullet_blocks),
+                        "Stage {stage} should protect the base side wall at ({x}, {y})"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
-    fn stage_nine_authors_mixed_terrain_pressure() {
-        let stage_9 = parse_level(LEVEL_9).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_9).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_9.spawn_interval_secs, 1.5);
-    }
+    fn authored_campaign_levels_keep_enemy_routes_to_base_open() {
+        for (stage, contents) in authored_levels() {
+            let level = parse_level(contents).expect("level should parse");
+            let grid = TileGrid::from_level(&level).expect("grid should build");
+            let targets = campaign_base_approach_targets(&grid);
+            assert!(
+                !targets.is_empty(),
+                "Stage {stage} should leave at least one passable base approach"
+            );
 
-    #[test]
-    fn stage_ten_authors_fortress_pressure() {
-        let stage_10 = parse_level(LEVEL_10).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_10).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_10.spawn_interval_secs, 1.4);
-        assert_eq!(stage_10.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_eleven_authors_split_lane_pressure() {
-        let stage_11 = parse_level(LEVEL_11).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_11).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_11.spawn_interval_secs, 1.35);
-        assert_eq!(stage_11.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_twelve_authors_ice_and_water_choke_points() {
-        let stage_12 = parse_level(LEVEL_12).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_12).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert_eq!(stage_12.spawn_interval_secs, 1.3);
-        assert_eq!(stage_12.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_thirteen_authors_forest_screen_pressure() {
-        let stage_13 = parse_level(LEVEL_13).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_13).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_13.spawn_interval_secs, 1.25);
-        assert_eq!(stage_13.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_fourteen_authors_steel_gate_gauntlet() {
-        let stage_14 = parse_level(LEVEL_14).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_14).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert_eq!(stage_14.spawn_interval_secs, 1.2);
-        assert_eq!(stage_14.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_fifteen_authors_mixed_fortress_pressure() {
-        let stage_15 = parse_level(LEVEL_15).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_15).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert_eq!(stage_15.spawn_interval_secs, 1.15);
-        assert_eq!(stage_15.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_sixteen_authors_river_lock_pressure() {
-        let stage_16 = parse_level(LEVEL_16).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_16).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_16.spawn_interval_secs, 1.1);
-        assert_eq!(stage_16.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_seventeen_authors_ice_screen_pressure() {
-        let stage_17 = parse_level(LEVEL_17).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_17).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert_eq!(stage_17.spawn_interval_secs, 1.05);
-        assert_eq!(stage_17.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_eighteen_authors_steel_axis_pressure() {
-        let stage_18 = parse_level(LEVEL_18).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_18).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_18.spawn_interval_secs, 1.0);
-        assert_eq!(stage_18.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_nineteen_authors_outer_wall_pressure() {
-        let stage_19 = parse_level(LEVEL_19).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_19).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_19.spawn_interval_secs, 0.95);
-        assert_eq!(stage_19.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_twenty_authors_mid_campaign_delta_pressure() {
-        let stage_20 = parse_level(LEVEL_20).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_20).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_20.spawn_interval_secs, 0.9);
-        assert_eq!(stage_20.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_twenty_one_authors_canal_gate_pressure() {
-        let stage_21 = parse_level(LEVEL_21).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_21).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_21.spawn_interval_secs, 0.88);
-        assert_eq!(stage_21.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_twenty_two_authors_forest_ice_axis_pressure() {
-        let stage_22 = parse_level(LEVEL_22).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_22).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert_eq!(stage_22.spawn_interval_secs, 0.86);
-        assert_eq!(stage_22.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_twenty_three_authors_steel_basin_crossfire() {
-        let stage_23 = parse_level(LEVEL_23).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_23).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_23.spawn_interval_secs, 0.84);
-        assert_eq!(stage_23.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_twenty_four_authors_ice_water_flank_pressure() {
-        let stage_24 = parse_level(LEVEL_24).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_24).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert_eq!(stage_24.spawn_interval_secs, 0.82);
-        assert_eq!(stage_24.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_twenty_five_authors_steel_water_bastion_pressure() {
-        let stage_25 = parse_level(LEVEL_25).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_25).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_25.spawn_interval_secs, 0.8);
-        assert_eq!(stage_25.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_twenty_six_authors_brick_steel_gate_pressure() {
-        let stage_26 = parse_level(LEVEL_26).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_26).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_26.spawn_interval_secs, 0.78);
-        assert_eq!(stage_26.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_twenty_seven_authors_forest_water_lane_pressure() {
-        let stage_27 = parse_level(LEVEL_27).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_27).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_27.spawn_interval_secs, 0.76);
-        assert_eq!(stage_27.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_twenty_eight_authors_steel_ring_ice_moat_pressure() {
-        let stage_28 = parse_level(LEVEL_28).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_28).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert_eq!(stage_28.spawn_interval_secs, 0.74);
-        assert_eq!(stage_28.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_twenty_nine_authors_brick_fortress_rush_pressure() {
-        let stage_29 = parse_level(LEVEL_29).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_29).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_29.spawn_interval_secs, 0.72);
-        assert_eq!(stage_29.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_thirty_authors_late_campaign_bastion_pressure() {
-        let stage_30 = parse_level(LEVEL_30).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_30).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_30.spawn_interval_secs, 0.7);
-        assert_eq!(stage_30.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_thirty_one_authors_forest_water_choke_pressure() {
-        let stage_31 = parse_level(LEVEL_31).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_31).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_31.spawn_interval_secs, 0.68);
-        assert_eq!(stage_31.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_thirty_two_authors_crossfire_water_lattice_pressure() {
-        let stage_32 = parse_level(LEVEL_32).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_32).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_32.spawn_interval_secs, 0.66);
-        assert_eq!(stage_32.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_thirty_three_authors_diagonal_bunker_pressure() {
-        let stage_33 = parse_level(LEVEL_33).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_33).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_33.spawn_interval_secs, 0.64);
-        assert_eq!(stage_33.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_thirty_four_authors_base_siege_pressure() {
-        let stage_34 = parse_level(LEVEL_34).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_34).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_34.spawn_interval_secs, 0.62);
-        assert_eq!(stage_34.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_thirty_five_authors_first_campaign_finale_pressure() {
-        let stage_35 = parse_level(LEVEL_35).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_35).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_35.spawn_interval_secs, 0.60);
-        assert_eq!(stage_35.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_thirty_six_authors_extended_campaign_base_siege() {
-        let stage_36 = parse_level(LEVEL_36).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_36).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_36.spawn_interval_secs, 0.58);
-        assert_eq!(stage_36.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_thirty_seven_authors_extended_campaign_water_bulwark() {
-        let stage_37 = parse_level(LEVEL_37).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_37).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_37.spawn_interval_secs, 0.56);
-        assert_eq!(stage_37.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_thirty_eight_authors_extended_campaign_ice_crossfire() {
-        let stage_38 = parse_level(LEVEL_38).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_38).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_38.spawn_interval_secs, 0.54);
-        assert_eq!(stage_38.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_thirty_nine_authors_extended_campaign_steel_freeze_lanes() {
-        let stage_39 = parse_level(LEVEL_39).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_39).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_39.spawn_interval_secs, 0.52);
-        assert_eq!(stage_39.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_forty_authors_extended_campaign_iron_keep_pressure() {
-        let stage_40 = parse_level(LEVEL_40).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_40).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_40.spawn_interval_secs, 0.50);
-        assert_eq!(stage_40.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_forty_one_authors_extended_campaign_frozen_crossfire() {
-        let stage_41 = parse_level(LEVEL_41).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_41).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_41.spawn_interval_secs, 0.48);
-        assert_eq!(stage_41.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_forty_two_authors_extended_campaign_ring_fire_lanes() {
-        let stage_42 = parse_level(LEVEL_42).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_42).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_42.spawn_interval_secs, 0.46);
-        assert_eq!(stage_42.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_forty_three_authors_extended_campaign_mirror_gates() {
-        let stage_43 = parse_level(LEVEL_43).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_43).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_43.spawn_interval_secs, 0.44);
-        assert_eq!(stage_43.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_forty_four_authors_extended_campaign_ice_fortress() {
-        let stage_44 = parse_level(LEVEL_44).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_44).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_44.spawn_interval_secs, 0.42);
-        assert_eq!(stage_44.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_forty_five_authors_extended_campaign_crowned_moat() {
-        let stage_45 = parse_level(LEVEL_45).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_45).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_45.spawn_interval_secs, 0.40);
-        assert_eq!(stage_45.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_forty_six_authors_extended_campaign_steel_bridge() {
-        let stage_46 = parse_level(LEVEL_46).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_46).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_46.spawn_interval_secs, 0.38);
-        assert_eq!(stage_46.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_forty_seven_authors_extended_campaign_forest_crossfire() {
-        let stage_47 = parse_level(LEVEL_47).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_47).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_47.spawn_interval_secs, 0.36);
-        assert_eq!(stage_47.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_forty_eight_authors_extended_campaign_steel_maze() {
-        let stage_48 = parse_level(LEVEL_48).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_48).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_48.spawn_interval_secs, 0.34);
-        assert_eq!(stage_48.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_forty_nine_authors_extended_campaign_heavy_loop() {
-        let stage_49 = parse_level(LEVEL_49).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_49).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_49.spawn_interval_secs, 0.32);
-        assert_eq!(stage_49.powerup_carriers.len(), 6);
-    }
-
-    #[test]
-    fn stage_fifty_authors_tank_1990_style_extended_campaign_finale() {
-        let stage_50 = parse_level(LEVEL_50).expect("level should parse");
-        let grid = TileGrid::from_level(&stage_50).expect("grid should build");
-        assert!(grid.tiles.contains(&TileKind::Steel));
-        assert!(grid.tiles.contains(&TileKind::Brick));
-        assert!(grid.tiles.contains(&TileKind::Water));
-        assert!(grid.tiles.contains(&TileKind::Forest));
-        assert!(grid.tiles.contains(&TileKind::Ice));
-        assert_eq!(stage_50.spawn_interval_secs, 0.30);
-        assert_eq!(stage_50.powerup_carriers.len(), 6);
+            for spawn in &level.enemy_spawns {
+                let start = (spawn.x, spawn.y);
+                assert!(
+                    tank_route_reaches_any(&grid, start, &targets),
+                    "Stage {stage} should leave a tank-sized route from enemy spawn {start:?} to the base approach"
+                );
+            }
+        }
     }
 
     #[test]
@@ -10706,6 +10543,7 @@ mod tests {
         app.insert_resource(GameMode::Campaign);
         app.insert_resource(GameStatus {
             phase: GamePhase::LevelClear,
+            map_pack: CampaignMapPack::Custom,
             stage: 1,
             transition_timer: Timer::from_seconds(LEVEL_CLEAR_SCORECARD_SECONDS, TimerMode::Once),
             ..GameStatus::default()
@@ -10717,6 +10555,7 @@ mod tests {
             player_steel_destruction: true,
         });
         app.insert_resource(ModeSelect {
+            map_pack: CampaignMapPack::Custom,
             ai_strategy: ModeSelectAiStrategy::PathToObjective,
             difficulty_profile: ModeSelectDifficultyProfile::Hard,
             ..ModeSelect::default()
@@ -10902,6 +10741,7 @@ mod tests {
         app.insert_resource(GameMode::VersusBaseBattle);
         app.insert_resource(GameStatus {
             phase: GamePhase::Playing,
+            map_pack: CampaignMapPack::Custom,
             stage: 12,
             arena: 5,
             winner: Some(PlayerId::Two),
@@ -10916,6 +10756,7 @@ mod tests {
         app.insert_resource(VersusPowerUpDirector::from_arena(&arena));
         app.insert_resource(ModeSelect {
             selected: ModeSelectOption::Scale,
+            map_pack: CampaignMapPack::Custom,
             stage: 1,
             arena: 1,
             view_mode: TankViewMode::TwoD,
@@ -11016,6 +10857,7 @@ mod tests {
         app.insert_resource(GameMode::Campaign);
         app.insert_resource(GameStatus {
             phase: GamePhase::Paused,
+            map_pack: CampaignMapPack::Custom,
             stage: current_stage,
             arena: 5,
             winner: Some(PlayerId::Two),
@@ -11115,6 +10957,7 @@ mod tests {
         app.insert_resource(GameMode::VersusDeathmatch);
         app.insert_resource(GameStatus {
             phase: GamePhase::RoundOver,
+            map_pack: CampaignMapPack::Custom,
             stage: 12,
             arena: arena_index,
             winner: Some(PlayerId::Two),
@@ -11272,7 +11115,8 @@ mod tests {
 
         app.insert_resource(GameStatus {
             phase: GamePhase::LevelClear,
-            stage: LEVEL_COUNT,
+            map_pack: CampaignMapPack::Custom,
+            stage: CUSTOM_LEVEL_COUNT,
             arena: DEFAULT_VERSUS_ARENA,
             winner: Some(PlayerId::One),
             transition_timer: Timer::from_seconds(LEVEL_CLEAR_SCORECARD_SECONDS, TimerMode::Once),
@@ -11297,7 +11141,7 @@ mod tests {
 
         let status = app.world().resource::<GameStatus>();
         assert_eq!(status.phase, GamePhase::Victory);
-        assert_eq!(status.stage, LEVEL_COUNT);
+        assert_eq!(status.stage, CUSTOM_LEVEL_COUNT);
         assert_eq!(status.winner, None);
         assert!(
             app.world()
@@ -11571,6 +11415,10 @@ mod tests {
         );
         assert_eq!(
             next_mode_select_option(ModeSelectOption::Battle),
+            ModeSelectOption::MapPack
+        );
+        assert_eq!(
+            next_mode_select_option(ModeSelectOption::MapPack),
             ModeSelectOption::ViewMode
         );
         assert_eq!(
@@ -11630,8 +11478,12 @@ mod tests {
             ModeSelectOption::CoopCampaign
         );
         assert_eq!(
-            previous_mode_select_option(ModeSelectOption::ViewMode),
+            previous_mode_select_option(ModeSelectOption::MapPack),
             ModeSelectOption::Battle
+        );
+        assert_eq!(
+            previous_mode_select_option(ModeSelectOption::ViewMode),
+            ModeSelectOption::MapPack
         );
         assert_eq!(
             previous_mode_select_option(ModeSelectOption::ViewAssist),
@@ -13951,17 +13803,35 @@ mod tests {
     #[test]
     fn mode_select_stage_selection_wraps_authored_campaign() {
         assert_eq!(ModeSelect::default().stage, 1);
-        assert_eq!(next_stage(1), 2);
-        assert_eq!(next_stage(LEVEL_COUNT - 1), LEVEL_COUNT);
-        assert_eq!(next_stage(LEVEL_COUNT), 1);
-        assert_eq!(previous_stage(1), LEVEL_COUNT);
-        assert_eq!(previous_stage(2), 1);
-        assert_eq!(previous_stage(LEVEL_COUNT), LEVEL_COUNT - 1);
+        assert_eq!(next_stage(1, CampaignMapPack::Custom), 2);
+        assert_eq!(
+            next_stage(CUSTOM_LEVEL_COUNT - 1, CampaignMapPack::Custom),
+            CUSTOM_LEVEL_COUNT
+        );
+        assert_eq!(next_stage(CUSTOM_LEVEL_COUNT, CampaignMapPack::Custom), 1);
+        assert_eq!(
+            previous_stage(1, CampaignMapPack::Custom),
+            CUSTOM_LEVEL_COUNT
+        );
+        assert_eq!(previous_stage(2, CampaignMapPack::Custom), 1);
+        assert_eq!(
+            previous_stage(CUSTOM_LEVEL_COUNT, CampaignMapPack::Custom),
+            CUSTOM_LEVEL_COUNT - 1
+        );
+        assert_eq!(
+            next_stage(ORIGINAL_LEVEL_COUNT, CampaignMapPack::Original),
+            1
+        );
+        assert_eq!(
+            previous_stage(1, CampaignMapPack::Original),
+            ORIGINAL_LEVEL_COUNT
+        );
     }
 
     #[test]
     fn selected_campaign_stage_clamps_to_authored_campaign_range() {
         let mut mode_select = ModeSelect {
+            map_pack: CampaignMapPack::Custom,
             stage: 12,
             ..ModeSelect::default()
         };
@@ -13970,8 +13840,48 @@ mod tests {
         mode_select.stage = 0;
         assert_eq!(selected_campaign_stage(&mode_select), 1);
 
-        mode_select.stage = LEVEL_COUNT + 5;
-        assert_eq!(selected_campaign_stage(&mode_select), LEVEL_COUNT);
+        mode_select.stage = CUSTOM_LEVEL_COUNT + 5;
+        assert_eq!(selected_campaign_stage(&mode_select), CUSTOM_LEVEL_COUNT);
+
+        mode_select.map_pack = CampaignMapPack::Original;
+        mode_select.stage = CUSTOM_LEVEL_COUNT;
+        assert_eq!(selected_campaign_stage(&mode_select), ORIGINAL_LEVEL_COUNT);
+    }
+
+    #[test]
+    fn main_menu_map_pack_row_cycles_and_clamps_stage() {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::ArrowRight);
+
+        let mut app = App::new();
+        app.insert_resource(keys);
+        app.insert_resource(test_sprite_assets());
+        app.insert_resource(test_sound_assets());
+        app.insert_resource(GameMode::Campaign);
+        app.insert_resource(GameStatus::default());
+        app.insert_resource(TileGrid::empty());
+        app.insert_resource(EnemyDirector::inactive());
+        app.insert_resource(ScoreBoard::campaign(0));
+        app.insert_resource(StageRules::default());
+        app.insert_resource(VersusPowerUpDirector::inactive());
+        app.insert_resource(ModeSelect {
+            selected: ModeSelectOption::MapPack,
+            map_pack: CampaignMapPack::Custom,
+            stage: CUSTOM_LEVEL_COUNT,
+            ..ModeSelect::default()
+        });
+        app.insert_resource(EnemyFreeze::default());
+        app.insert_resource(VersusPlayerFreeze::default());
+        app.insert_resource(BaseReinforcement::default());
+        app.add_systems(Update, handle_shared_controls);
+
+        app.update();
+
+        let mode_select = app.world().resource::<ModeSelect>();
+        assert_eq!(mode_select.map_pack, CampaignMapPack::Original);
+        assert_eq!(mode_select.stage, ORIGINAL_LEVEL_COUNT);
+        let mut cursors = app.world_mut().query::<&ModeSelectCursor>();
+        assert_eq!(cursors.iter(app.world()).count(), 1);
     }
 
     #[test]
@@ -13986,6 +13896,7 @@ mod tests {
         let campaign = cursor(ModeSelectOption::Campaign);
         let coop = cursor(ModeSelectOption::CoopCampaign);
         let battle = cursor(ModeSelectOption::Battle);
+        let map = cursor(ModeSelectOption::MapPack);
         let view = cursor(ModeSelectOption::ViewMode);
         let assist = cursor(ModeSelectOption::ViewAssist);
         let ai = cursor(ModeSelectOption::AiStrategy);
@@ -13997,7 +13908,8 @@ mod tests {
         let arena = cursor(ModeSelectOption::Arena);
         assert!(campaign.y > coop.y);
         assert!(coop.y > battle.y);
-        assert!(battle.y > view.y);
+        assert!(battle.y > map.y);
+        assert!(map.y > view.y);
         assert!(view.y > assist.y);
         assert!(assist.y > ai.y);
         assert!(ai.y > difficulty.y);
@@ -14022,6 +13934,7 @@ mod tests {
             ModeSelectOption::Campaign,
             ModeSelectOption::CoopCampaign,
             ModeSelectOption::Battle,
+            ModeSelectOption::MapPack,
             ModeSelectOption::ViewMode,
             ModeSelectOption::ViewAssist,
             ModeSelectOption::AiStrategy,
@@ -14048,17 +13961,20 @@ mod tests {
             - mode_select_option_y(ModeSelectOption::Campaign);
         let coop_to_battle = mode_select_option_y(ModeSelectOption::Battle)
             - mode_select_option_y(ModeSelectOption::CoopCampaign);
-        let battle_to_view = mode_select_option_y(ModeSelectOption::ViewMode)
+        let battle_to_map = mode_select_option_y(ModeSelectOption::MapPack)
             - mode_select_option_y(ModeSelectOption::Battle);
+        let map_to_view = mode_select_option_y(ModeSelectOption::ViewMode)
+            - mode_select_option_y(ModeSelectOption::MapPack);
         let view_to_assist = mode_select_option_y(ModeSelectOption::ViewAssist)
             - mode_select_option_y(ModeSelectOption::ViewMode);
         let ai_to_difficulty = mode_select_option_y(ModeSelectOption::Difficulty)
             - mode_select_option_y(ModeSelectOption::AiStrategy);
 
         assert_eq!(campaign_to_coop, coop_to_battle);
+        assert_eq!(map_to_view, campaign_to_coop);
         assert_eq!(view_to_assist, campaign_to_coop);
         assert_eq!(ai_to_difficulty, campaign_to_coop);
-        assert!(battle_to_view > campaign_to_coop);
+        assert!(battle_to_map > campaign_to_coop);
     }
 
     #[test]
@@ -14073,6 +13989,10 @@ mod tests {
             "1 PLAYER",
             "2 PLAYERS",
             "BATTLE",
+            "MAP",
+            "ORIGINAL",
+            "MAP ORIGINAL",
+            "MAP CUSTOM",
             "VIEW",
             "2D",
             "3D",

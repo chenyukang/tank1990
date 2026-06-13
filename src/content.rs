@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 
 const EMBEDDED_ASSET_MANIFEST: &str = include_str!("../assets/manifest.ron");
-const EMBEDDED_LEVELS: [&str; 50] = [
+const EMBEDDED_CUSTOM_LEVELS: [&str; CUSTOM_LEVEL_COUNT] = [
     include_str!("../assets/levels/001.level.ron"),
     include_str!("../assets/levels/002.level.ron"),
     include_str!("../assets/levels/003.level.ron"),
@@ -57,6 +57,43 @@ const EMBEDDED_LEVELS: [&str; 50] = [
     include_str!("../assets/levels/049.level.ron"),
     include_str!("../assets/levels/050.level.ron"),
 ];
+const EMBEDDED_ORIGINAL_LEVELS: [&str; ORIGINAL_LEVEL_COUNT] = [
+    include_str!("../assets/levels_original/001.level.ron"),
+    include_str!("../assets/levels_original/002.level.ron"),
+    include_str!("../assets/levels_original/003.level.ron"),
+    include_str!("../assets/levels_original/004.level.ron"),
+    include_str!("../assets/levels_original/005.level.ron"),
+    include_str!("../assets/levels_original/006.level.ron"),
+    include_str!("../assets/levels_original/007.level.ron"),
+    include_str!("../assets/levels_original/008.level.ron"),
+    include_str!("../assets/levels_original/009.level.ron"),
+    include_str!("../assets/levels_original/010.level.ron"),
+    include_str!("../assets/levels_original/011.level.ron"),
+    include_str!("../assets/levels_original/012.level.ron"),
+    include_str!("../assets/levels_original/013.level.ron"),
+    include_str!("../assets/levels_original/014.level.ron"),
+    include_str!("../assets/levels_original/015.level.ron"),
+    include_str!("../assets/levels_original/016.level.ron"),
+    include_str!("../assets/levels_original/017.level.ron"),
+    include_str!("../assets/levels_original/018.level.ron"),
+    include_str!("../assets/levels_original/019.level.ron"),
+    include_str!("../assets/levels_original/020.level.ron"),
+    include_str!("../assets/levels_original/021.level.ron"),
+    include_str!("../assets/levels_original/022.level.ron"),
+    include_str!("../assets/levels_original/023.level.ron"),
+    include_str!("../assets/levels_original/024.level.ron"),
+    include_str!("../assets/levels_original/025.level.ron"),
+    include_str!("../assets/levels_original/026.level.ron"),
+    include_str!("../assets/levels_original/027.level.ron"),
+    include_str!("../assets/levels_original/028.level.ron"),
+    include_str!("../assets/levels_original/029.level.ron"),
+    include_str!("../assets/levels_original/030.level.ron"),
+    include_str!("../assets/levels_original/031.level.ron"),
+    include_str!("../assets/levels_original/032.level.ron"),
+    include_str!("../assets/levels_original/033.level.ron"),
+    include_str!("../assets/levels_original/034.level.ron"),
+    include_str!("../assets/levels_original/035.level.ron"),
+];
 const EMBEDDED_ARENAS: [&str; 8] = [
     include_str!("../assets/arenas/arena_01.ron"),
     include_str!("../assets/arenas/arena_02.ron"),
@@ -76,10 +113,28 @@ pub(super) fn personal_stage_path(stage: usize) -> String {
     format!("assets/personal/levels/{stage:03}.level.ron")
 }
 
-pub(super) fn runtime_stage_path(stage: usize) -> String {
-    preferred_existing_path(&personal_stage_path(stage), &stage_path(stage), |path| {
-        Path::new(path).is_file()
-    })
+pub(super) fn campaign_stage_path(pack: CampaignMapPack, stage: usize) -> String {
+    match pack {
+        CampaignMapPack::Original => format!("assets/levels_original/{stage:03}.level.ron"),
+        CampaignMapPack::Custom => stage_path(stage),
+    }
+}
+
+pub(super) fn personal_campaign_stage_path(pack: CampaignMapPack, stage: usize) -> String {
+    match pack {
+        CampaignMapPack::Original => {
+            format!("assets/personal/levels_original/{stage:03}.level.ron")
+        }
+        CampaignMapPack::Custom => personal_stage_path(stage),
+    }
+}
+
+pub(super) fn runtime_campaign_stage_path(pack: CampaignMapPack, stage: usize) -> String {
+    preferred_existing_path(
+        &personal_campaign_stage_path(pack, stage),
+        &campaign_stage_path(pack, stage),
+        |path| Path::new(path).is_file(),
+    )
 }
 
 pub(super) fn preferred_existing_path(
@@ -94,13 +149,21 @@ pub(super) fn preferred_existing_path(
     }
 }
 
+#[cfg(test)]
 pub(super) fn load_stage_bundle(stage: usize) -> Result<(LevelDefinition, TileGrid), String> {
-    let personal_path = personal_stage_path(stage);
-    let authored_path = stage_path(stage);
+    load_campaign_stage_bundle(CampaignMapPack::Custom, stage)
+}
+
+pub(super) fn load_campaign_stage_bundle(
+    pack: CampaignMapPack,
+    stage: usize,
+) -> Result<(LevelDefinition, TileGrid), String> {
+    let personal_path = personal_campaign_stage_path(pack, stage);
+    let authored_path = campaign_stage_path(pack, stage);
     let (path, contents) = load_runtime_text(
         &personal_path,
         &authored_path,
-        embedded_stage_contents(stage),
+        embedded_campaign_stage_contents(pack, stage),
     )?;
     let level =
         parse_level(&contents).map_err(|err| format!("failed to load level {path}: {err}"))?;
@@ -109,15 +172,31 @@ pub(super) fn load_stage_bundle(stage: usize) -> Result<(LevelDefinition, TileGr
     Ok((level, grid))
 }
 
+#[cfg(test)]
 pub(super) fn load_stage_bundle_or_panic(stage: usize) -> (LevelDefinition, TileGrid) {
-    let path = runtime_stage_path(stage);
-    load_stage_bundle(stage).unwrap_or_else(|err| {
-        panic!("{}", campaign_stage_load_error(stage, &path, &err));
+    load_campaign_stage_bundle_or_panic(CampaignMapPack::Custom, stage)
+}
+
+pub(super) fn load_campaign_stage_bundle_or_panic(
+    pack: CampaignMapPack,
+    stage: usize,
+) -> (LevelDefinition, TileGrid) {
+    let path = runtime_campaign_stage_path(pack, stage);
+    load_campaign_stage_bundle(pack, stage).unwrap_or_else(|err| {
+        panic!("{}", campaign_stage_load_error(pack, stage, &path, &err));
     })
 }
 
-pub(super) fn campaign_stage_load_error(stage: usize, path: &str, err: &str) -> String {
-    format!("failed to load campaign stage {stage} from {path}: {err}")
+pub(super) fn campaign_stage_load_error(
+    pack: CampaignMapPack,
+    stage: usize,
+    path: &str,
+    err: &str,
+) -> String {
+    format!(
+        "failed to load {} campaign stage {stage} from {path}: {err}",
+        campaign_map_pack_label(pack)
+    )
 }
 
 pub(super) fn arena_path(arena: usize) -> String {
@@ -215,10 +294,23 @@ pub(super) fn embedded_asset_manifest_contents() -> &'static str {
     EMBEDDED_ASSET_MANIFEST
 }
 
+#[cfg(test)]
 pub(super) fn embedded_stage_contents(stage: usize) -> Option<&'static str> {
+    embedded_campaign_stage_contents(CampaignMapPack::Custom, stage)
+}
+
+pub(super) fn embedded_campaign_stage_contents(
+    pack: CampaignMapPack,
+    stage: usize,
+) -> Option<&'static str> {
+    let levels = match pack {
+        CampaignMapPack::Original => EMBEDDED_ORIGINAL_LEVELS.as_slice(),
+        CampaignMapPack::Custom => EMBEDDED_CUSTOM_LEVELS.as_slice(),
+    };
+
     stage
         .checked_sub(1)
-        .and_then(|index| EMBEDDED_LEVELS.get(index))
+        .and_then(|index| levels.get(index))
         .copied()
 }
 

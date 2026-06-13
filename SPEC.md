@@ -35,7 +35,9 @@ Soft fidelity rules:
 
 Legal and asset boundary:
 
-- Do not copy original Tank 1990, Battle City, or ROM-extracted sprites, sounds, maps, or music into this repository.
+- Do not copy ROM-extracted sprites, sounds, maps, or music into this repository.
+- Exact classic map-layout packs may be committed only when they come from a
+  documented source with an explicit license and attribution.
 - Original or permissively licensed assets may imitate the era and constraints.
 - Public repositories without a clear license may be used only as gameplay or structure references, not as asset sources.
 - Original soundtrack files may be used only as user-supplied, gitignored personal overrides for private local play.
@@ -154,16 +156,16 @@ Win condition:
 
 Progression:
 
-- Mode select may choose the starting authored stage for practice or private playtesting.
+- Mode select may choose the campaign map pack and starting stage for practice or private playtesting.
 - Load the next level after clearing the current level.
-- If the last authored level is cleared, show a victory screen or loop with harder enemy rosters.
+- If the last level in the selected map pack is cleared, show a victory screen or loop with harder enemy rosters.
 
 Stage count target:
 
 - MVP: 3 authored levels.
 - First complete campaign: 35 levels.
-- Current implementation: 50 authored levels.
-- Optional Tank 1990-style extended campaign: 50 levels.
+- `ORIGINAL`: 35 strict classic layouts.
+- `CUSTOM`: 50 authored/custom levels.
 
 ### 5.2 Local Versus
 
@@ -354,16 +356,28 @@ AI should feel simple and old-school:
 
 ## 9. Level And Arena Data
 
-The game should be data-driven.
+The game should be data-driven. Campaign has two map packs:
 
-Solo campaign levels live in:
+- `ORIGINAL`: 35 strict classic layouts in `assets/levels_original/`.
+- `CUSTOM`: 50 authored/custom levels in `assets/levels/`.
+
+Custom campaign levels live in:
 
 ```text
 assets/levels/001.level.ron
 assets/levels/002.level.ron
 assets/levels/003.level.ron
 ...
-assets/levels/040.level.ron
+assets/levels/050.level.ron
+```
+
+Original campaign levels live in:
+
+```text
+assets/levels_original/001.level.ron
+assets/levels_original/002.level.ron
+...
+assets/levels_original/035.level.ron
 ```
 
 Versus arenas live in:
@@ -377,10 +391,11 @@ Personal map overrides may live in the gitignored `assets/personal/` tree:
 
 ```text
 assets/personal/levels/001.level.ron
+assets/personal/levels_original/001.level.ron
 assets/personal/arenas/arena_01.ron
 ```
 
-Runtime should prefer a personal level or arena file when it exists, then fall back to the authored repository file. Personal maps must use the same RON schema and validation rules as committed levels and arenas. This is intended for private playtesting with copied, recreated, or ROM-derived map data; do not commit original commercial maps.
+Runtime should prefer a personal level or arena file when it exists, then fall back to the authored repository file. Personal maps must use the same RON schema and validation rules as committed levels and arenas. This is intended for private playtesting with copied, recreated, or ROM-derived map data; do not commit ROM-extracted or unclear-license commercial maps.
 
 ### 9.1 Solo Level Definition
 
@@ -566,7 +581,7 @@ Personal sprite overrides:
 - If personal sheets use a different atlas order, `assets/personal/manifest.ron` may override the committed manifest locally.
 - `personal/glyphs.png` may replace the generated pixel font; glyph order and dimensions still come from the active manifest.
 - `personal/shield.png` is a standalone `16x16` shield overlay, not part of `personal/effects.png`.
-- Do not commit original Tank 1990, Battle City, or ROM-extracted assets to this repository.
+- Do not commit ROM-extracted or unclear-license original Tank 1990/Battle City assets to this repository.
 
 Supported personal override paths:
 
@@ -949,16 +964,16 @@ Manual playtest checklist:
 - Online multiplayer.
 - NES/FC ROM emulation.
 - Exact CPU/PPU timing behavior.
-- Perfect original maps for every Tank 1990 variant.
+- Perfect original maps for every Tank 1990 variant beyond the selected `ORIGINAL` pack.
 - Full level editor.
 - Gamepad support.
 - WASM release.
 - Advanced enemy pathfinding.
-- Copied original commercial sprites, sounds, maps, or music.
+- Copied ROM-extracted or unclear-license commercial sprites, sounds, maps, or music.
 
 ## 19. Open Questions
 
-- Should the campaign use 35 Battle City-style stages, 50 Tank 1990-style stages, or an original set?
+- Should later releases add more map packs beyond `ORIGINAL` and `CUSTOM`?
 - Should sprites be original art, generated pixel art, or references recreated from scratch?
 - Should friendly fire exist in local versus?
 - Should solo mode eventually support two-player co-op?

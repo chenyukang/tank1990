@@ -44,6 +44,18 @@ The 3D mode is currently an experimental single-camera view. In two-player
 co-op or versus, the camera follows one player at a time and `Tab` switches
 between P1 and P2; split-screen 3D is not implemented yet.
 
+## Install
+
+Install the latest crates.io release with:
+
+```bash
+cargo install tank1990
+```
+
+The published crate is named `tank1990`, and it installs a `tank` executable.
+For local development, `cargo run` and `cargo install --path .` use the same
+binary name.
+
 ## Current Content
 
 - Campaign `ORIGINAL`: 35 strict classic layouts in `assets/levels_original/`
@@ -93,3 +105,21 @@ version `0.1.0` must be released with tag `v0.1.0`.
 The macOS binary is not codesigned or notarized. Gatekeeper may warn on first
 launch; use the standard macOS "Open Anyway" flow or build locally with
 `cargo build --release` if you prefer a locally produced binary.
+
+## crates.io Publishing
+
+Before publishing a crate release, run:
+
+```bash
+cargo fmt --all -- --check
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
+cargo package --allow-dirty --list
+cargo publish --dry-run --allow-dirty
+```
+
+After the dry run succeeds, publish with:
+
+```bash
+cargo publish
+```

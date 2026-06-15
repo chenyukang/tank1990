@@ -1,7 +1,28 @@
 [package]
-name = "tank"
+name = "tank1990"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.95"
+description = "A Rust and Bevy desktop remake inspired by Tank 1990 and Battle City."
+readme = "README.md"
+repository = "https://github.com/chenyukang/tank1990"
+homepage = "https://github.com/chenyukang/tank1990"
+license = "GPL-3.0-only"
+keywords = ["tank", "battle-city", "bevy", "retro", "game"]
+categories = ["games"]
+include = [
+  "/Cargo.lock",
+  "/Cargo.toml",
+  "/README.md",
+  "/assets/**",
+  "/rust-toolchain.toml",
+  "/src/**",
+]
+default-run = "tank"
+
+[[bin]]
+name = "tank"
+path = "src/main.rs"
 
 [dependencies]
 bevy = "0.18.1"

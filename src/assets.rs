@@ -552,9 +552,11 @@ pub(super) fn create_terrain_atlas(manifest: GeneratedAtlasManifest) -> Image {
 
 pub(super) fn draw_brick(pixels: &mut [u8], width: usize, x_offset: usize) {
     let mortar = [48, 24, 16, 255];
+    let brick_shadow = [80, 32, 20, 255];
     let brick_dark = [112, 44, 24, 255];
     let brick_mid = [160, 64, 32, 255];
     let brick_light = [200, 96, 48, 255];
+    let chip = [224, 120, 64, 255];
 
     fill_rect(pixels, width, x_offset, 0, 8, 8, mortar);
     fill_rect(pixels, width, x_offset, 0, 3, 2, brick_mid);
@@ -568,34 +570,48 @@ pub(super) fn draw_brick(pixels: &mut [u8], width: usize, x_offset: usize) {
     fill_rect(pixels, width, x_offset, 3, 5, 1, brick_light);
     fill_rect(pixels, width, x_offset + 6, 3, 2, 1, brick_light);
     fill_rect(pixels, width, x_offset, 6, 3, 1, brick_light);
+    for (x, y) in [(2, 1), (6, 1), (1, 4), (7, 4), (2, 7), (5, 7)] {
+        set_pixel(pixels, width, x_offset + x, y, brick_shadow);
+    }
+    for (x, y) in [(1, 0), (4, 0), (1, 3), (6, 3), (0, 6)] {
+        set_pixel(pixels, width, x_offset + x, y, chip);
+    }
 }
 
 pub(super) fn draw_steel(pixels: &mut [u8], width: usize, x_offset: usize) {
-    let mid = [104, 112, 120, 255];
+    let mid = [112, 120, 128, 255];
     let light = [208, 216, 216, 255];
+    let bevel = [152, 160, 168, 255];
     let shadow = [40, 48, 56, 255];
     let rivet = [72, 80, 88, 255];
+    let rivet_light = [184, 192, 200, 255];
 
     fill_rect(pixels, width, x_offset, 0, 8, 8, mid);
     fill_rect(pixels, width, x_offset, 0, 8, 1, light);
     fill_rect(pixels, width, x_offset, 0, 1, 8, light);
     fill_rect(pixels, width, x_offset + 7, 0, 1, 8, shadow);
     fill_rect(pixels, width, x_offset, 7, 8, 1, shadow);
-    fill_rect(pixels, width, x_offset + 2, 2, 4, 1, [144, 152, 160, 255]);
+    fill_rect(pixels, width, x_offset + 2, 2, 4, 1, bevel);
     fill_rect(pixels, width, x_offset + 2, 5, 4, 1, shadow);
+    fill_rect(pixels, width, x_offset + 1, 3, 6, 1, [128, 136, 144, 255]);
+    fill_rect(pixels, width, x_offset + 1, 6, 6, 1, [72, 80, 88, 255]);
     for (x, y) in [(2, 2), (5, 2), (2, 5), (5, 5)] {
         set_pixel(pixels, width, x_offset + x, y, rivet);
+    }
+    for (x, y) in [(2, 1), (5, 1)] {
+        set_pixel(pixels, width, x_offset + x, y, rivet_light);
     }
 }
 
 pub(super) fn draw_water(pixels: &mut [u8], width: usize, x_offset: usize, frame: usize) {
     let deep = [16, 48, 120, 255];
     let mid = [32, 88, 168, 255];
+    let crest = [56, 128, 208, 255];
     let foam = [104, 176, 232, 255];
     let shadow = [8, 32, 88, 255];
 
     fill_rect(pixels, width, x_offset, 0, 8, 8, deep);
-    for y in [1, 4, 6] {
+    for y in [1, 3, 5, 6] {
         let offset = (frame + y) % 3;
         for x in 0..8 {
             if (x + offset).is_multiple_of(3) {
@@ -605,37 +621,58 @@ pub(super) fn draw_water(pixels: &mut [u8], width: usize, x_offset: usize, frame
             }
         }
     }
+    for (x, y) in if frame.is_multiple_of(2) {
+        [(0, 2), (1, 2), (4, 4), (5, 4), (7, 5)]
+    } else {
+        [(2, 2), (3, 2), (6, 4), (0, 5), (1, 5)]
+    } {
+        set_pixel(pixels, width, x_offset + x, y, crest);
+    }
     fill_rect(pixels, width, x_offset, 7, 8, 1, shadow);
 }
 
 pub(super) fn draw_forest(pixels: &mut [u8], width: usize, x_offset: usize) {
+    let trunk = [48, 32, 24, 210];
     let dark = [16, 72, 32, 225];
     let mid = [32, 120, 48, 235];
     let light = [88, 176, 80, 240];
+    let bright = [128, 208, 112, 238];
 
     fill_rect(pixels, width, x_offset, 0, 8, 8, dark);
     for (x, y) in [(1, 0), (4, 0), (6, 1), (0, 3), (3, 3), (5, 5), (2, 6)] {
         fill_rect(pixels, width, x_offset + x, y, 2, 2, mid);
     }
-    for (x, y) in [(1, 1), (5, 1), (3, 4), (6, 6)] {
+    for (x, y) in [(1, 1), (5, 1), (3, 4), (6, 6), (0, 5)] {
         set_pixel(pixels, width, x_offset + x, y, light);
+    }
+    for (x, y) in [(2, 2), (6, 2), (4, 5), (7, 7)] {
+        set_pixel(pixels, width, x_offset + x, y, bright);
+    }
+    for (x, y) in [(3, 7), (4, 7), (6, 4)] {
+        set_pixel(pixels, width, x_offset + x, y, trunk);
     }
 }
 
 pub(super) fn draw_ice(pixels: &mut [u8], width: usize, x_offset: usize) {
-    let base = [120, 184, 216, 255];
+    let base = [128, 192, 224, 255];
     let light = [224, 248, 255, 255];
     let mid = [160, 216, 232, 255];
     let crack = [64, 128, 176, 255];
+    let shadow = [80, 152, 192, 255];
 
     fill_rect(pixels, width, x_offset, 0, 8, 8, base);
     fill_rect(pixels, width, x_offset, 0, 8, 1, light);
     fill_rect(pixels, width, x_offset, 0, 1, 8, light);
-    for (x, y) in [(2, 2), (3, 2), (4, 3), (5, 4), (2, 5), (1, 6)] {
+    fill_rect(pixels, width, x_offset + 7, 1, 1, 7, shadow);
+    fill_rect(pixels, width, x_offset + 1, 7, 7, 1, shadow);
+    for (x, y) in [(2, 2), (3, 2), (4, 3), (5, 4), (2, 5), (1, 6), (6, 5)] {
         set_pixel(pixels, width, x_offset + x, y, crack);
     }
-    for (x, y) in [(5, 1), (6, 2), (1, 4), (4, 6)] {
+    for (x, y) in [(5, 1), (6, 2), (1, 4), (4, 6), (2, 1)] {
         set_pixel(pixels, width, x_offset + x, y, mid);
+    }
+    for (x, y) in [(1, 1), (4, 1), (2, 4), (5, 6)] {
+        set_pixel(pixels, width, x_offset + x, y, [248, 255, 255, 255]);
     }
 }
 
@@ -723,19 +760,35 @@ pub(super) fn draw_vertical_tank(
     palette: TankPalette,
     frame: usize,
 ) {
-    fill_rect(pixels, width, x_offset + 2, 2, 4, 12, palette.tread);
-    fill_rect(pixels, width, x_offset + 10, 2, 4, 12, palette.tread);
-    for y in [3 + frame % 2, 7 + frame % 2, 11 + frame % 2] {
-        fill_rect(pixels, width, x_offset + 2, y, 4, 1, palette.dark);
-        fill_rect(pixels, width, x_offset + 10, y, 4, 1, palette.dark);
+    fill_rect(pixels, width, x_offset + 1, 2, 4, 12, palette.dark);
+    fill_rect(pixels, width, x_offset + 11, 2, 4, 12, palette.dark);
+    fill_rect(pixels, width, x_offset + 2, 2, 3, 12, palette.tread);
+    fill_rect(pixels, width, x_offset + 11, 2, 3, 12, palette.tread);
+    for y in [3 + frame % 2, 6 + frame % 2, 9 + frame % 2, 12 + frame % 2] {
+        fill_rect(pixels, width, x_offset + 2, y.min(13), 3, 1, palette.dark);
+        fill_rect(pixels, width, x_offset + 11, y.min(13), 3, 1, palette.dark);
     }
-    fill_rect(pixels, width, x_offset + 4, 4, 8, 8, palette.body);
-    fill_rect(pixels, width, x_offset + 6, 6, 4, 4, palette.light);
-    fill_rect(pixels, width, x_offset + 4, 11, 8, 1, palette.dark);
+    fill_rect(pixels, width, x_offset + 5, 3, 6, 10, palette.dark);
+    fill_rect(pixels, width, x_offset + 5, 4, 6, 8, palette.body);
+    fill_rect(pixels, width, x_offset + 6, 5, 4, 5, palette.light);
+    fill_rect(pixels, width, x_offset + 6, 10, 4, 2, palette.body);
+    set_pixel(pixels, width, x_offset + 5, 4, palette.light);
+    set_pixel(pixels, width, x_offset + 10, 11, palette.dark);
+    fill_rect(pixels, width, x_offset + 6, 12, 4, 1, palette.dark);
 
     match direction {
-        Direction::Up => fill_rect(pixels, width, x_offset + 7, 0, 2, 7, palette.light),
-        Direction::Down => fill_rect(pixels, width, x_offset + 7, 9, 2, 7, palette.light),
+        Direction::Up => {
+            fill_rect(pixels, width, x_offset + 7, 0, 2, 7, palette.light);
+            fill_rect(pixels, width, x_offset + 6, 0, 1, 2, palette.dark);
+            fill_rect(pixels, width, x_offset + 9, 1, 1, 3, palette.dark);
+            set_pixel(pixels, width, x_offset + 8, 2, palette.light);
+        }
+        Direction::Down => {
+            fill_rect(pixels, width, x_offset + 7, 9, 2, 7, palette.light);
+            fill_rect(pixels, width, x_offset + 6, 12, 1, 3, palette.dark);
+            fill_rect(pixels, width, x_offset + 9, 14, 1, 2, palette.dark);
+            set_pixel(pixels, width, x_offset + 8, 13, palette.light);
+        }
         Direction::Left | Direction::Right => {}
     }
 }
@@ -748,23 +801,34 @@ pub(super) fn draw_horizontal_tank(
     palette: TankPalette,
     frame: usize,
 ) {
-    fill_rect(pixels, width, x_offset + 2, 2, 12, 4, palette.tread);
-    fill_rect(pixels, width, x_offset + 2, 10, 12, 4, palette.tread);
-    for x in [3 + frame % 2, 7 + frame % 2, 11 + frame % 2] {
-        fill_rect(pixels, width, x_offset + x, 2, 1, 4, palette.dark);
-        fill_rect(pixels, width, x_offset + x, 10, 1, 4, palette.dark);
+    fill_rect(pixels, width, x_offset + 2, 1, 12, 4, palette.dark);
+    fill_rect(pixels, width, x_offset + 2, 11, 12, 4, palette.dark);
+    fill_rect(pixels, width, x_offset + 2, 2, 12, 3, palette.tread);
+    fill_rect(pixels, width, x_offset + 2, 11, 12, 3, palette.tread);
+    for x in [3 + frame % 2, 6 + frame % 2, 9 + frame % 2, 12 + frame % 2] {
+        fill_rect(pixels, width, x_offset + x.min(13), 2, 1, 3, palette.dark);
+        fill_rect(pixels, width, x_offset + x.min(13), 11, 1, 3, palette.dark);
     }
-    fill_rect(pixels, width, x_offset + 4, 4, 8, 8, palette.body);
-    fill_rect(pixels, width, x_offset + 6, 6, 4, 4, palette.light);
+    fill_rect(pixels, width, x_offset + 3, 5, 10, 6, palette.dark);
+    fill_rect(pixels, width, x_offset + 4, 5, 8, 6, palette.body);
+    fill_rect(pixels, width, x_offset + 6, 6, 5, 4, palette.light);
+    fill_rect(pixels, width, x_offset + 4, 10, 7, 1, palette.dark);
+    set_pixel(pixels, width, x_offset + 5, 5, palette.light);
 
     match direction {
         Direction::Left => {
             fill_rect(pixels, width, x_offset, 7, 7, 2, palette.light);
-            fill_rect(pixels, width, x_offset + 11, 4, 1, 8, palette.dark);
+            fill_rect(pixels, width, x_offset, 6, 2, 1, palette.dark);
+            fill_rect(pixels, width, x_offset + 1, 9, 4, 1, palette.dark);
+            fill_rect(pixels, width, x_offset + 12, 5, 1, 6, palette.dark);
+            set_pixel(pixels, width, x_offset + 2, 8, palette.light);
         }
         Direction::Right => {
             fill_rect(pixels, width, x_offset + 9, 7, 7, 2, palette.light);
-            fill_rect(pixels, width, x_offset + 4, 4, 1, 8, palette.dark);
+            fill_rect(pixels, width, x_offset + 14, 6, 2, 1, palette.dark);
+            fill_rect(pixels, width, x_offset + 11, 9, 4, 1, palette.dark);
+            fill_rect(pixels, width, x_offset + 3, 5, 1, 6, palette.dark);
+            set_pixel(pixels, width, x_offset + 13, 8, palette.light);
         }
         Direction::Up | Direction::Down => {}
     }
@@ -835,27 +899,37 @@ pub(super) fn draw_bullet(pixels: &mut [u8], width: usize, x_offset: usize, dire
     let light = [248, 248, 216, 255];
     let mid = [208, 184, 96, 255];
     let dark = [128, 112, 64, 255];
+    let ember = [232, 144, 64, 220];
+    let smoke = [72, 64, 48, 170];
 
     match direction {
         Direction::Up => {
             fill_rect(pixels, width, x_offset + 1, 0, 2, 1, light);
             fill_rect(pixels, width, x_offset + 1, 1, 2, 2, mid);
             fill_rect(pixels, width, x_offset + 1, 3, 2, 1, dark);
+            set_pixel(pixels, width, x_offset, 3, smoke);
+            set_pixel(pixels, width, x_offset + 3, 3, ember);
         }
         Direction::Down => {
             fill_rect(pixels, width, x_offset + 1, 0, 2, 1, dark);
             fill_rect(pixels, width, x_offset + 1, 1, 2, 2, mid);
             fill_rect(pixels, width, x_offset + 1, 3, 2, 1, light);
+            set_pixel(pixels, width, x_offset, 0, ember);
+            set_pixel(pixels, width, x_offset + 3, 0, smoke);
         }
         Direction::Left => {
             fill_rect(pixels, width, x_offset, 1, 1, 2, light);
             fill_rect(pixels, width, x_offset + 1, 1, 2, 2, mid);
             fill_rect(pixels, width, x_offset + 3, 1, 1, 2, dark);
+            set_pixel(pixels, width, x_offset + 3, 0, smoke);
+            set_pixel(pixels, width, x_offset + 3, 3, ember);
         }
         Direction::Right => {
             fill_rect(pixels, width, x_offset, 1, 1, 2, dark);
             fill_rect(pixels, width, x_offset + 1, 1, 2, 2, mid);
             fill_rect(pixels, width, x_offset + 3, 1, 1, 2, light);
+            set_pixel(pixels, width, x_offset, 0, ember);
+            set_pixel(pixels, width, x_offset, 3, smoke);
         }
     }
 }
@@ -906,36 +980,78 @@ pub(super) fn draw_explosion_frame(pixels: &mut [u8], width: usize, x_offset: us
     let flame = [248, 184, 64, 255];
     let ember = [232, 80, 40, 240];
     let smoke = [88, 72, 64, 190];
+    let smoke_dark = [56, 48, 48, 165];
 
     match frame {
         0 => {
             fill_rect(pixels, width, x_offset + 7, 7, 2, 2, core);
-            for (x, y) in [(8, 4), (4, 8), (11, 8), (8, 11)] {
+            for (x, y) in [(8, 4), (4, 8), (11, 8), (8, 11), (6, 6), (10, 10)] {
                 set_pixel(pixels, width, x_offset + x, y, flame);
+            }
+            for (x, y) in [(7, 5), (5, 7), (10, 7), (7, 10)] {
+                set_pixel(pixels, width, x_offset + x, y, ember);
             }
         }
         1 => {
             fill_rect(pixels, width, x_offset + 6, 6, 4, 4, core);
             fill_rect(pixels, width, x_offset + 5, 7, 6, 2, flame);
             fill_rect(pixels, width, x_offset + 7, 5, 2, 6, flame);
-            for (x, y) in [(4, 6), (11, 6), (4, 10), (11, 10), (8, 3), (8, 12)] {
+            for (x, y) in [
+                (4, 6),
+                (11, 6),
+                (4, 10),
+                (11, 10),
+                (8, 3),
+                (8, 12),
+                (3, 8),
+                (12, 8),
+            ] {
                 set_pixel(pixels, width, x_offset + x, y, ember);
+            }
+            for (x, y) in [(5, 4), (10, 4), (5, 12), (10, 12)] {
+                set_pixel(pixels, width, x_offset + x, y, smoke);
             }
         }
         2 => {
             fill_rect(pixels, width, x_offset + 4, 6, 8, 5, flame);
             fill_rect(pixels, width, x_offset + 6, 4, 4, 9, ember);
             fill_rect(pixels, width, x_offset + 7, 7, 2, 2, core);
-            for (x, y) in [(3, 8), (12, 8), (8, 3), (8, 13), (5, 5), (11, 11)] {
+            for (x, y) in [
+                (3, 8),
+                (12, 8),
+                (8, 3),
+                (8, 13),
+                (5, 5),
+                (11, 11),
+                (4, 3),
+                (13, 10),
+                (2, 11),
+            ] {
                 set_pixel(pixels, width, x_offset + x, y, smoke);
+            }
+            for (x, y) in [(2, 7), (13, 7), (6, 14), (10, 2)] {
+                set_pixel(pixels, width, x_offset + x, y, smoke_dark);
             }
         }
         _ => {
-            for (x, y) in [(4, 6), (8, 4), (11, 6), (3, 10), (7, 11), (12, 10), (9, 13)] {
+            for (x, y) in [
+                (4, 6),
+                (8, 4),
+                (11, 6),
+                (3, 10),
+                (7, 11),
+                (12, 10),
+                (9, 13),
+                (5, 3),
+                (13, 7),
+                (2, 8),
+            ] {
                 set_pixel(pixels, width, x_offset + x, y, smoke);
             }
             fill_rect(pixels, width, x_offset + 6, 8, 4, 3, [104, 80, 56, 170]);
             set_pixel(pixels, width, x_offset + 8, 8, [184, 72, 40, 180]);
+            set_pixel(pixels, width, x_offset + 5, 10, smoke_dark);
+            set_pixel(pixels, width, x_offset + 11, 9, smoke_dark);
         }
     }
 }
@@ -1074,6 +1190,8 @@ pub(super) fn draw_bullet_impact_frame(
         0 => {
             fill_rect(pixels, width, x_offset + 7, 7, 2, 2, [255, 248, 184, 255]);
             set_pixel(pixels, width, x_offset + 8, 6, [255, 255, 255, 240]);
+            set_pixel(pixels, width, x_offset + 6, 8, [248, 216, 96, 230]);
+            set_pixel(pixels, width, x_offset + 9, 8, [232, 96, 40, 220]);
         }
         1 => {
             fill_rect(pixels, width, x_offset + 6, 7, 4, 2, [248, 216, 96, 255]);
@@ -1081,15 +1199,28 @@ pub(super) fn draw_bullet_impact_frame(
             set_pixel(pixels, width, x_offset + 5, 5, [255, 255, 255, 220]);
             set_pixel(pixels, width, x_offset + 10, 10, [232, 96, 40, 230]);
             set_pixel(pixels, width, x_offset + 12, 8, [248, 216, 96, 220]);
+            for (x, y) in [(4, 8), (8, 4), (11, 6), (6, 11)] {
+                set_pixel(pixels, width, x_offset + x, y, [255, 248, 184, 220]);
+            }
         }
         2 => {
-            for (x, y) in [(4, 7), (6, 5), (8, 4), (11, 7), (9, 11), (5, 10)] {
+            for (x, y) in [
+                (4, 7),
+                (6, 5),
+                (8, 4),
+                (11, 7),
+                (9, 11),
+                (5, 10),
+                (12, 10),
+                (3, 9),
+            ] {
                 set_pixel(pixels, width, x_offset + x, y, [248, 200, 72, 220]);
             }
             fill_rect(pixels, width, x_offset + 7, 7, 2, 2, [232, 96, 40, 210]);
+            set_pixel(pixels, width, x_offset + 10, 5, [104, 88, 80, 160]);
         }
         _ => {
-            for (x, y) in [(5, 6), (9, 5), (11, 9), (7, 11)] {
+            for (x, y) in [(5, 6), (9, 5), (11, 9), (7, 11), (4, 10), (12, 7)] {
                 set_pixel(pixels, width, x_offset + x, y, [104, 88, 80, 150]);
             }
             set_pixel(pixels, width, x_offset + 8, 8, [72, 56, 48, 130]);
@@ -1114,6 +1245,9 @@ pub(super) fn draw_star_powerup(pixels: &mut [u8], width: usize, x_offset: usize
     let gold = [248, 216, 72, 255];
     let light = [255, 248, 160, 255];
 
+    for (x, y, w) in [(8, 1, 1), (6, 4, 5), (3, 7, 11), (5, 11, 3), (10, 11, 3)] {
+        fill_rect(pixels, width, x_offset + x, y, w, 1, shadow);
+    }
     for (x, y, w) in [(8, 2, 1), (7, 4, 3), (4, 6, 9), (6, 8, 5)] {
         fill_rect(pixels, width, x_offset + x, y + 1, w, 1, shadow);
         fill_rect(pixels, width, x_offset + x, y, w, 1, gold);
@@ -1123,6 +1257,7 @@ pub(super) fn draw_star_powerup(pixels: &mut [u8], width: usize, x_offset: usize
     fill_rect(pixels, width, x_offset + 7, 4, 2, 1, light);
     fill_rect(pixels, width, x_offset + 6, 6, 3, 1, light);
     set_pixel(pixels, width, x_offset + 8, 2, light);
+    set_pixel(pixels, width, x_offset + 11, 6, [255, 232, 112, 255]);
 }
 
 pub(super) fn draw_helmet_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
@@ -1136,6 +1271,8 @@ pub(super) fn draw_helmet_powerup(pixels: &mut [u8], width: usize, x_offset: usi
     fill_rect(pixels, width, x_offset + 3, 9, 10, 2, dark);
     fill_rect(pixels, width, x_offset + 5, 6, 6, 2, visor);
     fill_rect(pixels, width, x_offset + 7, 4, 2, 5, light);
+    fill_rect(pixels, width, x_offset + 4, 11, 8, 1, [24, 72, 112, 255]);
+    fill_rect(pixels, width, x_offset + 4, 5, 1, 4, [128, 216, 232, 255]);
     set_pixel(pixels, width, x_offset + 4, 4, dark);
     set_pixel(pixels, width, x_offset + 11, 4, dark);
 }
@@ -1153,6 +1290,8 @@ pub(super) fn draw_clock_powerup(pixels: &mut [u8], width: usize, x_offset: usiz
     fill_rect(pixels, width, x_offset + 5, 4, 6, 8, face);
     fill_rect(pixels, width, x_offset + 7, 6, 2, 4, hand);
     fill_rect(pixels, width, x_offset + 8, 9, 4, 2, hand);
+    set_pixel(pixels, width, x_offset + 6, 5, [255, 255, 240, 255]);
+    set_pixel(pixels, width, x_offset + 10, 11, [192, 200, 184, 255]);
     set_pixel(pixels, width, x_offset + 8, 8, rim_dark);
 }
 
@@ -1172,6 +1311,9 @@ pub(super) fn draw_grenade_powerup(pixels: &mut [u8], width: usize, x_offset: us
     fill_rect(pixels, width, x_offset + 6, 6, 2, 2, light);
     fill_rect(pixels, width, x_offset + 9, 6, 1, 7, dark);
     fill_rect(pixels, width, x_offset + 5, 9, 8, 1, dark);
+    set_pixel(pixels, width, x_offset + 11, 3, [104, 96, 56, 255]);
+    set_pixel(pixels, width, x_offset + 7, 12, [32, 56, 24, 255]);
+    set_pixel(pixels, width, x_offset + 12, 10, [56, 96, 36, 255]);
 }
 
 pub(super) fn draw_shovel_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
@@ -1187,6 +1329,9 @@ pub(super) fn draw_shovel_powerup(pixels: &mut [u8], width: usize, x_offset: usi
     fill_rect(pixels, width, x_offset + 4, 11, 10, 3, blade);
     fill_rect(pixels, width, x_offset + 5, 12, 8, 1, shine);
     fill_rect(pixels, width, x_offset + 6, 14, 6, 1, shadow);
+    set_pixel(pixels, width, x_offset + 4, 13, shadow);
+    set_pixel(pixels, width, x_offset + 13, 13, shadow);
+    set_pixel(pixels, width, x_offset + 6, 11, [208, 216, 216, 255]);
 }
 
 pub(super) fn draw_tank_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
@@ -1201,6 +1346,8 @@ pub(super) fn draw_tank_powerup(pixels: &mut [u8], width: usize, x_offset: usize
     fill_rect(pixels, width, x_offset + 7, 3, 2, 6, light);
     fill_rect(pixels, width, x_offset + 6, 8, 4, 3, light);
     fill_rect(pixels, width, x_offset + 5, 11, 6, 1, shadow);
+    fill_rect(pixels, width, x_offset + 5, 6, 6, 1, [248, 112, 88, 255]);
+    fill_rect(pixels, width, x_offset + 6, 12, 4, 1, [80, 32, 32, 255]);
     set_pixel(pixels, width, x_offset + 4, 6, [96, 96, 96, 255]);
     set_pixel(pixels, width, x_offset + 12, 11, [32, 32, 32, 255]);
 }
@@ -1382,26 +1529,40 @@ pub(super) fn create_base_image(manifest: GeneratedSpriteManifest, destroyed: bo
 
     if destroyed {
         let rubble = [120, 80, 48, 255];
+        let rubble_light = [160, 104, 56, 255];
+        let ash = [56, 48, 40, 255];
         let ember = [184, 64, 32, 255];
         let flame = [248, 184, 64, 255];
         let smoke = [80, 72, 64, 255];
 
         fill_rect(&mut pixels, manifest.width, 7, 2, 2, 2, smoke);
+        set_pixel(&mut pixels, manifest.width, 6, 1, smoke);
+        set_pixel(&mut pixels, manifest.width, 10, 3, smoke);
         fill_rect(&mut pixels, manifest.width, 6, 5, 2, 3, ember);
         fill_rect(&mut pixels, manifest.width, 9, 6, 2, 3, ember);
         set_pixel(&mut pixels, manifest.width, 6, 5, flame);
         set_pixel(&mut pixels, manifest.width, 10, 6, flame);
+        set_pixel(&mut pixels, manifest.width, 8, 4, [232, 112, 40, 230]);
+        fill_rect(&mut pixels, manifest.width, 3, 9, 3, 1, ash);
         fill_rect(&mut pixels, manifest.width, 4, 10, 4, 2, rubble);
         fill_rect(&mut pixels, manifest.width, 9, 9, 4, 3, rubble);
+        set_pixel(&mut pixels, manifest.width, 5, 10, rubble_light);
+        set_pixel(&mut pixels, manifest.width, 11, 9, rubble_light);
+        set_pixel(&mut pixels, manifest.width, 12, 11, ash);
         fill_rect(&mut pixels, manifest.width, 6, 11, 5, 1, gold_dark);
         fill_rect(&mut pixels, manifest.width, 3, 12, 10, 2, outline);
         fill_rect(&mut pixels, manifest.width, 2, 13, 12, 1, shadow);
+        fill_rect(&mut pixels, manifest.width, 5, 14, 7, 1, ash);
     } else {
         fill_rect(&mut pixels, manifest.width, 7, 2, 2, 1, outline);
         fill_rect(&mut pixels, manifest.width, 7, 3, 2, 2, body);
         set_pixel(&mut pixels, manifest.width, 9, 4, [232, 112, 40, 255]);
+        set_pixel(&mut pixels, manifest.width, 6, 4, outline);
+        set_pixel(&mut pixels, manifest.width, 10, 4, outline);
         fill_rect(&mut pixels, manifest.width, 6, 6, 4, 1, outline);
         fill_rect(&mut pixels, manifest.width, 7, 6, 2, 5, body);
+        fill_rect(&mut pixels, manifest.width, 6, 7, 1, 3, body);
+        fill_rect(&mut pixels, manifest.width, 9, 7, 1, 3, shadow);
         fill_rect(&mut pixels, manifest.width, 6, 8, 4, 2, gold_light);
         fill_rect(&mut pixels, manifest.width, 3, 7, 3, 1, gold_dark);
         fill_rect(&mut pixels, manifest.width, 10, 7, 3, 1, gold_dark);
@@ -1409,11 +1570,15 @@ pub(super) fn create_base_image(manifest: GeneratedSpriteManifest, destroyed: bo
         fill_rect(&mut pixels, manifest.width, 9, 8, 5, 1, gold_mid);
         fill_rect(&mut pixels, manifest.width, 4, 9, 3, 1, gold_light);
         fill_rect(&mut pixels, manifest.width, 9, 9, 3, 1, gold_light);
+        set_pixel(&mut pixels, manifest.width, 5, 8, [255, 240, 144, 255]);
+        set_pixel(&mut pixels, manifest.width, 10, 8, [184, 128, 48, 255]);
         set_pixel(&mut pixels, manifest.width, 2, 9, outline);
         set_pixel(&mut pixels, manifest.width, 13, 9, outline);
         fill_rect(&mut pixels, manifest.width, 6, 11, 4, 2, gold_dark);
         fill_rect(&mut pixels, manifest.width, 4, 12, 8, 1, shadow);
         fill_rect(&mut pixels, manifest.width, 3, 13, 10, 1, outline);
+        set_pixel(&mut pixels, manifest.width, 6, 12, gold_mid);
+        set_pixel(&mut pixels, manifest.width, 9, 12, outline);
     }
     image_from_pixels(manifest.width, manifest.height, pixels)
 }

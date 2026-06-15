@@ -7530,6 +7530,23 @@ mod tests {
             .expect("pixel should have four channels")
     }
 
+    fn replace_fixture_once(contents: &str, from: &str, to: &str) -> String {
+        let normalized = contents.replace("\r\n", "\n");
+        assert!(
+            normalized.contains(from),
+            "fixture replacement pattern should match"
+        );
+        normalized.replacen(from, to, 1)
+    }
+
+    #[test]
+    fn fixture_replacement_matches_crlf_inputs() {
+        assert_eq!(
+            replace_fixture_once("head\r\nbody\r\ntail", "head\nbody", "top"),
+            "top\ntail"
+        );
+    }
+
     fn authored_levels() -> [(usize, &'static str); CUSTOM_LEVEL_COUNT] {
         [
             (1, LEVEL_1),
@@ -9049,7 +9066,8 @@ mod tests {
                 .contains("outside the generated tank atlas")
         );
 
-        let invalid = MANIFEST.replacen(
+        let invalid = replace_fixture_once(
+            MANIFEST,
             "    player2: [
       (up: 8, down: 9, left: 10, right: 11),
       (up: 12, down: 13, left: 14, right: 15),
@@ -9057,7 +9075,6 @@ mod tests {
             "    player2: [
       (up: 8, down: 9, left: 10, right: 11),
     ],",
-            1,
         );
         assert!(
             parse_asset_manifest(&invalid)
@@ -9863,10 +9880,10 @@ mod tests {
 
     #[test]
     fn arena_rejects_duplicate_powerup_spawns() {
-        let duplicate_powerup = ARENA_1.replacen(
+        let duplicate_powerup = replace_fixture_once(
+            ARENA_1,
             "  powerup_spawns: [\n    (x: 12, y: 12),\n  ],",
             "  powerup_spawns: [\n    (x: 12, y: 12),\n    (x: 12, y: 12),\n  ],",
-            1,
         );
 
         assert!(

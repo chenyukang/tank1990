@@ -102,15 +102,25 @@ const GENERATED_BASE_SIZE: usize = 16;
 const GENERATED_SHIELD_SIZE: usize = 16;
 const GENERATED_UI_ICON_SIZE: usize = 8;
 
-const VIRTUAL_WIDTH: f32 = 256.0;
 const VIRTUAL_HEIGHT: f32 = 240.0;
 const DEFAULT_WINDOW_SCALE: u32 = 3;
 const MIN_WINDOW_SCALE: u32 = 2;
 const MAX_WINDOW_SCALE: u32 = 4;
-const BOARD_ORIGIN_X: f32 = 0.0;
+const BOARD_ORIGIN_X: f32 = 24.0;
 const BOARD_ORIGIN_Y: f32 = 16.0;
 const BOARD_TILES: usize = 26;
 const TILE_SIZE: f32 = 8.0;
+const BOARD_SIZE: f32 = 208.0;
+const STATUS_PANEL_GAP: f32 = 24.0;
+const STATUS_PANEL_WIDTH: f32 = 48.0;
+const VIRTUAL_WIDTH: f32 = BOARD_ORIGIN_X + BOARD_SIZE + STATUS_PANEL_GAP + STATUS_PANEL_WIDTH;
+const STATUS_PANEL_HEIGHT: f32 = BOARD_SIZE;
+const STATUS_PANEL_LEFT: f32 = BOARD_ORIGIN_X + BOARD_SIZE + STATUS_PANEL_GAP;
+const STATUS_PANEL_TOP: f32 = BOARD_ORIGIN_Y;
+const STATUS_PANEL_INNER_LEFT: f32 = STATUS_PANEL_LEFT + 4.0;
+const STATUS_PANEL_INNER_TOP: f32 = STATUS_PANEL_TOP + 8.0;
+const STATUS_PANEL_INNER_WIDTH: f32 = 40.0;
+const STATUS_PANEL_INNER_HEIGHT: f32 = 192.0;
 const TANK_SIZE: f32 = 16.0;
 const BULLET_SIZE: f32 = 4.0;
 
@@ -129,7 +139,7 @@ const ENEMY_MARKER_COUNT: usize = 20;
 const ENEMY_MARKER_COLUMNS: usize = 4;
 const ENEMY_MARKER_SIZE: f32 = 8.0;
 const PLAYER_LIFE_ICON_SIZE: f32 = 8.0;
-const ENEMY_MARKER_LEFT: f32 = 216.0;
+const ENEMY_MARKER_LEFT: f32 = STATUS_PANEL_LEFT + 8.0;
 const ENEMY_MARKER_TOP: f32 = 159.0;
 const ENEMY_MARKER_CELL_X: f32 = 9.0;
 const ENEMY_MARKER_CELL_Y: f32 = 9.0;
@@ -2911,15 +2921,22 @@ fn spawn_mode_select_cursor(
     ));
 }
 
+fn status_panel_top_left(offset_x: f32, y: f32) -> Vec2 {
+    Vec2::new(STATUS_PANEL_LEFT + offset_x, y)
+}
+
 fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets, mode: GameMode) {
     commands.spawn((
         Sprite::from_color(
             Color::srgb_u8(80, 80, 72),
-            Vec2::new(48.0 * window_scale(), 208.0 * window_scale()),
+            Vec2::new(
+                STATUS_PANEL_WIDTH * window_scale(),
+                STATUS_PANEL_HEIGHT * window_scale(),
+            ),
         ),
         Transform::from_translation(virtual_center_scaled(
-            Vec2::new(208.0, 16.0),
-            Vec2::new(48.0, 208.0),
+            Vec2::new(STATUS_PANEL_LEFT, STATUS_PANEL_TOP),
+            Vec2::new(STATUS_PANEL_WIDTH, STATUS_PANEL_HEIGHT),
             0.0,
         )),
         GameEntity,
@@ -2928,11 +2945,14 @@ fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets, mode: Game
     commands.spawn((
         Sprite::from_color(
             Color::srgb_u8(36, 36, 32),
-            Vec2::new(40.0 * window_scale(), 192.0 * window_scale()),
+            Vec2::new(
+                STATUS_PANEL_INNER_WIDTH * window_scale(),
+                STATUS_PANEL_INNER_HEIGHT * window_scale(),
+            ),
         ),
         Transform::from_translation(virtual_center_scaled(
-            Vec2::new(212.0, 24.0),
-            Vec2::new(40.0, 192.0),
+            Vec2::new(STATUS_PANEL_INNER_LEFT, STATUS_PANEL_INNER_TOP),
+            Vec2::new(STATUS_PANEL_INNER_WIDTH, STATUS_PANEL_INNER_HEIGHT),
             0.1,
         )),
         GameEntity,
@@ -2947,19 +2967,37 @@ fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets, mode: Game
 }
 
 fn spawn_campaign_status_panel(commands: &mut Commands, assets: &SpriteAssets, show_p2: bool) {
-    spawn_pixel_text(commands, assets, "P1", Vec2::new(214.0, 26.0), 0.3);
-    spawn_pixel_text(commands, assets, "SCORE", Vec2::new(214.0, 38.0), 0.3);
+    spawn_pixel_text(
+        commands,
+        assets,
+        "P1",
+        status_panel_top_left(6.0, 26.0),
+        0.3,
+    );
+    spawn_pixel_text(
+        commands,
+        assets,
+        "SCORE",
+        status_panel_top_left(6.0, 38.0),
+        0.3,
+    );
     spawn_score_badge_icon(commands, assets);
     spawn_status_digits(
         commands,
         assets,
         StatusValue::Score,
         6,
-        Vec2::new(214.0, 49.0),
+        status_panel_top_left(6.0, 49.0),
         0.3,
     );
 
-    spawn_pixel_text(commands, assets, "STAGE", Vec2::new(214.0, 76.0), 0.3);
+    spawn_pixel_text(
+        commands,
+        assets,
+        "STAGE",
+        status_panel_top_left(6.0, 76.0),
+        0.3,
+    );
     spawn_stage_flag_icon(commands, assets);
     spawn_status_digits(
         commands,
@@ -2970,7 +3008,13 @@ fn spawn_campaign_status_panel(commands: &mut Commands, assets: &SpriteAssets, s
         0.3,
     );
 
-    spawn_pixel_text(commands, assets, "LIFE", Vec2::new(214.0, 112.0), 0.3);
+    spawn_pixel_text(
+        commands,
+        assets,
+        "LIFE",
+        status_panel_top_left(6.0, 112.0),
+        0.3,
+    );
     spawn_player_life_icon(
         commands,
         assets,
@@ -2982,7 +3026,7 @@ fn spawn_campaign_status_panel(commands: &mut Commands, assets: &SpriteAssets, s
         assets,
         StatusValue::Lives,
         1,
-        Vec2::new(234.0, 123.0),
+        status_panel_top_left(26.0, 123.0),
         0.3,
     );
     if show_p2 {
@@ -2997,12 +3041,18 @@ fn spawn_campaign_status_panel(commands: &mut Commands, assets: &SpriteAssets, s
             assets,
             StatusValue::P2Lives,
             1,
-            Vec2::new(234.0, 135.0),
+            status_panel_top_left(26.0, 135.0),
             0.3,
         );
     }
 
-    spawn_pixel_text(commands, assets, "ENEMY", Vec2::new(214.0, 148.0), 0.3);
+    spawn_pixel_text(
+        commands,
+        assets,
+        "ENEMY",
+        status_panel_top_left(6.0, 148.0),
+        0.3,
+    );
     for index in 0..ENEMY_MARKER_COUNT {
         spawn_enemy_marker(commands, assets, index);
     }
@@ -3082,17 +3132,35 @@ fn spawn_score_badge_icon(commands: &mut Commands, assets: &SpriteAssets) {
 }
 
 fn spawn_versus_status_panel(commands: &mut Commands, assets: &SpriteAssets, show_target: bool) {
-    spawn_pixel_text(commands, assets, "P1", Vec2::new(214.0, 26.0), 0.3);
-    spawn_pixel_text(commands, assets, "SCORE", Vec2::new(214.0, 38.0), 0.3);
+    spawn_pixel_text(
+        commands,
+        assets,
+        "P1",
+        status_panel_top_left(6.0, 26.0),
+        0.3,
+    );
+    spawn_pixel_text(
+        commands,
+        assets,
+        "SCORE",
+        status_panel_top_left(6.0, 38.0),
+        0.3,
+    );
     spawn_status_digits(
         commands,
         assets,
         StatusValue::Score,
         2,
-        Vec2::new(226.0, 49.0),
+        status_panel_top_left(18.0, 49.0),
         0.3,
     );
-    spawn_pixel_text(commands, assets, "LIFE", Vec2::new(214.0, 62.0), 0.3);
+    spawn_pixel_text(
+        commands,
+        assets,
+        "LIFE",
+        status_panel_top_left(6.0, 62.0),
+        0.3,
+    );
     spawn_player_life_icon(
         commands,
         assets,
@@ -3104,21 +3172,39 @@ fn spawn_versus_status_panel(commands: &mut Commands, assets: &SpriteAssets, sho
         assets,
         StatusValue::Lives,
         1,
-        Vec2::new(234.0, 73.0),
+        status_panel_top_left(26.0, 73.0),
         0.3,
     );
 
-    spawn_pixel_text(commands, assets, "P2", Vec2::new(214.0, 98.0), 0.3);
-    spawn_pixel_text(commands, assets, "SCORE", Vec2::new(214.0, 110.0), 0.3);
+    spawn_pixel_text(
+        commands,
+        assets,
+        "P2",
+        status_panel_top_left(6.0, 98.0),
+        0.3,
+    );
+    spawn_pixel_text(
+        commands,
+        assets,
+        "SCORE",
+        status_panel_top_left(6.0, 110.0),
+        0.3,
+    );
     spawn_status_digits(
         commands,
         assets,
         StatusValue::P2Score,
         2,
-        Vec2::new(226.0, 121.0),
+        status_panel_top_left(18.0, 121.0),
         0.3,
     );
-    spawn_pixel_text(commands, assets, "LIFE", Vec2::new(214.0, 134.0), 0.3);
+    spawn_pixel_text(
+        commands,
+        assets,
+        "LIFE",
+        status_panel_top_left(6.0, 134.0),
+        0.3,
+    );
     spawn_player_life_icon(
         commands,
         assets,
@@ -3130,7 +3216,7 @@ fn spawn_versus_status_panel(commands: &mut Commands, assets: &SpriteAssets, sho
         assets,
         StatusValue::P2Lives,
         1,
-        Vec2::new(234.0, 145.0),
+        status_panel_top_left(26.0, 145.0),
         0.3,
     );
 
@@ -5698,36 +5784,36 @@ fn enemy_marker_tank_index(manifest: &AssetManifest) -> usize {
 
 fn campaign_life_icon_top_left(player: PlayerId) -> Vec2 {
     match player {
-        PlayerId::One => Vec2::new(222.0, 123.0),
-        PlayerId::Two => Vec2::new(222.0, 135.0),
+        PlayerId::One => status_panel_top_left(14.0, 123.0),
+        PlayerId::Two => status_panel_top_left(14.0, 135.0),
     }
 }
 
 fn versus_life_icon_top_left(player: PlayerId) -> Vec2 {
     match player {
-        PlayerId::One => Vec2::new(222.0, 73.0),
-        PlayerId::Two => Vec2::new(222.0, 145.0),
+        PlayerId::One => status_panel_top_left(14.0, 73.0),
+        PlayerId::Two => status_panel_top_left(14.0, 145.0),
     }
 }
 
 fn versus_arena_label_top_left() -> Vec2 {
-    Vec2::new(214.0, 158.0)
+    status_panel_top_left(6.0, 158.0)
 }
 
 fn versus_arena_number_top_left() -> Vec2 {
-    Vec2::new(226.0, 169.0)
+    status_panel_top_left(18.0, 169.0)
 }
 
 fn versus_target_label_top_left() -> Vec2 {
-    Vec2::new(214.0, 184.0)
+    status_panel_top_left(6.0, 184.0)
 }
 
 fn versus_target_number_top_left() -> Vec2 {
-    Vec2::new(226.0, 195.0)
+    status_panel_top_left(18.0, 195.0)
 }
 
 fn versus_base_label_top_left() -> Vec2 {
-    Vec2::new(220.0, 190.0)
+    status_panel_top_left(12.0, 190.0)
 }
 
 fn player_life_icon_tank_index(manifest: &AssetManifest, player: PlayerId) -> usize {
@@ -5735,15 +5821,15 @@ fn player_life_icon_tank_index(manifest: &AssetManifest, player: PlayerId) -> us
 }
 
 fn score_badge_icon_top_left() -> Vec2 {
-    Vec2::new(244.0, 38.0)
+    status_panel_top_left(36.0, 38.0)
 }
 
 fn stage_flag_icon_top_left() -> Vec2 {
-    Vec2::new(216.0, 87.0)
+    status_panel_top_left(8.0, 87.0)
 }
 
 fn stage_number_top_left() -> Vec2 {
-    Vec2::new(230.0, 87.0)
+    status_panel_top_left(22.0, 87.0)
 }
 
 fn phase_text_width(text: &str) -> f32 {
@@ -6164,9 +6250,8 @@ fn mode_select_option_y(option: ModeSelectOption) -> f32 {
 
 fn mode_select_cursor_translation(display: &ModeSelectDisplay) -> Vec3 {
     let option = mode_select_option_top_left(display, display.selected);
-    board_object_center(
-        (option.x - MODE_SELECT_CURSOR_GAP).max(0.0),
-        option.y - 4.0 - BOARD_ORIGIN_Y,
+    virtual_center_scaled(
+        Vec2::new((option.x - MODE_SELECT_CURSOR_GAP).max(0.0), option.y - 4.0),
         Vec2::splat(TANK_SIZE),
         0.3,
     )
@@ -7395,7 +7480,7 @@ fn rects_overlap(a: Vec2, a_size: Vec2, b: Vec2, b_size: Vec2) -> bool {
 }
 
 fn board_size() -> f32 {
-    BOARD_TILES as f32 * TILE_SIZE
+    BOARD_SIZE
 }
 
 fn board_tile_center(x: usize, y: usize, z: f32) -> Vec3 {
@@ -7714,6 +7799,12 @@ mod tests {
             breaks_steel: false,
             resolved,
         }
+    }
+
+    fn virtual_top_left_from_translation(translation: Vec3, object_size: f32) -> Vec2 {
+        let center_x = translation.x / window_scale() + VIRTUAL_WIDTH / 2.0;
+        let center_y = VIRTUAL_HEIGHT / 2.0 - translation.y / window_scale();
+        Vec2::new(center_x - object_size / 2.0, center_y - object_size / 2.0)
     }
 
     fn spawn_test_player(world: &mut World, id: PlayerId, top_left: Vec2, lives: i32) {
@@ -8315,9 +8406,37 @@ mod tests {
 
     #[test]
     fn virtual_window_size_uses_integer_scale() {
-        assert_eq!(virtual_window_size(2.0), (512, 480));
-        assert_eq!(virtual_window_size(3.0), (768, 720));
-        assert_eq!(virtual_window_size(4.0), (1024, 960));
+        assert_eq!(virtual_window_size(2.0), (608, 480));
+        assert_eq!(virtual_window_size(3.0), (912, 720));
+        assert_eq!(virtual_window_size(4.0), (1216, 960));
+    }
+
+    #[test]
+    fn status_panel_gap_is_reserved_in_virtual_screen_width() {
+        assert_eq!(
+            VIRTUAL_WIDTH,
+            BOARD_ORIGIN_X + board_size() + STATUS_PANEL_GAP + STATUS_PANEL_WIDTH
+        );
+        assert_eq!(STATUS_PANEL_LEFT - (BOARD_ORIGIN_X + board_size()), 24.0);
+    }
+
+    #[test]
+    fn battlefield_has_balanced_horizontal_gutters() {
+        assert_eq!(BOARD_ORIGIN_X, STATUS_PANEL_GAP);
+        assert_eq!(
+            STATUS_PANEL_LEFT - (BOARD_ORIGIN_X + board_size()),
+            BOARD_ORIGIN_X
+        );
+    }
+
+    #[test]
+    fn right_enemy_spawn_keeps_a_clear_gap_from_status_panel() {
+        let right_spawn_top_left = Vec2::new(24.0 * TILE_SIZE, 0.0);
+
+        assert_eq!(
+            STATUS_PANEL_LEFT - (BOARD_ORIGIN_X + right_spawn_top_left.x + TANK_SIZE),
+            STATUS_PANEL_GAP
+        );
     }
 
     #[test]
@@ -10172,12 +10291,12 @@ mod tests {
     fn campaign_enemy_markers_fit_as_compact_tank_icons() {
         assert_eq!(ENEMY_MARKER_COUNT, 20);
         assert_eq!(ENEMY_MARKER_COLUMNS, 4);
-        assert_eq!(enemy_marker_top_left(0), Vec2::new(216.0, 159.0));
-        assert_eq!(enemy_marker_top_left(3), Vec2::new(243.0, 159.0));
-        assert_eq!(enemy_marker_top_left(4), Vec2::new(216.0, 168.0));
+        assert_eq!(enemy_marker_top_left(0), status_panel_top_left(8.0, 159.0));
+        assert_eq!(enemy_marker_top_left(3), status_panel_top_left(35.0, 159.0));
+        assert_eq!(enemy_marker_top_left(4), status_panel_top_left(8.0, 168.0));
 
         let last = enemy_marker_top_left(ENEMY_MARKER_COUNT - 1);
-        assert_eq!(last, Vec2::new(243.0, 195.0));
+        assert_eq!(last, status_panel_top_left(35.0, 195.0));
         assert!(last.x + ENEMY_MARKER_SIZE <= VIRTUAL_WIDTH - 4.0);
         assert!(last.y + ENEMY_MARKER_SIZE <= BOARD_ORIGIN_Y + board_size());
     }
@@ -10220,11 +10339,11 @@ mod tests {
     fn campaign_life_icon_fits_status_panel() {
         let p1_top_left = campaign_life_icon_top_left(PlayerId::One);
         let p2_top_left = campaign_life_icon_top_left(PlayerId::Two);
-        assert_eq!(p1_top_left, Vec2::new(222.0, 123.0));
-        assert_eq!(p2_top_left, Vec2::new(222.0, 135.0));
+        assert_eq!(p1_top_left, status_panel_top_left(14.0, 123.0));
+        assert_eq!(p2_top_left, status_panel_top_left(14.0, 135.0));
         for top_left in [p1_top_left, p2_top_left] {
-            assert!(top_left.x >= 212.0);
-            assert!(top_left.x + PLAYER_LIFE_ICON_SIZE < 234.0);
+            assert!(top_left.x >= STATUS_PANEL_INNER_LEFT);
+            assert!(top_left.x + PLAYER_LIFE_ICON_SIZE < status_panel_top_left(26.0, 0.0).x);
             assert!(top_left.y + PLAYER_LIFE_ICON_SIZE < ENEMY_MARKER_TOP);
         }
     }
@@ -10248,11 +10367,11 @@ mod tests {
         let p1_top_left = versus_life_icon_top_left(PlayerId::One);
         let p2_top_left = versus_life_icon_top_left(PlayerId::Two);
 
-        assert_eq!(p1_top_left, Vec2::new(222.0, 73.0));
-        assert_eq!(p2_top_left, Vec2::new(222.0, 145.0));
+        assert_eq!(p1_top_left, status_panel_top_left(14.0, 73.0));
+        assert_eq!(p2_top_left, status_panel_top_left(14.0, 145.0));
         for top_left in [p1_top_left, p2_top_left] {
-            assert!(top_left.x >= 212.0);
-            assert!(top_left.x + PLAYER_LIFE_ICON_SIZE < 234.0);
+            assert!(top_left.x >= STATUS_PANEL_INNER_LEFT);
+            assert!(top_left.x + PLAYER_LIFE_ICON_SIZE < status_panel_top_left(26.0, 0.0).x);
             assert!(top_left.y >= 24.0);
             assert!(top_left.y + PLAYER_LIFE_ICON_SIZE <= BOARD_ORIGIN_Y + board_size());
         }
@@ -10281,7 +10400,7 @@ mod tests {
         ];
 
         for (label, top_left) in labeled_rows {
-            assert!(top_left.x >= 212.0);
+            assert!(top_left.x >= STATUS_PANEL_INNER_LEFT);
             assert!(top_left.x + phase_text_width(label) <= VIRTUAL_WIDTH - 4.0);
             assert!(top_left.y >= 24.0);
             assert!(top_left.y + GENERATED_GLYPH_HEIGHT as f32 <= BOARD_ORIGIN_Y + board_size());
@@ -10291,7 +10410,7 @@ mod tests {
         }
 
         for (digits, top_left) in digit_rows {
-            assert!(top_left.x >= 212.0);
+            assert!(top_left.x >= STATUS_PANEL_INNER_LEFT);
             assert!(top_left.x + phase_text_width(digits) <= VIRTUAL_WIDTH - 4.0);
             assert!(top_left.y >= 24.0);
             assert!(top_left.y + GENERATED_GLYPH_HEIGHT as f32 <= BOARD_ORIGIN_Y + board_size());
@@ -10336,8 +10455,8 @@ mod tests {
     #[test]
     fn campaign_score_icon_fits_next_to_score_label() {
         let icon = score_badge_icon_top_left();
-        let score_label_right = 214.0 + phase_text_width("SCORE");
-        assert_eq!(icon, Vec2::new(244.0, 38.0));
+        let score_label_right = status_panel_top_left(6.0, 38.0).x + phase_text_width("SCORE");
+        assert_eq!(icon, status_panel_top_left(36.0, 38.0));
         assert!(icon.x > score_label_right);
         assert!(icon.x + (GENERATED_UI_ICON_SIZE as f32) <= VIRTUAL_WIDTH - 4.0);
         assert!(icon.y + (GENERATED_UI_ICON_SIZE as f32) < 49.0);
@@ -10369,9 +10488,9 @@ mod tests {
     fn campaign_stage_icon_and_number_fit_status_panel() {
         let icon = stage_flag_icon_top_left();
         let number = stage_number_top_left();
-        assert_eq!(icon, Vec2::new(216.0, 87.0));
-        assert_eq!(number, Vec2::new(230.0, 87.0));
-        assert!(icon.x >= 212.0);
+        assert_eq!(icon, status_panel_top_left(8.0, 87.0));
+        assert_eq!(number, status_panel_top_left(22.0, 87.0));
+        assert!(icon.x >= STATUS_PANEL_INNER_LEFT);
         assert!(icon.x + (GENERATED_UI_ICON_SIZE as f32) < number.x);
         assert!(number.x + phase_text_width("99") <= VIRTUAL_WIDTH - 8.0);
     }
@@ -13935,6 +14054,25 @@ mod tests {
         assert!(sound.y > scale.y);
         assert!(scale.y > stage.y);
         assert!(stage.y > arena.y);
+    }
+
+    #[test]
+    fn mode_select_cursor_stays_left_of_selected_text() {
+        let mode_select = ModeSelect {
+            selected: ModeSelectOption::Campaign,
+            ..ModeSelect::default()
+        };
+        let display = ModeSelectDisplay::from_mode_select(&mode_select);
+        let option = mode_select_option_top_left(&display, ModeSelectOption::Campaign);
+        let cursor_top_left =
+            virtual_top_left_from_translation(mode_select_cursor_translation(&display), TANK_SIZE);
+
+        assert_eq!(cursor_top_left.y, option.y - 4.0);
+        assert_eq!(
+            option.x - (cursor_top_left.x + TANK_SIZE),
+            MODE_SELECT_CURSOR_GAP - TANK_SIZE
+        );
+        assert!(cursor_top_left.x + TANK_SIZE < option.x);
     }
 
     #[test]

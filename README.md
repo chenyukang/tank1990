@@ -120,6 +120,13 @@ scripts/install-wasm-bindgen.sh
 scripts/build-web.sh
 ```
 
+Install Binaryen's `wasm-opt` before running `scripts/build-web.sh` if you want
+the smaller optimized package used by CI:
+
+```bash
+brew install binaryen
+```
+
 The build is written to `dist/web/`. Serve that directory with any static HTTP
 server, for example:
 
@@ -127,9 +134,9 @@ server, for example:
 python3 -m http.server 8080 --directory dist/web
 ```
 
-Then open `http://127.0.0.1:8080/` and click, press Enter, or press Space to
-start. The browser build waits for that first user gesture so WebAudio can be
-unlocked before Bevy starts.
+Then open `http://127.0.0.1:8080/`. The browser build loads immediately, shows
+WebAssembly download progress, and enters the main menu when ready. The first
+click or key press unlocks WebAudio for sound playback.
 
 GitHub Pages is published by `.github/workflows/pages.yml` on pushes to `main`
 or manual workflow dispatch. The release workflow uploads the same browser build

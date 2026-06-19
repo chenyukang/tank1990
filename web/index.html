@@ -111,7 +111,7 @@
     <main id="game-shell">
       <canvas id="bevy-canvas"></canvas>
     </main>
-    <div id="loading">CLICK TO START</div>
+    <div id="loading">LOADING</div>
     <script type="module">
       const loading = document.getElementById("loading");
       const gameShell = document.getElementById("game-shell");
@@ -121,6 +121,7 @@
       const GAME_ASPECT = 304 / 240;
       const MIN_CRISP_SCALE = 2;
       const MAX_CRISP_SCALE = 4;
+      const WASM_MODULE_PATH = "./pkg/tank_bg.wasm";
       let started = false;
       const audioContexts = [];
       const blockedCodes = new Set([
@@ -255,6 +256,57 @@
         }
       };
 
+      const formatLoadingSize = (bytes) => {
+        const mib = bytes / (1024 * 1024);
+        if (mib >= 10) {
+          return `${Math.round(mib)}MB`;
+        }
+        return `${mib.toFixed(1)}MB`;
+      };
+
+      const updateLoadingProgress = (received, total) => {
+        if (total > 0) {
+          const percent = Math.min(99, Math.floor((received / total) * 100));
+          loading.textContent = `LOADING ${percent}%`;
+        } else {
+          loading.textContent = `LOADING ${formatLoadingSize(received)}`;
+        }
+      };
+
+      const fetchWasmWithProgress = async () => {
+        const response = await fetch(WASM_MODULE_PATH);
+        if (!response.ok) {
+          throw new Error(`failed to fetch wasm: ${response.status}`);
+        }
+
+        const total = Number(response.headers.get("content-length") || 0);
+        const reader = response.body?.getReader();
+        if (!reader) {
+          loading.textContent = "LOADING";
+          return response.arrayBuffer();
+        }
+
+        const chunks = [];
+        let received = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          chunks.push(value);
+          received += value.length;
+          updateLoadingProgress(received, total);
+        }
+
+        const bytes = new Uint8Array(received);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.length;
+        }
+        return bytes.buffer;
+      };
+
       const startGame = async (event) => {
         event?.preventDefault();
         unlockAudioSoon();
@@ -268,12 +320,15 @@
 
         try {
           const { default: init } = await import("./pkg/tank.js");
-          await init();
+          const wasmBytes = await fetchWasmWithProgress();
+          loading.textContent = "COMPILING";
+          await init({ module_or_path: wasmBytes });
           loading.hidden = true;
           requestAnimationFrame(focusCanvas);
           unlockAudioSoon();
         } catch (error) {
           console.error(error);
+          started = false;
           loading.textContent = "FAILED TO LOAD";
         }
       };
@@ -346,6 +401,7 @@
       window.visualViewport?.addEventListener("resize", syncViewportSoon);
       window.visualViewport?.addEventListener("scroll", syncViewportSoon);
       syncViewportSoon();
+      void startGame();
     </script>
   </body>
 </html>

@@ -1884,6 +1884,7 @@ pub(super) fn image_from_pixels(width: usize, height: usize, pixels: Vec<u8>) ->
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     );
     image.data = Some(pixels);
+    image.sampler = ImageSampler::nearest();
     image
 }
 

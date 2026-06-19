@@ -1882,6 +1882,18 @@ fn generated_terrain_atlas_uses_distinct_material_patterns() {
 }
 
 #[test]
+fn generated_images_use_nearest_sampling_to_prevent_web_atlas_bleed() {
+    let image = image_from_pixels(1, 1, vec![255, 255, 255, 255]);
+
+    let ImageSampler::Descriptor(descriptor) = image.sampler else {
+        panic!("generated images should use an explicit nearest sampler");
+    };
+    assert_eq!(descriptor.mag_filter, ImageFilterMode::Nearest);
+    assert_eq!(descriptor.min_filter, ImageFilterMode::Nearest);
+    assert_eq!(descriptor.mipmap_filter, ImageFilterMode::Nearest);
+}
+
+#[test]
 fn generated_powerup_atlas_uses_readable_classic_icons() {
     let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
     let image = create_powerup_atlas(manifest.atlases.powerups);

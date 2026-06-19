@@ -14,6 +14,8 @@
         --app-width: 100vw;
         --app-height: 100dvh;
         --game-aspect: calc(304 / 240);
+        --game-width: 100vw;
+        --game-height: calc(100vw / var(--game-aspect));
       }
 
       html,
@@ -48,8 +50,8 @@
       #game-shell {
         position: relative;
         flex: 0 0 auto;
-        width: min(100%, calc(var(--app-height) * var(--game-aspect)));
-        height: min(100%, calc(var(--app-width) / var(--game-aspect)));
+        width: var(--game-width);
+        height: var(--game-height);
         overflow: hidden;
         background: #000;
       }
@@ -77,8 +79,8 @@
       #game-shell:fullscreen #bevy-canvas,
       #game-shell:-webkit-full-screen #bevy-canvas {
         flex: 0 0 auto !important;
-        width: min(100vw, calc(100dvh * var(--game-aspect))) !important;
-        height: min(100dvh, calc(100vw / var(--game-aspect))) !important;
+        width: var(--game-width) !important;
+        height: var(--game-height) !important;
       }
 
       #loading {
@@ -114,6 +116,11 @@
       const loading = document.getElementById("loading");
       const gameShell = document.getElementById("game-shell");
       const canvas = document.getElementById("bevy-canvas");
+      const BASE_GAME_WIDTH = 304;
+      const BASE_GAME_HEIGHT = 240;
+      const GAME_ASPECT = 304 / 240;
+      const MIN_CRISP_SCALE = 2;
+      const MAX_CRISP_SCALE = 4;
       let started = false;
       const audioContexts = [];
       const blockedCodes = new Set([
@@ -173,11 +180,44 @@
 
       const syncViewport = () => {
         const viewport = window.visualViewport;
-        const width = Math.max(1, viewport?.width ?? window.innerWidth);
-        const height = Math.max(1, viewport?.height ?? window.innerHeight);
+        const width = Math.max(
+          1,
+          Math.floor(viewport?.width ?? window.innerWidth),
+        );
+        const height = Math.max(
+          1,
+          Math.floor(viewport?.height ?? window.innerHeight),
+        );
+        let crispScale = 0;
+        for (let scale = MAX_CRISP_SCALE; scale >= MIN_CRISP_SCALE; scale -= 1) {
+          if (BASE_GAME_WIDTH * scale <= width && BASE_GAME_HEIGHT * scale <= height) {
+            crispScale = scale;
+            break;
+          }
+        }
+
+        let gameWidth;
+        let gameHeight;
+        if (crispScale > 0) {
+          gameWidth = BASE_GAME_WIDTH * crispScale;
+          gameHeight = BASE_GAME_HEIGHT * crispScale;
+        } else {
+          gameWidth = width;
+          gameHeight = Math.round(gameWidth / GAME_ASPECT);
+
+          if (gameHeight > height) {
+            gameHeight = height;
+            gameWidth = Math.round(gameHeight * GAME_ASPECT);
+          }
+        }
+
+        gameWidth = Math.max(1, Math.min(width, gameWidth));
+        gameHeight = Math.max(1, Math.min(height, gameHeight));
 
         document.documentElement.style.setProperty("--app-width", `${width}px`);
         document.documentElement.style.setProperty("--app-height", `${height}px`);
+        document.documentElement.style.setProperty("--game-width", `${gameWidth}px`);
+        document.documentElement.style.setProperty("--game-height", `${gameHeight}px`);
       };
 
       const syncViewportSoon = () => {

@@ -2,6 +2,9 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::audio::{AudioPlayer, AudioSource, Decodable, PlaybackSettings, Source, Volume};
+#[cfg(test)]
+use bevy::image::ImageFilterMode;
+use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};

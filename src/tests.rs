@@ -985,6 +985,50 @@ fn fullscreen_toggle_rescales_active_game_entities_to_four_x() {
 }
 
 #[test]
+fn preserve_scale_fullscreen_policy_keeps_canvas_resolution_unchanged() {
+    reset_window_scale_settings_for_test();
+    let mut mode_select = ModeSelect {
+        window_scale: DEFAULT_WINDOW_SCALE,
+        ..ModeSelect::default()
+    };
+    let mut window = Window {
+        mode: WindowMode::Windowed,
+        resolution: (390, 308).into(),
+        ..default()
+    };
+
+    let (old_scale, new_scale) = toggle_window_fullscreen_with_policy(
+        &mut window,
+        &mut mode_select,
+        FullscreenScalePolicy::PreserveCurrentScale,
+    );
+
+    assert_eq!(
+        window.mode,
+        WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+    );
+    assert_eq!(old_scale, DEFAULT_WINDOW_SCALE);
+    assert_eq!(new_scale, DEFAULT_WINDOW_SCALE);
+    assert_eq!(mode_select.window_scale, DEFAULT_WINDOW_SCALE);
+    assert_eq!(window.resolution.width(), 390.0);
+    assert_eq!(window.resolution.height(), 308.0);
+
+    let (old_scale, new_scale) = toggle_window_fullscreen_with_policy(
+        &mut window,
+        &mut mode_select,
+        FullscreenScalePolicy::PreserveCurrentScale,
+    );
+
+    assert_eq!(window.mode, WindowMode::Windowed);
+    assert_eq!(old_scale, DEFAULT_WINDOW_SCALE);
+    assert_eq!(new_scale, DEFAULT_WINDOW_SCALE);
+    assert_eq!(mode_select.window_scale, DEFAULT_WINDOW_SCALE);
+    assert_eq!(window.resolution.width(), 390.0);
+    assert_eq!(window.resolution.height(), 308.0);
+    reset_window_scale_settings_for_test();
+}
+
+#[test]
 fn main_menu_scale_setting_resizes_primary_window() {
     reset_window_scale_settings_for_test();
     let mut keys = ButtonInput::<KeyCode>::default();

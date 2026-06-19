@@ -1768,7 +1768,12 @@ fn view_3d_enemy_direction_panel_top_left(
 fn view_3d_hud_window_size(primary_window: &Query<&Window, With<PrimaryWindow>>) -> Vec2 {
     primary_window
         .single()
-        .map(|window| Vec2::new(window.resolution.width(), window.resolution.height()))
+        .map(|window| {
+            game_2d_projection_visible_size(
+                Vec2::new(window.resolution.width(), window.resolution.height()),
+                window_scale(),
+            )
+        })
         .unwrap_or_else(|_| {
             let (width, height) = virtual_window_size(window_scale());
             Vec2::new(width as f32, height as f32)

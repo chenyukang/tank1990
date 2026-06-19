@@ -44,6 +44,10 @@ pub(super) fn resize_primary_window(
     primary_window: &mut Query<&mut Window, With<PrimaryWindow>>,
     scale: u32,
 ) {
+    if browser_controls_primary_window_resolution() {
+        return;
+    }
+
     if let Ok(mut window) = primary_window.single_mut() {
         let (width, height) = virtual_window_size(scale as f32);
         window.resolution.set(width as f32, height as f32);
@@ -57,27 +61,75 @@ pub(super) fn toggle_window_mode(mode: WindowMode) -> WindowMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FullscreenScalePolicy {
+    DesktopFixedScale,
+    PreserveCurrentScale,
+}
+
+pub(super) fn fullscreen_scale_policy() -> FullscreenScalePolicy {
+    if cfg!(target_arch = "wasm32") {
+        FullscreenScalePolicy::PreserveCurrentScale
+    } else {
+        FullscreenScalePolicy::DesktopFixedScale
+    }
+}
+
+fn browser_controls_primary_window_resolution() -> bool {
+    cfg!(target_arch = "wasm32")
+}
+
 pub(super) fn toggle_window_fullscreen(
     window: &mut Window,
     mode_select: &mut ModeSelect,
 ) -> (u32, u32) {
+    toggle_window_fullscreen_with_policy(window, mode_select, fullscreen_scale_policy())
+}
+
+pub(super) fn toggle_window_fullscreen_with_policy(
+    window: &mut Window,
+    mode_select: &mut ModeSelect,
+    policy: FullscreenScalePolicy,
+) -> (u32, u32) {
     let old_scale = window_scale() as u32;
     window.mode = toggle_window_mode(window.mode);
-    match window.mode {
-        WindowMode::Windowed => {
-            let scale = clamp_window_scale(load_windowed_scale_setting());
-            mode_select.window_scale = scale;
-            set_window_scale(scale);
-            let (width, height) = virtual_window_size(scale as f32);
-            window.resolution.set(width as f32, height as f32);
+    match (window.mode, policy) {
+        (WindowMode::Windowed, FullscreenScalePolicy::DesktopFixedScale) => {
+            restore_windowed_scale(window, mode_select);
         }
-        WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(_, _) => {
+        (WindowMode::Windowed, FullscreenScalePolicy::PreserveCurrentScale) => {
+            keep_current_window_scale(mode_select);
+        }
+        (
+            WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(_, _),
+            FullscreenScalePolicy::DesktopFixedScale,
+        ) => {
             store_windowed_scale_setting(clamp_window_scale(mode_select.window_scale));
             mode_select.window_scale = MAX_WINDOW_SCALE;
             set_window_scale(MAX_WINDOW_SCALE);
         }
+        (
+            WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(_, _),
+            FullscreenScalePolicy::PreserveCurrentScale,
+        ) => {
+            keep_current_window_scale(mode_select);
+        }
     }
     (old_scale, window_scale() as u32)
+}
+
+fn restore_windowed_scale(window: &mut Window, mode_select: &mut ModeSelect) {
+    let scale = clamp_window_scale(load_windowed_scale_setting());
+    mode_select.window_scale = scale;
+    set_window_scale(scale);
+    let (width, height) = virtual_window_size(scale as f32);
+    window.resolution.set(width as f32, height as f32);
+}
+
+fn keep_current_window_scale(mode_select: &mut ModeSelect) {
+    let scale = clamp_window_scale(mode_select.window_scale);
+    mode_select.window_scale = scale;
+    set_window_scale(scale);
 }
 
 pub(super) fn toggle_primary_window_fullscreen(

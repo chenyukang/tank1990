@@ -54,6 +54,16 @@
         background: #000;
       }
 
+      #game-shell:fullscreen,
+      #game-shell:-webkit-full-screen {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100vw !important;
+        height: 100dvh !important;
+        background: #000 !important;
+      }
+
       #bevy-canvas {
         display: block;
         width: 100%;
@@ -62,6 +72,13 @@
         image-rendering: pixelated;
         image-rendering: crisp-edges;
         touch-action: none;
+      }
+
+      #game-shell:fullscreen #bevy-canvas,
+      #game-shell:-webkit-full-screen #bevy-canvas {
+        flex: 0 0 auto !important;
+        width: min(100vw, calc(100dvh * var(--game-aspect))) !important;
+        height: min(100dvh, calc(100vw / var(--game-aspect))) !important;
       }
 
       #loading {
@@ -95,6 +112,7 @@
     <div id="loading">CLICK TO START</div>
     <script type="module">
       const loading = document.getElementById("loading");
+      const gameShell = document.getElementById("game-shell");
       const canvas = document.getElementById("bevy-canvas");
       let started = false;
       const audioContexts = [];
@@ -173,6 +191,30 @@
         canvas.focus();
       };
 
+      const currentFullscreenElement = () =>
+        document.fullscreenElement || document.webkitFullscreenElement;
+
+      const toggleGameShellFullscreen = async () => {
+        const fullscreenElement = currentFullscreenElement();
+        try {
+          if (fullscreenElement) {
+            const exitFullscreen =
+              document.exitFullscreen || document.webkitExitFullscreen;
+            if (exitFullscreen) {
+              await exitFullscreen.call(document);
+            }
+          } else {
+            const requestFullscreen =
+              gameShell.requestFullscreen || gameShell.webkitRequestFullscreen;
+            if (requestFullscreen) {
+              await requestFullscreen.call(gameShell);
+            }
+          }
+        } catch (_error) {
+          // Browsers can reject fullscreen outside accepted user gestures.
+        }
+      };
+
       const startGame = async (event) => {
         event?.preventDefault();
         unlockAudioSoon();
@@ -195,6 +237,28 @@
           loading.textContent = "FAILED TO LOAD";
         }
       };
+
+      window.addEventListener(
+        "keydown",
+        (event) => {
+          if (
+            started &&
+            event.code === "KeyF" &&
+            !event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey
+          ) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            unlockAudioSoon();
+            void toggleGameShellFullscreen().finally(() => {
+              syncViewportSoon();
+              requestAnimationFrame(focusCanvas);
+            });
+          }
+        },
+        { capture: true, passive: false },
+      );
 
       window.addEventListener(
         "keydown",
@@ -233,6 +297,12 @@
       window.addEventListener("contextmenu", (event) => event.preventDefault());
       window.addEventListener("resize", syncViewportSoon);
       window.addEventListener("orientationchange", syncViewportSoon);
+      const handleFullscreenChange = () => {
+        syncViewportSoon();
+        requestAnimationFrame(focusCanvas);
+      };
+      document.addEventListener("fullscreenchange", handleFullscreenChange);
+      document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
       window.visualViewport?.addEventListener("resize", syncViewportSoon);
       window.visualViewport?.addEventListener("scroll", syncViewportSoon);
       syncViewportSoon();

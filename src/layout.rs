@@ -122,6 +122,22 @@ pub(crate) fn game_2d_projection_for_scale(scale: f32) -> OrthographicProjection
     }
 }
 
+pub(crate) fn game_2d_projection_visible_size(window_size: Vec2, scale: f32) -> Vec2 {
+    let (min_width, min_height) = virtual_window_size(scale);
+    let min_width = min_width as f32;
+    let min_height = min_height as f32;
+    let window_width = window_size.x.max(1.0);
+    let window_height = window_size.y.max(1.0);
+    let window_aspect = window_width / window_height;
+    let min_aspect = min_width / min_height;
+
+    if window_aspect > min_aspect {
+        Vec2::new(min_height * window_aspect, min_height)
+    } else {
+        Vec2::new(min_width, min_width / window_aspect)
+    }
+}
+
 pub(crate) fn board_size() -> f32 {
     BOARD_SIZE
 }
@@ -218,6 +234,29 @@ mod tests {
             }
             mode => panic!("unexpected scaling mode: {mode:?}"),
         }
+    }
+
+    #[test]
+    fn game_2d_projection_visible_size_matches_virtual_window_at_same_aspect() {
+        let size = game_2d_projection_visible_size(Vec2::new(912.0, 720.0), 3.0);
+
+        assert_eq!(size, Vec2::new(912.0, 720.0));
+    }
+
+    #[test]
+    fn game_2d_projection_visible_size_expands_wide_windows() {
+        let size = game_2d_projection_visible_size(Vec2::new(2048.0, 1280.0), 4.0);
+
+        assert_eq!(size, Vec2::new(1536.0, 960.0));
+    }
+
+    #[test]
+    fn game_2d_projection_visible_size_expands_tall_windows() {
+        let size = game_2d_projection_visible_size(Vec2::new(390.0, 844.0), 3.0);
+        let expected_height = 912.0 * 844.0 / 390.0;
+
+        assert_eq!(size.x, 912.0);
+        assert!((size.y - expected_height).abs() < 0.001);
     }
 
     #[test]

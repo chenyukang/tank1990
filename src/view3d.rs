@@ -477,6 +477,7 @@ pub(super) fn setup_3d_view(
     ));
     commands.spawn((
         Camera2d,
+        Projection::Orthographic(game_2d_projection()),
         Camera {
             is_active: false,
             order: 2,

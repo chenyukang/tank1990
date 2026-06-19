@@ -107,3 +107,11 @@ pub(super) fn rescale_game_entity_transforms(
         transform.scale *= ratio;
     }
 }
+
+pub(super) fn sync_2d_camera_projection(
+    mut projections: Query<&mut Projection, Or<(With<Main2dCamera>, With<View3dHudCamera>)>>,
+) {
+    for mut projection in &mut projections {
+        *projection = Projection::Orthographic(game_2d_projection());
+    }
+}

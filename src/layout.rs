@@ -1,4 +1,5 @@
-use bevy::prelude::{Vec2, Vec3};
+use bevy::camera::ScalingMode;
+use bevy::prelude::{OrthographicProjection, Vec2, Vec3};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub(crate) const VIRTUAL_HEIGHT: f32 = 240.0;
@@ -105,6 +106,22 @@ pub(crate) fn virtual_window_size(scale: f32) -> (u32, u32) {
     )
 }
 
+pub(crate) fn game_2d_projection() -> OrthographicProjection {
+    game_2d_projection_for_scale(window_scale())
+}
+
+pub(crate) fn game_2d_projection_for_scale(scale: f32) -> OrthographicProjection {
+    let (width, height) = virtual_window_size(scale);
+
+    OrthographicProjection {
+        scaling_mode: ScalingMode::AutoMin {
+            min_width: width as f32,
+            min_height: height as f32,
+        },
+        ..OrthographicProjection::default_2d()
+    }
+}
+
 pub(crate) fn board_size() -> f32 {
     BOARD_SIZE
 }
@@ -185,6 +202,22 @@ mod tests {
         assert_eq!(virtual_window_size(2.0), (608, 480));
         assert_eq!(virtual_window_size(3.0), (912, 720));
         assert_eq!(virtual_window_size(4.0), (1216, 960));
+    }
+
+    #[test]
+    fn game_2d_projection_keeps_full_virtual_window_visible() {
+        let projection = game_2d_projection_for_scale(3.0);
+
+        match projection.scaling_mode {
+            ScalingMode::AutoMin {
+                min_width,
+                min_height,
+            } => {
+                assert_eq!(min_width, 912.0);
+                assert_eq!(min_height, 720.0);
+            }
+            mode => panic!("unexpected scaling mode: {mode:?}"),
+        }
     }
 
     #[test]

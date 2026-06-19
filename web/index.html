@@ -2,11 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
     <meta name="color-scheme" content="dark" />
     <link rel="icon" href="data:," />
     <title>Tank 1990</title>
     <style>
+      :root {
+        --app-width: 100vw;
+        --app-height: 100dvh;
+        --game-aspect: calc(304 / 240);
+      }
+
       html,
       body {
         width: 100%;
@@ -14,18 +23,45 @@
         margin: 0;
         overflow: hidden;
         background: #000;
+        overscroll-behavior: none;
       }
 
       body {
-        display: grid;
-        place-items: center;
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        height: var(--app-height);
+        padding:
+          env(safe-area-inset-top, 0)
+          env(safe-area-inset-right, 0)
+          env(safe-area-inset-bottom, 0)
+          env(safe-area-inset-left, 0);
+        touch-action: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
       }
 
-      canvas {
+      #game-shell {
+        position: relative;
+        flex: 0 0 auto;
+        width: min(100%, calc(var(--app-height) * var(--game-aspect)));
+        height: min(100%, calc(var(--app-width) / var(--game-aspect)));
+        overflow: hidden;
+        background: #000;
+      }
+
+      #bevy-canvas {
         display: block;
+        width: 100%;
+        height: 100%;
         outline: none;
         image-rendering: pixelated;
         image-rendering: crisp-edges;
+        touch-action: none;
       }
 
       #loading {
@@ -33,10 +69,18 @@
         inset: 0;
         display: grid;
         place-items: center;
+        box-sizing: border-box;
+        padding:
+          max(16px, env(safe-area-inset-top))
+          max(16px, env(safe-area-inset-right))
+          max(16px, env(safe-area-inset-bottom))
+          max(16px, env(safe-area-inset-left));
         background: #000;
         color: #d9ddb9;
-        font: 700 20px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        text-align: center;
+        font: 700 clamp(14px, 4.5vw, 20px) / 1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         letter-spacing: 0;
+        touch-action: none;
       }
 
       #loading[hidden] {
@@ -45,9 +89,13 @@
     </style>
   </head>
   <body>
+    <main id="game-shell">
+      <canvas id="bevy-canvas"></canvas>
+    </main>
     <div id="loading">CLICK TO START</div>
     <script type="module">
       const loading = document.getElementById("loading");
+      const canvas = document.getElementById("bevy-canvas");
       let started = false;
       const audioContexts = [];
       const blockedCodes = new Set([
@@ -105,11 +153,22 @@
         window.setTimeout(resumeAudioContexts, 500);
       };
 
+      const syncViewport = () => {
+        const viewport = window.visualViewport;
+        const width = Math.max(1, viewport?.width ?? window.innerWidth);
+        const height = Math.max(1, viewport?.height ?? window.innerHeight);
+
+        document.documentElement.style.setProperty("--app-width", `${width}px`);
+        document.documentElement.style.setProperty("--app-height", `${height}px`);
+      };
+
+      const syncViewportSoon = () => {
+        syncViewport();
+        requestAnimationFrame(syncViewport);
+        window.setTimeout(syncViewport, 250);
+      };
+
       const focusCanvas = () => {
-        const canvas = document.querySelector("canvas");
-        if (!canvas) {
-          return;
-        }
         canvas.tabIndex = 0;
         canvas.focus();
       };
@@ -163,6 +222,20 @@
         },
         { passive: false },
       );
+
+      window.addEventListener(
+        "touchmove",
+        (event) => {
+          event.preventDefault();
+        },
+        { passive: false },
+      );
+      window.addEventListener("contextmenu", (event) => event.preventDefault());
+      window.addEventListener("resize", syncViewportSoon);
+      window.addEventListener("orientationchange", syncViewportSoon);
+      window.visualViewport?.addEventListener("resize", syncViewportSoon);
+      window.visualViewport?.addEventListener("scroll", syncViewportSoon);
+      syncViewportSoon();
     </script>
   </body>
 </html>

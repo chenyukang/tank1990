@@ -26,7 +26,11 @@ pub(crate) fn run_app() {
                         title: "Tank 1990 Bevy Remake".into(),
                         resolution: window_size.into(),
                         present_mode: PresentMode::AutoVsync,
-                        resizable: false,
+                        resizable: cfg!(target_arch = "wasm32"),
+                        #[cfg(target_arch = "wasm32")]
+                        canvas: Some("#bevy-canvas".into()),
+                        #[cfg(target_arch = "wasm32")]
+                        fit_canvas_to_parent: true,
                         ..default()
                     }),
                     ..default()
@@ -42,6 +46,7 @@ pub(crate) fn run_app() {
                 handle_shared_controls,
                 update_player_control,
                 handle_view_hotkeys,
+                sync_2d_camera_projection,
             )
                 .chain(),
         )
@@ -128,7 +133,11 @@ fn setup(
     mut atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut retro_sounds: ResMut<Assets<RetroSound>>,
 ) {
-    commands.spawn((Camera2d, Main2dCamera));
+    commands.spawn((
+        Camera2d,
+        Projection::Orthographic(game_2d_projection()),
+        Main2dCamera,
+    ));
 
     let sprite_assets = create_sprite_assets(&asset_server, &mut images, &mut atlas_layouts);
     let sound_assets =

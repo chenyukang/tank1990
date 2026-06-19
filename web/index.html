@@ -45,9 +45,11 @@
     </style>
   </head>
   <body>
-    <div id="loading">LOADING</div>
+    <div id="loading">CLICK TO START</div>
     <script type="module">
       const loading = document.getElementById("loading");
+      let started = false;
+      const audioContexts = [];
       const blockedCodes = new Set([
         "ArrowUp",
         "ArrowDown",
@@ -56,16 +58,52 @@
         "Space",
         "Tab",
       ]);
+      const startCodes = new Set(["Enter", "Space"]);
 
-      window.addEventListener(
-        "keydown",
-        (event) => {
-          if (blockedCodes.has(event.code)) {
-            event.preventDefault();
+      const NativeAudioContext = window.AudioContext || window.webkitAudioContext;
+
+      if (NativeAudioContext) {
+        try {
+          const PatchedAudioContext = function (...args) {
+            const context = new NativeAudioContext(...args);
+            audioContexts.push(context);
+            return context;
+          };
+
+          Object.setPrototypeOf(PatchedAudioContext, NativeAudioContext);
+          PatchedAudioContext.prototype = NativeAudioContext.prototype;
+          window.AudioContext = PatchedAudioContext;
+          if (window.webkitAudioContext === NativeAudioContext) {
+            window.webkitAudioContext = PatchedAudioContext;
           }
-        },
-        { passive: false },
-      );
+        } catch (_error) {
+          audioContexts.length = 0;
+        }
+      }
+
+      const resumeAudioContexts = () => {
+        for (const context of audioContexts) {
+          if (context.state !== "suspended") {
+            continue;
+          }
+
+          try {
+            const resume = context.resume();
+            if (resume && typeof resume.catch === "function") {
+              resume.catch(() => {});
+            }
+          } catch (_error) {
+            // The next user gesture will try again.
+          }
+        }
+      };
+
+      const unlockAudioSoon = () => {
+        resumeAudioContexts();
+        window.setTimeout(resumeAudioContexts, 0);
+        window.setTimeout(resumeAudioContexts, 100);
+        window.setTimeout(resumeAudioContexts, 500);
+      };
 
       const focusCanvas = () => {
         const canvas = document.querySelector("canvas");
@@ -76,17 +114,55 @@
         canvas.focus();
       };
 
-      window.addEventListener("pointerdown", focusCanvas, { passive: true });
+      const startGame = async (event) => {
+        event?.preventDefault();
+        unlockAudioSoon();
+        if (started) {
+          focusCanvas();
+          return;
+        }
 
-      try {
-        const { default: init } = await import("./pkg/tank.js");
-        await init();
-        loading.hidden = true;
-        requestAnimationFrame(focusCanvas);
-      } catch (error) {
-        console.error(error);
-        loading.textContent = "FAILED TO LOAD";
-      }
+        started = true;
+        loading.textContent = "LOADING";
+
+        try {
+          const { default: init } = await import("./pkg/tank.js");
+          await init();
+          loading.hidden = true;
+          requestAnimationFrame(focusCanvas);
+          unlockAudioSoon();
+        } catch (error) {
+          console.error(error);
+          loading.textContent = "FAILED TO LOAD";
+        }
+      };
+
+      window.addEventListener(
+        "keydown",
+        (event) => {
+          if (blockedCodes.has(event.code)) {
+            event.preventDefault();
+          }
+          unlockAudioSoon();
+          if (!started && startCodes.has(event.code)) {
+            void startGame(event);
+          }
+        },
+        { passive: false },
+      );
+
+      window.addEventListener(
+        "pointerdown",
+        (event) => {
+          if (!started) {
+            void startGame(event);
+          } else {
+            unlockAudioSoon();
+            focusCanvas();
+          }
+        },
+        { passive: false },
+      );
     </script>
   </body>
 </html>

@@ -127,8 +127,9 @@ server, for example:
 python3 -m http.server 8080 --directory dist/web
 ```
 
-Then open `http://127.0.0.1:8080/`. Browser audio may start only after the
-first click or key press, which is normal browser autoplay policy behavior.
+Then open `http://127.0.0.1:8080/` and click, press Enter, or press Space to
+start. The browser build waits for that first user gesture so WebAudio can be
+unlocked before Bevy starts.
 
 GitHub Pages is published by `.github/workflows/pages.yml` on pushes to `main`
 or manual workflow dispatch. The release workflow uploads the same browser build

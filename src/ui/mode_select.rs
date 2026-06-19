@@ -146,7 +146,7 @@ fn spawn_mode_select_hints(commands: &mut Commands, assets: &SpriteAssets) {
             line,
             Vec2::new(
                 MODE_SELECT_LEFT + (MODE_SELECT_WIDTH - text_width) / 2.0,
-                MODE_SELECT_HINT_TOP + index as f32 * 9.0,
+                MODE_SELECT_HINT_TOP + index as f32 * MODE_SELECT_HINT_LINE_STEP,
             ),
             0.3,
         );

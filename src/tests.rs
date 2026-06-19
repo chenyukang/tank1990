@@ -6575,10 +6575,7 @@ fn mode_select_separates_mode_choices_from_settings() {
 #[test]
 fn mode_select_hints_fit_and_use_available_pixel_glyphs() {
     let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
-    assert_eq!(
-        MODE_SELECT_HINT_LINES,
-        ["WS ARROWS SELECT", "AD ARROWS CHANGE", "SPACE ENTER START"]
-    );
+    assert_eq!(MODE_SELECT_HINT_LINES, ["", "", "SPACE ENTER START"]);
     for line in [
         "TANK 1990",
         "1 PLAYER",
@@ -6629,6 +6626,16 @@ fn mode_select_hints_fit_and_use_available_pixel_glyphs() {
             assert_manifest_glyph_is_visible(&manifest, ch);
         }
     }
+}
+
+#[test]
+fn mode_select_hints_leave_bottom_margin_inside_menu_panel() {
+    let last_hint_bottom = MODE_SELECT_HINT_TOP
+        + (MODE_SELECT_HINT_LINES.len() as f32 - 1.0) * MODE_SELECT_HINT_LINE_STEP
+        + GENERATED_GLYPH_HEIGHT as f32;
+    let menu_panel_bottom = 16.0 + MODE_SELECT_WIDTH;
+
+    assert!(last_hint_bottom <= menu_panel_bottom - 3.0);
 }
 
 #[test]

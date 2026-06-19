@@ -25,22 +25,6 @@ pub(crate) struct EnemyMarker {
 pub(crate) fn spawn_screen_frame(commands: &mut Commands, assets: &SpriteAssets, mode: GameMode) {
     commands.spawn((
         Sprite::from_color(
-            Color::srgb_u8(80, 80, 72),
-            Vec2::new(
-                STATUS_PANEL_WIDTH * window_scale(),
-                STATUS_PANEL_HEIGHT * window_scale(),
-            ),
-        ),
-        Transform::from_translation(virtual_center_scaled(
-            Vec2::new(STATUS_PANEL_LEFT, STATUS_PANEL_TOP),
-            Vec2::new(STATUS_PANEL_WIDTH, STATUS_PANEL_HEIGHT),
-            0.0,
-        )),
-        GameEntity,
-    ));
-
-    commands.spawn((
-        Sprite::from_color(
             Color::srgb_u8(36, 36, 32),
             Vec2::new(
                 STATUS_PANEL_INNER_WIDTH * window_scale(),

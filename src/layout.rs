@@ -17,7 +17,6 @@ pub(crate) const STATUS_PANEL_GAP: f32 = 24.0;
 pub(crate) const STATUS_PANEL_WIDTH: f32 = 48.0;
 pub(crate) const VIRTUAL_WIDTH: f32 =
     BOARD_ORIGIN_X + BOARD_SIZE + STATUS_PANEL_GAP + STATUS_PANEL_WIDTH;
-pub(crate) const STATUS_PANEL_HEIGHT: f32 = BOARD_SIZE;
 pub(crate) const STATUS_PANEL_LEFT: f32 = BOARD_ORIGIN_X + BOARD_SIZE + STATUS_PANEL_GAP;
 pub(crate) const STATUS_PANEL_TOP: f32 = BOARD_ORIGIN_Y;
 pub(crate) const STATUS_PANEL_INNER_LEFT: f32 = STATUS_PANEL_LEFT + 4.0;
@@ -43,6 +42,7 @@ pub(crate) const MODE_SELECT_LEFT: f32 = (VIRTUAL_WIDTH - MODE_SELECT_WIDTH) / 2
 pub(crate) const MODE_SELECT_TITLE_Y: f32 = 35.0;
 pub(crate) const MODE_SELECT_CURSOR_GAP: f32 = 22.0;
 pub(crate) const MODE_SELECT_HINT_TOP: f32 = 198.0;
+pub(crate) const MODE_SELECT_HINT_LINE_STEP: f32 = 8.0;
 
 static WINDOW_SCALE_SETTING: AtomicU32 = AtomicU32::new(DEFAULT_WINDOW_SCALE);
 static WINDOWED_SCALE_SETTING: AtomicU32 = AtomicU32::new(DEFAULT_WINDOW_SCALE);

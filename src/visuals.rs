@@ -359,11 +359,18 @@ pub(crate) fn shovel_warning_visual_rgb(elapsed_secs: f32) -> [u8; 3] {
     }
 }
 
-pub(crate) fn powerup_visual_rgb(elapsed_secs: f32) -> [u8; 3] {
+pub(crate) fn powerup_visual_rgb(kind: PowerUpKind, elapsed_secs: f32) -> [u8; 3] {
     if elapsed_secs % 0.30 < 0.15 {
         [255, 255, 255]
     } else {
-        [255, 232, 104]
+        match kind {
+            PowerUpKind::Star => [255, 248, 184],
+            PowerUpKind::Helmet => [216, 248, 255],
+            PowerUpKind::Clock => [216, 240, 255],
+            PowerUpKind::Grenade => [255, 224, 184],
+            PowerUpKind::Shovel => [255, 240, 216],
+            PowerUpKind::Tank => [216, 255, 216],
+        }
     }
 }
 

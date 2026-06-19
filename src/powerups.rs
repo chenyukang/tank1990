@@ -294,14 +294,14 @@ pub(crate) fn update_base_reinforcement_visuals(
 pub(crate) fn update_powerup_visuals(
     time: Res<Time>,
     game_status: Res<GameStatus>,
-    mut powerups: Query<&mut Sprite, With<PowerUp>>,
+    mut powerups: Query<(&PowerUp, &mut Sprite)>,
 ) {
     if !visual_effects_can_advance(game_status.phase) {
         return;
     }
 
-    let [r, g, b] = powerup_visual_rgb(time.elapsed_secs());
-    for mut sprite in &mut powerups {
+    for (powerup, mut sprite) in &mut powerups {
+        let [r, g, b] = powerup_visual_rgb(powerup.kind, time.elapsed_secs());
         sprite.color = Color::srgb_u8(r, g, b);
     }
 }

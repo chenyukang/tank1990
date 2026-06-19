@@ -327,10 +327,14 @@ pub(super) fn create_sprite_assets(
         None,
     ));
 
-    let glyph_image =
-        image_handle_or_generated(asset_server, images, PERSONAL_GLYPH_ATLAS_PATH, || {
-            create_glyph_atlas(&manifest.glyphs)
-        });
+    let personal_glyph_atlas = personal_asset_exists(PERSONAL_GLYPH_ATLAS_PATH);
+    let glyph_image = if personal_glyph_atlas {
+        asset_server.load(PERSONAL_GLYPH_ATLAS_PATH)
+    } else {
+        images.add(create_glyph_atlas(&manifest.glyphs))
+    };
+    let glyph_padding =
+        (!personal_glyph_atlas).then_some(UVec2::new(GENERATED_GLYPH_ATLAS_PADDING_X as u32, 0));
     let glyph_layout = atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::new(
             manifest.glyphs.tile_width as u32,
@@ -338,7 +342,7 @@ pub(super) fn create_sprite_assets(
         ),
         manifest.glyphs.characters.chars().count() as u32,
         1,
-        None,
+        glyph_padding,
         None,
     ));
 
@@ -1506,42 +1510,57 @@ pub(super) fn draw_helmet_powerup(pixels: &mut [u8], width: usize, x_offset: usi
 }
 
 pub(super) fn draw_clock_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
-    let rim_light = [216, 232, 248, 255];
-    let rim_dark = [72, 120, 184, 255];
-    let face = [248, 248, 208, 255];
-    let hand = [48, 64, 96, 255];
+    let shadow = [24, 64, 112, 255];
+    let rim = [56, 152, 224, 255];
+    let rim_light = [176, 232, 255, 255];
+    let face = [224, 248, 255, 255];
+    let hand = [32, 56, 128, 255];
+    let bell = [248, 232, 112, 255];
 
-    fill_rect(pixels, width, x_offset + 5, 2, 6, 1, rim_light);
-    fill_rect(pixels, width, x_offset + 3, 4, 2, 8, rim_light);
-    fill_rect(pixels, width, x_offset + 11, 4, 2, 8, rim_dark);
-    fill_rect(pixels, width, x_offset + 5, 12, 6, 1, rim_dark);
-    fill_rect(pixels, width, x_offset + 5, 4, 6, 8, face);
-    fill_rect(pixels, width, x_offset + 7, 6, 2, 4, hand);
-    fill_rect(pixels, width, x_offset + 8, 9, 4, 2, hand);
-    set_pixel(pixels, width, x_offset + 6, 5, [255, 255, 240, 255]);
-    set_pixel(pixels, width, x_offset + 10, 11, [192, 200, 184, 255]);
-    set_pixel(pixels, width, x_offset + 8, 8, rim_dark);
+    fill_rect(pixels, width, x_offset + 4, 2, 3, 2, bell);
+    fill_rect(pixels, width, x_offset + 9, 2, 3, 2, bell);
+    set_pixel(pixels, width, x_offset + 3, 3, shadow);
+    set_pixel(pixels, width, x_offset + 12, 3, shadow);
+    fill_rect(pixels, width, x_offset + 5, 3, 6, 1, rim_light);
+    fill_rect(pixels, width, x_offset + 3, 5, 10, 1, rim);
+    fill_rect(pixels, width, x_offset + 2, 6, 12, 5, rim);
+    fill_rect(pixels, width, x_offset + 3, 11, 10, 1, shadow);
+    fill_rect(pixels, width, x_offset + 5, 12, 6, 1, shadow);
+    fill_rect(pixels, width, x_offset + 5, 5, 6, 7, face);
+    fill_rect(pixels, width, x_offset + 4, 7, 8, 3, face);
+    fill_rect(pixels, width, x_offset + 8, 6, 1, 4, hand);
+    fill_rect(pixels, width, x_offset + 8, 9, 4, 1, hand);
+    set_pixel(pixels, width, x_offset + 6, 6, [248, 255, 255, 255]);
+    set_pixel(pixels, width, x_offset + 10, 11, [144, 192, 216, 255]);
+    set_pixel(pixels, width, x_offset + 5, 13, shadow);
+    set_pixel(pixels, width, x_offset + 10, 13, shadow);
 }
 
 pub(super) fn draw_grenade_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
-    let dark = [40, 72, 32, 255];
-    let mid = [80, 128, 48, 255];
-    let light = [136, 184, 72, 255];
-    let metal = [200, 184, 80, 255];
-    let spark = [248, 232, 128, 255];
+    let outline = [24, 24, 24, 255];
+    let body = [56, 48, 48, 255];
+    let shade = [32, 32, 32, 255];
+    let highlight = [168, 72, 56, 255];
+    let cap = [152, 152, 128, 255];
+    let fuse = [248, 208, 80, 255];
+    let spark = [255, 96, 48, 255];
 
-    fill_rect(pixels, width, x_offset + 6, 3, 4, 2, metal);
-    fill_rect(pixels, width, x_offset + 10, 2, 2, 3, metal);
-    fill_rect(pixels, width, x_offset + 12, 1, 3, 1, spark);
-    fill_rect(pixels, width, x_offset + 5, 5, 8, 8, mid);
-    fill_rect(pixels, width, x_offset + 4, 8, 10, 4, mid);
-    fill_rect(pixels, width, x_offset + 5, 11, 8, 2, dark);
-    fill_rect(pixels, width, x_offset + 6, 6, 2, 2, light);
-    fill_rect(pixels, width, x_offset + 9, 6, 1, 7, dark);
-    fill_rect(pixels, width, x_offset + 5, 9, 8, 1, dark);
-    set_pixel(pixels, width, x_offset + 11, 3, [104, 96, 56, 255]);
-    set_pixel(pixels, width, x_offset + 7, 12, [32, 56, 24, 255]);
-    set_pixel(pixels, width, x_offset + 12, 10, [56, 96, 36, 255]);
+    fill_rect(pixels, width, x_offset + 7, 2, 3, 2, cap);
+    fill_rect(pixels, width, x_offset + 10, 1, 3, 1, fuse);
+    set_pixel(pixels, width, x_offset + 13, 0, spark);
+    set_pixel(pixels, width, x_offset + 13, 1, fuse);
+    fill_rect(pixels, width, x_offset + 5, 5, 7, 1, outline);
+    fill_rect(pixels, width, x_offset + 4, 6, 9, 5, outline);
+    fill_rect(pixels, width, x_offset + 5, 11, 7, 2, outline);
+    fill_rect(pixels, width, x_offset + 6, 5, 5, 1, body);
+    fill_rect(pixels, width, x_offset + 5, 6, 7, 5, body);
+    fill_rect(pixels, width, x_offset + 6, 11, 5, 1, shade);
+    fill_rect(pixels, width, x_offset + 6, 7, 2, 2, highlight);
+    fill_rect(pixels, width, x_offset + 9, 6, 1, 6, shade);
+    fill_rect(pixels, width, x_offset + 5, 9, 7, 1, shade);
+    set_pixel(pixels, width, x_offset + 11, 3, [96, 96, 80, 255]);
+    set_pixel(pixels, width, x_offset + 7, 12, [16, 16, 16, 255]);
+    set_pixel(pixels, width, x_offset + 11, 10, [80, 40, 40, 255]);
 }
 
 pub(super) fn draw_shovel_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
@@ -1563,42 +1582,42 @@ pub(super) fn draw_shovel_powerup(pixels: &mut [u8], width: usize, x_offset: usi
 }
 
 pub(super) fn draw_tank_powerup(pixels: &mut [u8], width: usize, x_offset: usize) {
-    let tread = [56, 56, 56, 255];
-    let body = [216, 72, 64, 255];
-    let light = [248, 160, 88, 255];
-    let shadow = [128, 40, 40, 255];
+    let tread = [32, 72, 40, 255];
+    let tread_light = [64, 120, 64, 255];
+    let body = [48, 184, 72, 255];
+    let light = [104, 240, 120, 255];
+    let shadow = [24, 96, 40, 255];
+    let plus = [248, 248, 184, 255];
 
-    fill_rect(pixels, width, x_offset + 3, 5, 4, 8, tread);
-    fill_rect(pixels, width, x_offset + 9, 5, 4, 8, tread);
-    fill_rect(pixels, width, x_offset + 5, 6, 6, 6, body);
-    fill_rect(pixels, width, x_offset + 7, 3, 2, 6, light);
-    fill_rect(pixels, width, x_offset + 6, 8, 4, 3, light);
-    fill_rect(pixels, width, x_offset + 5, 11, 6, 1, shadow);
-    fill_rect(pixels, width, x_offset + 5, 6, 6, 1, [248, 112, 88, 255]);
-    fill_rect(pixels, width, x_offset + 6, 12, 4, 1, [80, 32, 32, 255]);
-    set_pixel(pixels, width, x_offset + 4, 6, [96, 96, 96, 255]);
-    set_pixel(pixels, width, x_offset + 12, 11, [32, 32, 32, 255]);
+    fill_rect(pixels, width, x_offset + 2, 6, 3, 7, tread);
+    fill_rect(pixels, width, x_offset + 11, 6, 3, 7, tread);
+    fill_rect(pixels, width, x_offset + 3, 7, 1, 5, tread_light);
+    fill_rect(pixels, width, x_offset + 12, 7, 1, 5, tread_light);
+    fill_rect(pixels, width, x_offset + 5, 7, 7, 5, body);
+    fill_rect(pixels, width, x_offset + 6, 5, 4, 3, light);
+    fill_rect(pixels, width, x_offset + 9, 6, 5, 2, light);
+    fill_rect(pixels, width, x_offset + 5, 11, 7, 1, shadow);
+    fill_rect(pixels, width, x_offset + 7, 7, 1, 4, plus);
+    fill_rect(pixels, width, x_offset + 5, 8, 5, 1, plus);
+    fill_rect(pixels, width, x_offset + 6, 12, 4, 1, [16, 64, 28, 255]);
+    set_pixel(pixels, width, x_offset + 4, 6, [48, 96, 48, 255]);
+    set_pixel(pixels, width, x_offset + 13, 11, [16, 48, 24, 255]);
 }
 
 pub(super) fn create_glyph_atlas(manifest: &GlyphManifest) -> Image {
     let glyph_width = manifest.tile_width;
     let glyph_height = manifest.tile_height;
     let glyph_count = manifest.characters.chars().count();
-    let width = glyph_width * glyph_count;
+    let width = glyph_width * glyph_count + GENERATED_GLYPH_ATLAS_PADDING_X * (glyph_count - 1);
     let mut pixels = vec![0; width * glyph_height * 4];
 
     for (glyph, ch) in manifest.characters.chars().enumerate() {
+        let glyph_x = glyph * (glyph_width + GENERATED_GLYPH_ATLAS_PADDING_X);
         let pattern = glyph_pattern(ch);
         for (y, row) in pattern.iter().enumerate() {
             for (x, pixel) in row.chars().enumerate() {
                 if pixel == '#' {
-                    set_pixel(
-                        &mut pixels,
-                        width,
-                        glyph * glyph_width + x,
-                        y,
-                        [216, 216, 184, 255],
-                    );
+                    set_pixel(&mut pixels, width, glyph_x + x, y, [216, 216, 184, 255]);
                 }
             }
         }

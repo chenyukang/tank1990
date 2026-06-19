@@ -1804,6 +1804,28 @@ fn generated_atlas_images_use_manifest_geometry() {
 }
 
 #[test]
+fn generated_glyph_atlas_adds_transparent_padding_between_characters() {
+    let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
+    let image = create_glyph_atlas(&manifest.glyphs);
+    let glyph_count = manifest.glyphs.characters.chars().count();
+    let expected_width = manifest.glyphs.tile_width * glyph_count
+        + GENERATED_GLYPH_ATLAS_PADDING_X * (glyph_count - 1);
+
+    assert_eq!(image.texture_descriptor.size.width, expected_width as u32);
+    assert_eq!(
+        image.texture_descriptor.size.height,
+        manifest.glyphs.tile_height as u32
+    );
+
+    let zero_left = manifest.glyphs.tile_width + GENERATED_GLYPH_ATLAS_PADDING_X;
+    assert_eq!(image_pixel(&image, zero_left, 0), [216, 216, 184, 255]);
+    assert_eq!(
+        image_pixel(&image, zero_left + manifest.glyphs.tile_width, 0),
+        [0, 0, 0, 0]
+    );
+}
+
+#[test]
 fn generated_tank_atlas_uses_directional_tread_silhouettes() {
     let manifest = parse_asset_manifest(MANIFEST).expect("manifest should parse");
     let image = create_tank_atlas(manifest.atlases.tanks);
@@ -1907,21 +1929,23 @@ fn generated_powerup_atlas_uses_readable_classic_icons() {
     assert_eq!(image_pixel(&image, helmet + 3, 9), [32, 96, 144, 255]);
 
     let clock = tile_width * 2;
-    assert_eq!(image_pixel(&image, clock + 5, 2), [216, 232, 248, 255]);
-    assert_eq!(image_pixel(&image, clock + 8, 9), [48, 64, 96, 255]);
+    assert_eq!(image_pixel(&image, clock + 4, 2), [248, 232, 112, 255]);
+    assert_eq!(image_pixel(&image, clock + 2, 8), [56, 152, 224, 255]);
+    assert_eq!(image_pixel(&image, clock + 8, 6), [32, 56, 128, 255]);
 
     let grenade = tile_width * 3;
-    assert_eq!(image_pixel(&image, grenade + 13, 1), [248, 232, 128, 255]);
-    assert_eq!(image_pixel(&image, grenade + 9, 9), [40, 72, 32, 255]);
+    assert_eq!(image_pixel(&image, grenade + 13, 0), [255, 96, 48, 255]);
+    assert_eq!(image_pixel(&image, grenade + 6, 7), [168, 72, 56, 255]);
+    assert_eq!(image_pixel(&image, grenade + 9, 8), [32, 32, 32, 255]);
 
     let shovel = tile_width * 4;
     assert_eq!(image_pixel(&image, shovel + 8, 2), [120, 72, 32, 255]);
     assert_eq!(image_pixel(&image, shovel + 5, 12), [232, 240, 240, 255]);
 
     let tank = tile_width * 5;
-    assert_eq!(image_pixel(&image, tank + 3, 5), [56, 56, 56, 255]);
-    assert_eq!(image_pixel(&image, tank + 7, 3), [248, 160, 88, 255]);
-    assert_eq!(image_pixel(&image, tank + 5, 11), [128, 40, 40, 255]);
+    assert_eq!(image_pixel(&image, tank + 3, 7), [64, 120, 64, 255]);
+    assert_eq!(image_pixel(&image, tank + 6, 5), [104, 240, 120, 255]);
+    assert_eq!(image_pixel(&image, tank + 7, 8), [248, 248, 184, 255]);
 }
 
 #[test]
@@ -4704,7 +4728,7 @@ fn view_3d_minimap_pixels_encode_tiles_units_and_target_player() {
     );
     assert_eq!(
         pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 11 * cell + 1, 3 * cell + 1),
-        [248, 88, 72, 255]
+        [224, 64, 56, 255]
     );
     assert_eq!(
         pixels_pixel(&pixels, VIEW_3D_MINIMAP_SIZE, 12 * cell, 0),
@@ -5147,11 +5171,11 @@ fn view_3d_minimap_powerup_color_preserves_powerup_identity() {
     );
     assert_eq!(
         minimap_powerup_color(PowerUpKind::Clock),
-        [176, 176, 248, 255]
+        [96, 208, 255, 255]
     );
     assert_eq!(
         minimap_powerup_color(PowerUpKind::Grenade),
-        [248, 88, 72, 255]
+        [224, 64, 56, 255]
     );
     assert_eq!(
         minimap_powerup_color(PowerUpKind::Shovel),
@@ -5159,7 +5183,7 @@ fn view_3d_minimap_powerup_color_preserves_powerup_identity() {
     );
     assert_eq!(
         minimap_powerup_color(PowerUpKind::Tank),
-        [184, 248, 184, 255]
+        [96, 240, 112, 255]
     );
 }
 
@@ -5175,7 +5199,7 @@ fn view_3d_minimap_enemy_color_marks_powerup_carriers() {
     };
 
     assert_eq!(minimap_enemy_color(&normal_enemy), [248, 88, 80, 255]);
-    assert_eq!(minimap_enemy_color(&carrier_enemy), [248, 88, 72, 255]);
+    assert_eq!(minimap_enemy_color(&carrier_enemy), [224, 64, 56, 255]);
 }
 
 #[test]
@@ -9499,9 +9523,23 @@ fn arena_eight_authors_base_battle_bridge_lanes() {
 
 #[test]
 fn powerup_visuals_sparkle_between_bright_tints() {
-    assert_eq!(powerup_visual_rgb(0.05), [255, 255, 255]);
-    assert_eq!(powerup_visual_rgb(0.20), [255, 232, 104]);
-    assert_eq!(powerup_visual_rgb(0.35), [255, 255, 255]);
+    assert_eq!(
+        powerup_visual_rgb(PowerUpKind::Clock, 0.05),
+        [255, 255, 255]
+    );
+    assert_eq!(
+        powerup_visual_rgb(PowerUpKind::Clock, 0.20),
+        [216, 240, 255]
+    );
+    assert_eq!(
+        powerup_visual_rgb(PowerUpKind::Grenade, 0.20),
+        [255, 224, 184]
+    );
+    assert_eq!(powerup_visual_rgb(PowerUpKind::Tank, 0.20), [216, 255, 216]);
+    assert_eq!(
+        powerup_visual_rgb(PowerUpKind::Clock, 0.35),
+        [255, 255, 255]
+    );
 }
 
 #[test]

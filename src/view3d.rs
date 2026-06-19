@@ -109,10 +109,10 @@ const MINIMAP_PLAYER_TWO_BULLET_COLOR: [u8; 4] = [136, 216, 255, 255];
 const MINIMAP_ENEMY_BULLET_COLOR: [u8; 4] = [248, 88, 80, 255];
 const MINIMAP_POWERUP_COLOR: [u8; 4] = [248, 216, 72, 255];
 const MINIMAP_POWERUP_HELMET_COLOR: [u8; 4] = [112, 216, 248, 255];
-const MINIMAP_POWERUP_CLOCK_COLOR: [u8; 4] = [176, 176, 248, 255];
-const MINIMAP_POWERUP_GRENADE_COLOR: [u8; 4] = [248, 88, 72, 255];
+const MINIMAP_POWERUP_CLOCK_COLOR: [u8; 4] = [96, 208, 255, 255];
+const MINIMAP_POWERUP_GRENADE_COLOR: [u8; 4] = [224, 64, 56, 255];
 const MINIMAP_POWERUP_SHOVEL_COLOR: [u8; 4] = [184, 232, 160, 255];
-const MINIMAP_POWERUP_TANK_COLOR: [u8; 4] = [184, 248, 184, 255];
+const MINIMAP_POWERUP_TANK_COLOR: [u8; 4] = [96, 240, 112, 255];
 const MINIMAP_TARGET_COLOR: [u8; 4] = [255, 255, 255, 255];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -803,12 +803,12 @@ fn create_3d_assets(
             ..default()
         }),
         powerup_clock_material: materials.add(StandardMaterial {
-            base_color: Color::srgb_u8(176, 176, 248),
+            base_color: Color::srgb_u8(96, 208, 255),
             unlit: true,
             ..default()
         }),
         powerup_grenade_material: materials.add(StandardMaterial {
-            base_color: Color::srgb_u8(248, 88, 72),
+            base_color: Color::srgb_u8(224, 64, 56),
             unlit: true,
             ..default()
         }),
@@ -818,7 +818,7 @@ fn create_3d_assets(
             ..default()
         }),
         powerup_tank_material: materials.add(StandardMaterial {
-            base_color: Color::srgb_u8(184, 248, 184),
+            base_color: Color::srgb_u8(96, 240, 112),
             unlit: true,
             ..default()
         }),

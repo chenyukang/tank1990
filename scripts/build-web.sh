@@ -60,7 +60,12 @@ wasm-bindgen \
   "$WASM_INPUT"
 
 if command -v wasm-opt >/dev/null 2>&1; then
-  wasm-opt -Oz -o "$OUT_DIR/pkg/tank_bg.wasm.optimized" "$OUT_DIR/pkg/tank_bg.wasm"
+  wasm-opt \
+    -Oz \
+    --enable-bulk-memory \
+    --enable-sign-ext \
+    -o "$OUT_DIR/pkg/tank_bg.wasm.optimized" \
+    "$OUT_DIR/pkg/tank_bg.wasm"
   mv "$OUT_DIR/pkg/tank_bg.wasm.optimized" "$OUT_DIR/pkg/tank_bg.wasm"
 else
   echo "warning: wasm-opt not found; skipping wasm size optimization" >&2

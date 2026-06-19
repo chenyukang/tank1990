@@ -78,3 +78,23 @@ jobs:
 
       - name: Build release binary
         run: cargo build --locked --release
+
+  web:
+    name: wasm web package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal
+          rustup default ${{ env.RUST_TOOLCHAIN }}
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen
+        run: scripts/install-wasm-bindgen.sh
+
+      - name: Build web package
+        run: scripts/build-web.sh

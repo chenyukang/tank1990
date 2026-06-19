@@ -95,7 +95,8 @@ still need the usual graphics and audio runtime libraries.
 
 Tag-based GitHub Releases are published by `.github/workflows/release.yml`.
 Pushing a version tag such as `v0.1.0` builds Linux, macOS, and Windows release
-archives that each contain only the executable:
+archives that each contain only the executable, plus a `tank-web.zip` browser
+build:
 
 ```bash
 git tag v0.1.0
@@ -108,6 +109,30 @@ version `0.1.0` must be released with tag `v0.1.0`.
 The macOS binary is not codesigned or notarized. Gatekeeper may warn on first
 launch; use the standard macOS "Open Anyway" flow or build locally with
 `cargo build --release` if you prefer a locally produced binary.
+
+## Browser Build
+
+The game can also be built as a static WebAssembly package:
+
+```bash
+rustup target add wasm32-unknown-unknown
+scripts/install-wasm-bindgen.sh
+scripts/build-web.sh
+```
+
+The build is written to `dist/web/`. Serve that directory with any static HTTP
+server, for example:
+
+```bash
+python3 -m http.server 8080 --directory dist/web
+```
+
+Then open `http://127.0.0.1:8080/`. Browser audio may start only after the
+first click or key press, which is normal browser autoplay policy behavior.
+
+GitHub Pages is published by `.github/workflows/pages.yml` on pushes to `main`
+or manual workflow dispatch. The release workflow uploads the same browser build
+as `tank-web.zip`.
 
 ## crates.io Publishing
 

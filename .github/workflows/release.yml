@@ -101,13 +101,50 @@ jobs:
       - name: Upload packaged binary
         uses: actions/upload-artifact@v7
         with:
+          name: ${{ matrix.archive }}
           path: dist/${{ matrix.archive }}
+          archive: false
+          if-no-files-found: error
+
+  build-web:
+    name: Build web
+    needs: verify-tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install ${{ env.RUST_TOOLCHAIN }} --profile minimal
+          rustup default ${{ env.RUST_TOOLCHAIN }}
+          rustup target add wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen
+        run: scripts/install-wasm-bindgen.sh
+
+      - name: Build web package
+        run: scripts/build-web.sh
+
+      - name: Package web build
+        run: |
+          cd dist/web
+          zip -r ../tank-web.zip .
+
+      - name: Upload packaged web build
+        uses: actions/upload-artifact@v7
+        with:
+          name: tank-web.zip
+          path: dist/tank-web.zip
           archive: false
           if-no-files-found: error
 
   publish:
     name: Publish GitHub Release
-    needs: build
+    needs:
+      - build
+      - build-web
     runs-on: ubuntu-latest
 
     steps:

@@ -16,7 +16,9 @@ include = [
   "/README.md",
   "/assets/**",
   "/rust-toolchain.toml",
+  "/scripts/**",
   "/src/**",
+  "/web/**",
 ]
 default-run = "tank"
 

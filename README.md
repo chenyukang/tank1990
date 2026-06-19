@@ -5,6 +5,9 @@ uses a 256x240 virtual screen, nearest-neighbor sprites, 26x26 small-tile maps,
 campaign stages, local versus arenas, power-ups, retro generated sounds, and
 gitignored personal asset overrides for private playtesting.
 
+![screen of 2d](./assets/screenshot/2d.png)
+![screen of 3d](./assets/screenshot/3d.png)
+
 ## Run
 
 ```bash

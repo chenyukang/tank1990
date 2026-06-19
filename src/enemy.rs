@@ -712,3 +712,181 @@ pub(super) fn enemy_visual_rgb(
         (EnemyKind::Basic, _) => [255, 255, 255],
     }
 }
+
+pub(crate) fn spawn_enemies(
+    mut commands: Commands,
+    time: Res<Time>,
+    assets: Res<SpriteAssets>,
+    grid: Res<TileGrid>,
+    game_status: Res<GameStatus>,
+    enemy_freeze: Res<EnemyFreeze>,
+    mut director: ResMut<EnemyDirector>,
+    active_enemies: Query<&EnemyTank>,
+    tanks: Query<&Tank>,
+) {
+    if !game_status.is_playing()
+        || enemy_freeze.is_active()
+        || director.roster.is_empty()
+        || active_enemies.iter().count() >= director.max_active
+    {
+        return;
+    }
+
+    let first_spawn = director.spawned_count == 0;
+    if !first_spawn && !director.spawn_timer.tick(time.delta()).just_finished() {
+        return;
+    }
+
+    for _ in 0..director.spawns.len() {
+        let spawn = director.spawns[director.spawn_cursor].clone();
+        director.spawn_cursor = (director.spawn_cursor + 1) % director.spawns.len();
+        let top_left = Vec2::new(spawn.x as f32 * TILE_SIZE, spawn.y as f32 * TILE_SIZE);
+        let occupied: Vec<Vec2> = tanks.iter().map(|tank| tank.top_left).collect();
+
+        if !grid.can_tank_occupy(top_left) || !tank_spawn_position_free(top_left, &occupied) {
+            continue;
+        }
+
+        let enemy = director
+            .roster
+            .pop_front()
+            .expect("checked non-empty roster above");
+        director.spawned_count += 1;
+        let kind = enemy.kind;
+        let carried_powerup = enemy.carried_powerup;
+        let ai_strategy = director.ai_strategy;
+        let difficulty_profile = director.difficulty_profile;
+
+        commands.spawn((
+            Sprite::from_atlas_image(
+                assets.tank_image.clone(),
+                TextureAtlas {
+                    layout: assets.tank_layout.clone(),
+                    index: animated_tank_sprite_index(
+                        &assets.manifest,
+                        TankSpriteSet::enemy(kind),
+                        spawn.facing,
+                        0,
+                    ),
+                },
+            ),
+            Transform::from_translation(board_object_center(
+                top_left.x,
+                top_left.y,
+                Vec2::splat(TANK_SIZE),
+                6.0,
+            ))
+            .with_scale(Vec3::splat(window_scale())),
+            Tank {
+                top_left,
+                facing: spawn.facing,
+                speed: enemy_speed_for_profile(kind, difficulty_profile),
+            },
+            Health {
+                current: enemy_health(kind),
+            },
+            TankSpriteState::new(TankSpriteSet::enemy(kind)),
+            EnemyTank {
+                kind,
+                carried_powerup,
+            },
+            EnemyAi {
+                turn_timer: Timer::from_seconds(
+                    enemy_turn_interval_for_profile(kind, difficulty_profile),
+                    TimerMode::Repeating,
+                ),
+                fire_timer: Timer::from_seconds(
+                    enemy_fire_interval_for_profile(kind, difficulty_profile),
+                    TimerMode::Repeating,
+                ),
+                strategy: ai_strategy,
+                difficulty_profile,
+            },
+            SpawnProtection::for_spawn_shimmer(assets.manifest.spawn_shimmer_frames()),
+            GameEntity,
+        ));
+        spawn_spawn_effect(&mut commands, &assets, top_left);
+        break;
+    }
+}
+
+pub(crate) fn move_enemy_tanks(
+    time: Res<Time>,
+    assets: Res<SpriteAssets>,
+    grid: Res<TileGrid>,
+    game_status: Res<GameStatus>,
+    enemy_freeze: Res<EnemyFreeze>,
+    mut tank_queries: ParamSet<(
+        Query<(&Tank, Option<&Player>)>,
+        Query<
+            (
+                &mut Tank,
+                &EnemyTank,
+                &mut Sprite,
+                &mut Transform,
+                &mut EnemyAi,
+                &mut TankSpriteState,
+            ),
+            (With<EnemyTank>, Without<Player>, Without<SpawnProtection>),
+        >,
+    )>,
+) {
+    if !game_status.is_playing() || enemy_freeze.is_active() {
+        return;
+    }
+
+    let occupied: Vec<(Vec2, bool)> = tank_queries
+        .p0()
+        .iter()
+        .map(|(tank, player)| (tank.top_left, player.is_some()))
+        .collect();
+    let player_top_lefts: Vec<Vec2> = occupied
+        .iter()
+        .filter_map(|(top_left, is_player)| is_player.then_some(*top_left))
+        .collect();
+    let occupied_positions: Vec<Vec2> = occupied.iter().map(|(top_left, _)| *top_left).collect();
+    let base_center = base_center_from_grid(&grid);
+
+    for (mut tank, enemy, mut sprite, mut transform, mut ai, mut tank_sprite) in
+        &mut tank_queries.p1()
+    {
+        ai.turn_timer.tick(time.delta());
+        if ai.turn_timer.just_finished() {
+            tank.facing = select_enemy_direction(
+                ai.strategy,
+                ai.difficulty_profile,
+                enemy.kind,
+                tank.top_left,
+                tank.facing,
+                &player_top_lefts,
+                base_center,
+                &grid,
+            );
+        }
+
+        let mut moved = false;
+        if let Some(next) = tank_move_candidate(
+            tank.top_left,
+            tank.facing,
+            tank_move_speed(tank.speed, &grid, tank.top_left) * time.delta_secs(),
+            &grid,
+            &occupied_positions,
+        ) {
+            tank.top_left = next;
+            transform.translation =
+                board_object_center(next.x, next.y, Vec2::splat(TANK_SIZE), 6.0);
+            moved = true;
+        } else {
+            tank.facing = next_direction(tank.facing);
+        }
+
+        update_tank_sprite(
+            &mut sprite,
+            &mut tank_sprite,
+            tank.facing,
+            moved,
+            time.delta(),
+            &assets.manifest,
+        );
+    }
+}

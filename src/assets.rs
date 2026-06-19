@@ -1,5 +1,240 @@
 use super::*;
 
+#[derive(Resource)]
+pub(super) struct SpriteAssets {
+    pub(super) manifest: AssetManifest,
+    pub(super) terrain_image: Handle<Image>,
+    pub(super) terrain_layout: Handle<TextureAtlasLayout>,
+    pub(super) tank_image: Handle<Image>,
+    pub(super) tank_layout: Handle<TextureAtlasLayout>,
+    pub(super) bullet_image: Handle<Image>,
+    pub(super) bullet_layout: Handle<TextureAtlasLayout>,
+    pub(super) effect_image: Handle<Image>,
+    pub(super) effect_layout: Handle<TextureAtlasLayout>,
+    pub(super) powerup_image: Handle<Image>,
+    pub(super) powerup_layout: Handle<TextureAtlasLayout>,
+    pub(super) glyph_image: Handle<Image>,
+    pub(super) glyph_layout: Handle<TextureAtlasLayout>,
+    pub(super) base_intact: Handle<Image>,
+    pub(super) base_destroyed: Handle<Image>,
+    pub(super) score_badge_icon: Handle<Image>,
+    pub(super) stage_flag_icon: Handle<Image>,
+    pub(super) shield_image: Handle<Image>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(super) struct AssetManifest {
+    pub(super) tanks: TankSpriteManifest,
+    pub(super) bullets: DirectionalSpriteManifest,
+    pub(super) atlases: GeneratedAtlasesManifest,
+    pub(super) terrain: TerrainSpriteManifest,
+    pub(super) effects: EffectSpriteManifest,
+    pub(super) powerups: PowerUpSpriteManifest,
+    pub(super) base: BaseSpriteManifest,
+    pub(super) ui: UiSpriteManifest,
+    pub(super) glyphs: GlyphManifest,
+    pub(super) sounds: SoundManifest,
+}
+
+impl AssetManifest {
+    pub(super) fn tank_index(
+        &self,
+        set: TankSpriteSet,
+        direction: Direction,
+        frame: usize,
+    ) -> usize {
+        self.tanks.frames_for(set)[frame.min(TANK_ANIMATION_FRAMES - 1)].index(direction)
+    }
+
+    pub(super) fn bullet_index(&self, direction: Direction) -> usize {
+        self.bullets.index(direction)
+    }
+
+    pub(super) fn terrain_index(&self, tile: TileKind) -> Option<usize> {
+        match tile {
+            TileKind::Brick => Some(self.terrain.brick),
+            TileKind::Steel => Some(self.terrain.steel),
+            TileKind::Water => Some(self.terrain.water.first),
+            TileKind::Forest => Some(self.terrain.forest),
+            TileKind::Ice => Some(self.terrain.ice),
+            TileKind::Empty | TileKind::Base => None,
+        }
+    }
+
+    pub(super) fn terrain_animation_frames(&self, tile: TileKind) -> Option<SpriteFrameRange> {
+        match tile {
+            TileKind::Water => Some(self.terrain.water),
+            _ => None,
+        }
+    }
+
+    pub(super) fn powerup_index(&self, kind: PowerUpKind) -> usize {
+        match kind {
+            PowerUpKind::Star => self.powerups.star,
+            PowerUpKind::Helmet => self.powerups.helmet,
+            PowerUpKind::Clock => self.powerups.clock,
+            PowerUpKind::Grenade => self.powerups.grenade,
+            PowerUpKind::Shovel => self.powerups.shovel,
+            PowerUpKind::Tank => self.powerups.tank,
+        }
+    }
+
+    pub(super) fn explosion_frames(&self) -> SpriteFrameRange {
+        self.effects.explosion
+    }
+
+    pub(super) fn spawn_shimmer_frames(&self) -> SpriteFrameRange {
+        self.effects.spawn_shimmer
+    }
+
+    pub(super) fn base_destruction_frames(&self) -> SpriteFrameRange {
+        self.effects.base_destruction
+    }
+
+    pub(super) fn powerup_sparkle_frames(&self) -> SpriteFrameRange {
+        self.effects.powerup_sparkle
+    }
+
+    pub(super) fn bullet_impact_frames(&self) -> SpriteFrameRange {
+        self.effects.bullet_impact
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(super) struct TankSpriteManifest {
+    pub(super) player1: Vec<DirectionalSpriteManifest>,
+    pub(super) player2: Vec<DirectionalSpriteManifest>,
+    pub(super) enemies: EnemyTankSpriteManifest,
+}
+
+impl TankSpriteManifest {
+    fn frames_for(&self, set: TankSpriteSet) -> &[DirectionalSpriteManifest] {
+        match set {
+            TankSpriteSet::Player1 => &self.player1,
+            TankSpriteSet::Player2 => &self.player2,
+            TankSpriteSet::EnemyBasic => &self.enemies.basic,
+            TankSpriteSet::EnemyFast => &self.enemies.fast,
+            TankSpriteSet::EnemyPower => &self.enemies.power,
+            TankSpriteSet::EnemyArmor => &self.enemies.armor,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(super) struct EnemyTankSpriteManifest {
+    pub(super) basic: Vec<DirectionalSpriteManifest>,
+    pub(super) fast: Vec<DirectionalSpriteManifest>,
+    pub(super) power: Vec<DirectionalSpriteManifest>,
+    pub(super) armor: Vec<DirectionalSpriteManifest>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub(super) struct DirectionalSpriteManifest {
+    pub(super) up: usize,
+    pub(super) down: usize,
+    pub(super) left: usize,
+    pub(super) right: usize,
+}
+
+impl DirectionalSpriteManifest {
+    pub(super) fn index(self, direction: Direction) -> usize {
+        match direction {
+            Direction::Up => self.up,
+            Direction::Down => self.down,
+            Direction::Left => self.left,
+            Direction::Right => self.right,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(super) struct TerrainSpriteManifest {
+    pub(super) brick: usize,
+    pub(super) steel: usize,
+    pub(super) water: SpriteFrameRange,
+    pub(super) forest: usize,
+    pub(super) ice: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub(super) struct EffectSpriteManifest {
+    pub(super) explosion: SpriteFrameRange,
+    pub(super) spawn_shimmer: SpriteFrameRange,
+    pub(super) base_destruction: SpriteFrameRange,
+    pub(super) powerup_sparkle: SpriteFrameRange,
+    pub(super) bullet_impact: SpriteFrameRange,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub(super) struct SpriteFrameRange {
+    pub(super) first: usize,
+    pub(super) last: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(super) struct PowerUpSpriteManifest {
+    pub(super) star: usize,
+    pub(super) helmet: usize,
+    pub(super) clock: usize,
+    pub(super) grenade: usize,
+    pub(super) shovel: usize,
+    pub(super) tank: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub(super) struct GeneratedAtlasManifest {
+    pub(super) tile_width: usize,
+    pub(super) tile_height: usize,
+    pub(super) tiles: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub(super) struct GeneratedAtlasesManifest {
+    pub(super) tanks: GeneratedAtlasManifest,
+    pub(super) terrain: GeneratedAtlasManifest,
+    pub(super) bullets: GeneratedAtlasManifest,
+    pub(super) effects: GeneratedAtlasManifest,
+    pub(super) powerups: GeneratedAtlasManifest,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub(super) struct GeneratedSpriteManifest {
+    pub(super) width: usize,
+    pub(super) height: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub(super) struct BaseSpriteManifest {
+    pub(super) intact: GeneratedSpriteManifest,
+    pub(super) destroyed: GeneratedSpriteManifest,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub(super) struct UiSpriteManifest {
+    pub(super) score_badge: GeneratedSpriteManifest,
+    pub(super) stage_flag: GeneratedSpriteManifest,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(super) struct GlyphManifest {
+    pub(super) characters: String,
+    pub(super) tile_width: usize,
+    pub(super) tile_height: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(super) struct SoundManifest {
+    pub(super) fire: RetroSoundSpec,
+    pub(super) brick_hit: RetroSoundSpec,
+    pub(super) steel_hit: RetroSoundSpec,
+    pub(super) tank_explosion: RetroSoundSpec,
+    pub(super) base_destroyed: RetroSoundSpec,
+    pub(super) powerup_pickup: RetroSoundSpec,
+    pub(super) stage_start: RetroSoundSpec,
+    pub(super) level_clear: RetroSoundSpec,
+    pub(super) game_over: RetroSoundSpec,
+}
+
 pub(super) fn atlas_tile_size(manifest: GeneratedAtlasManifest) -> UVec2 {
     UVec2::new(manifest.tile_width as u32, manifest.tile_height as u32)
 }
@@ -238,13 +473,6 @@ pub(super) fn personal_background_music_path_if_available(
 pub(super) fn custom_background_music_handle(asset_server: &AssetServer) -> Option<SoundHandle> {
     personal_background_music_path_if_available(personal_asset_exists)
         .map(|path| SoundHandle::File(asset_server.load(path)))
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
-pub(super) struct SoundNote {
-    pub(super) duration_secs: f32,
-    pub(super) frequency: f32,
-    pub(super) volume: f32,
 }
 
 pub(super) fn play_sound(commands: &mut Commands, sounds: &SoundAssets, kind: SoundKind) {

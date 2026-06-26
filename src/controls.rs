@@ -813,9 +813,20 @@ fn direction_is_held(keys: &ButtonInput<KeyCode>, direction: Direction, player: 
     }
 }
 
+const PLAYER_TWO_FIRE_KEYS: [KeyCode; 6] = [
+    KeyCode::Enter,
+    KeyCode::NumpadEnter,
+    KeyCode::ShiftRight,
+    KeyCode::Numpad0,
+    KeyCode::Numpad1,
+    KeyCode::Numpad2,
+];
+
 pub(crate) fn player_fire_pressed(keys: &ButtonInput<KeyCode>, player: PlayerId) -> bool {
     match player {
         PlayerId::One => keys.pressed(KeyCode::Space),
-        PlayerId::Two => keys.pressed(KeyCode::Enter) || keys.pressed(KeyCode::ShiftRight),
+        PlayerId::Two => PLAYER_TWO_FIRE_KEYS
+            .iter()
+            .any(|fire_key| keys.pressed(*fire_key)),
     }
 }

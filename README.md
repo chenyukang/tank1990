@@ -35,7 +35,8 @@ In game:
 - P1 3D drive: `W` / `S` move forward/backward, `A` / `D` tap-turn left/right
 - P1 fire: `Space`
 - P2 2D move: arrow keys
-- P2 fire: `Enter` or `RightShift`
+- P2 fire: `Enter`, `RightShift`, numpad `0`, numpad `1`, numpad `2`, or
+  numpad `Enter`
 - Pause/resume: `P`, `Esc`, or `Pause`
 - Restart current stage or round: `R`
 - Return to mode select: `M`

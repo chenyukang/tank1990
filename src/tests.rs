@@ -8523,6 +8523,36 @@ fn player_two_can_fire_with_right_shift() {
 }
 
 #[test]
+fn player_two_can_fire_with_numpad_fire_keys() {
+    for fire_key in [
+        KeyCode::Numpad0,
+        KeyCode::Numpad1,
+        KeyCode::Numpad2,
+        KeyCode::NumpadEnter,
+    ] {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(fire_key);
+
+        assert!(
+            player_fire_pressed(&keys, PlayerId::Two),
+            "{fire_key:?} should fire P2"
+        );
+        assert!(
+            !player_fire_pressed(&keys, PlayerId::One),
+            "{fire_key:?} should not fire P1"
+        );
+    }
+}
+
+#[test]
+fn numpad_three_remains_a_view_key_not_a_player_two_fire_key() {
+    let mut keys = ButtonInput::<KeyCode>::default();
+    keys.press(KeyCode::Numpad3);
+
+    assert!(!player_fire_pressed(&keys, PlayerId::Two));
+}
+
+#[test]
 fn player_fire_system_treats_held_fire_as_ready_input() {
     let mut app = App::new();
     let tank_top_left = Vec2::new(64.0, 80.0);

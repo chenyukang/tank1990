@@ -208,7 +208,7 @@ Two-player co-op is not required for MVP, but the architecture should not block 
 - Move down: `ArrowDown`
 - Move left: `ArrowLeft`
 - Move right: `ArrowRight`
-- Fire: `Enter` or `RightShift`
+- Fire: `Enter`, `RightShift`, numpad `0`, numpad `1`, numpad `2`, or numpad `Enter`
 
 ### 6.3 Shared Controls
 
